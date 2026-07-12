@@ -1,6 +1,7 @@
 import SwiftUI
 import SidebandCore
 import UniformTypeIdentifiers
+import ImageIO
 #if os(macOS)
 import AppKit
 private typealias PlatformImage = NSImage
@@ -433,6 +434,7 @@ private struct InlineImageAttachmentView: View {
     let status: String
     @State private var image: PlatformImage?
     @State private var showingPreview = false
+    @State private var fullImage: PlatformImage?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -458,13 +460,17 @@ private struct InlineImageAttachmentView: View {
         .task(id: attachment.id) {
             let url = await store.url(for: attachment)
             guard let data = try? Data(contentsOf: url) else { return }
-            image = PlatformImage(data: data)
+            image = thumbnail(from: data, maximumPixelSize: 640)
         }
         .sheet(isPresented: $showingPreview) {
             VStack(spacing: 12) {
                 HStack { Text(attachment.filename).font(.headline); Spacer(); Button("Close") { showingPreview = false } }
-                if let image { swiftUIImage(image).resizable().scaledToFit() }
+                if let preview = fullImage ?? image { swiftUIImage(preview).resizable().scaledToFit() }
             }.padding().frame(minWidth: 320, minHeight: 420)
+                .task {
+                    let url = await store.url(for: attachment)
+                    if let data = try? Data(contentsOf: url) { fullImage = PlatformImage(data: data) }
+                }
         }
     }
 
@@ -473,6 +479,20 @@ private struct InlineImageAttachmentView: View {
         Image(nsImage: image)
 #else
         Image(uiImage: image)
+#endif
+    }
+
+    private func thumbnail(from data: Data, maximumPixelSize: Int) -> PlatformImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize
+              ] as CFDictionary) else { return nil }
+#if os(macOS)
+        return NSImage(cgImage: cgImage, size: .zero)
+#else
+        return UIImage(cgImage: cgImage)
 #endif
     }
 }
