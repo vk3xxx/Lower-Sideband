@@ -379,7 +379,9 @@ private struct ConversationView: View {
 
     private func attachmentStatus(_ attachment: Attachment) -> String {
         let size = ByteCountFormatter.string(fromByteCount: Int64(attachment.byteCount), countStyle: .file)
-        return attachment.state == .local ? "\(size) · Queued for Resource transfer" : "\(size) · \(attachment.state.rawValue.capitalized)"
+        if attachment.state == .local || attachment.state == .queued { return "\(size) · Queued for Resource transfer" }
+        if attachment.state == .transferring { return "\(size) · \(Int(attachment.progress * 100))%" }
+        return "\(size) · \(attachment.state.rawValue.capitalized)"
     }
 
     private var routingStatus: String {

@@ -56,6 +56,12 @@ public final class SidebandStore {
     private enum ReceiptKind { case direct, opportunistic, propagation }
     private struct PendingReceipt { let messageID: UUID; let kind: ReceiptKind; let destinationHash: String }
     private var pendingReceipts: [String: PendingReceipt] = [:]
+    private struct OutgoingResource {
+        let manifest: ReticulumResourceManifest; let parts: [Data]; let expectedProof: Data
+        let messageID: UUID; let attachmentID: UUID; let linkID: String
+        var sentIndices: Set<Int> = []
+    }
+    private var outgoingResources: [String: OutgoingResource] = [:]
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
     private var receivedLXMFIDs: Set<String> = []
@@ -423,6 +429,10 @@ public final class SidebandStore {
             receiveLinkProof(packet)
             return
         }
+        if packet.packetType == .proof, packet.context == 0x05, packet.destinationType == .link {
+            receiveResourceProof(packet)
+            return
+        }
         if packet.packetType == .linkRequest, packet.destinationHash.hex == localDeliveryHash {
             acceptIncomingLink(packet)
             return
@@ -498,6 +508,10 @@ public final class SidebandStore {
         }
         if let plaintext = try? session.decrypt(packet) {
             encryptedPacketsReceived += 1
+            if packet.context == 0x03 {
+                handleResourceRequest(plaintext, session: session)
+                return
+            }
             if inboundLinkIDs.contains(session.linkID.hex) {
                 handleInboundLinkPacket(packet, plaintext: plaintext, session: session)
                 return
@@ -665,8 +679,10 @@ public final class SidebandStore {
 
     private func attemptDelivery(for conversationID: UUID) async {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
-        let queued = messages.filter { $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty }
-        guard !queued.isEmpty else { return }
+        let pending = messages.filter { $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }
+        guard !pending.isEmpty else { return }
+        let queued = pending.filter { $0.attachments.isEmpty }
+        let attachmentMessages = pending.filter { !$0.attachments.isEmpty }
         if !hasPath(to: conversation.destinationHash) {
             if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash) }
             return
@@ -677,7 +693,7 @@ public final class SidebandStore {
               let recipient = try? ReticulumIdentity(publicKey: publicKey) else { return }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
-        var requiresLink = false
+        var requiresLink = !attachmentMessages.isEmpty
         for item in queued {
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8))
@@ -697,6 +713,7 @@ public final class SidebandStore {
         }
         guard let session = activeLinks.values.first(where: { $0.destinationHash.hex == conversation.destinationHash }) else { return }
         for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }) {
+            guard item.attachments.isEmpty else { continue }
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8))
                 let raw = try session.encryptedPacket(lxmf.packed)
@@ -707,6 +724,60 @@ public final class SidebandStore {
                 scheduleReceiptTimeout(packetHash)
             } catch { lastError = "LXMF delivery failed: \(error.localizedDescription)" }
         }
+        for message in attachmentMessages { await advertiseAttachments(for: message, session: session) }
+    }
+
+    private func advertiseAttachments(for message: Message, session: ReticulumLinkSession) async {
+        for attachment in message.attachments where attachment.state == .local || attachment.state == .queued {
+            do {
+                let url = await attachmentStore.url(for: attachment)
+                let data = try Data(contentsOf: url)
+                let encrypted = try session.encryptResourcePayload(data)
+                let random = Data((0..<4).map { _ in UInt8.random(in: .min ... .max) })
+                let manifest = try ReticulumResourceManifest(data: data, transferData: encrypted, randomHash: random)
+                let parts = try manifest.parts(from: encrypted)
+                let expectedProof = ReticulumIdentity.fullHash(data + manifest.resourceHash)
+                outgoingResources[manifest.resourceHash.hex] = OutgoingResource(manifest: manifest, parts: parts, expectedProof: expectedProof, messageID: message.id, attachmentID: attachment.id, linkID: session.linkID.hex)
+                updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .transferring, progress: 0)
+                try await transmitRawPacket(try session.resourceAdvertisementPacket(ReticulumResourceAdvertisement(manifest: manifest)))
+            } catch {
+                updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .failed, progress: 0)
+            }
+        }
+    }
+
+    private func handleResourceRequest(_ plaintext: Data, session: ReticulumLinkSession) {
+        guard let request = try? ReticulumResourceRequest(encoded: plaintext), var resource = outgoingResources[request.resourceHash.hex], resource.linkID == session.linkID.hex else { return }
+        Task {
+            for requestedHash in request.requestedPartHashes {
+                guard let index = resource.manifest.partHashes.firstIndex(of: requestedHash) else { continue }
+                do { try await transmitRawPacket(session.resourcePartPacket(resource.parts[index])); resource.sentIndices.insert(index) }
+                catch { return }
+            }
+            outgoingResources[request.resourceHash.hex] = resource
+            let progress = resource.parts.isEmpty ? 1 : Double(resource.sentIndices.count) / Double(resource.parts.count)
+            updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .transferring, progress: progress)
+        }
+    }
+
+    private func receiveResourceProof(_ packet: ReticulumPacket) {
+        guard packet.data.count == 64 else { return }
+        let hash = Data(packet.data.prefix(32))
+        guard let resource = outgoingResources[hash.hex], packet.destinationHash.hex == resource.linkID,
+              Data(packet.data.suffix(32)) == resource.expectedProof else { return }
+        outgoingResources.removeValue(forKey: hash.hex)
+        updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .available, progress: 1)
+        if let message = messages.first(where: { $0.id == resource.messageID }), message.attachments.allSatisfy({ $0.state == .available }) {
+            updateMessage(resource.messageID, state: .delivered)
+        }
+    }
+
+    private func updateAttachment(messageID: UUID, attachmentID: UUID, state: Attachment.TransferState, progress: Double) {
+        guard let messageIndex = messages.firstIndex(where: { $0.id == messageID }),
+              let attachmentIndex = messages[messageIndex].attachments.firstIndex(where: { $0.id == attachmentID }) else { return }
+        messages[messageIndex].attachments[attachmentIndex].state = state
+        messages[messageIndex].attachments[attachmentIndex].progress = progress
+        save()
     }
 
     private func receiveDeliveryProof(_ packet: ReticulumPacket) {
