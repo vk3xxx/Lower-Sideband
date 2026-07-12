@@ -41,6 +41,7 @@ public final class SidebandStore {
     public let notifications = LocalNotificationManager()
     public let backgroundRefresh = BackgroundRefreshCoordinator()
     public let attachmentStore: AttachmentStore
+    public let resourceStagingStore: ReticulumResourceStagingStore
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
     public var selectedConversationID: UUID?
@@ -66,7 +67,6 @@ public final class SidebandStore {
     private var outgoingResources: [String: OutgoingResource] = [:]
     private struct IncomingResource { let session: ReticulumLinkSession; let advertisement: ReticulumResourceAdvertisement; var receiver: ReticulumResourceReceiver; var timeoutToken = UUID() }
     private var incomingResources: [String: IncomingResource] = [:]
-    private var incomingSegmentAccumulators: [String: ReticulumResourceSegmentAccumulator] = [:]
     private var receivedResourceHashes: Set<String> = []
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
@@ -86,6 +86,7 @@ public final class SidebandStore {
         self.transport = transport
         self.persistenceURL = persistenceURL ?? Self.defaultPersistenceURL()
         attachmentStore = AttachmentStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "Attachments", directoryHint: .isDirectory))
+        resourceStagingStore = ReticulumResourceStagingStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "ResourceStaging", directoryHint: .isDirectory))
         let identityMaterial = SecureIdentityStore.loadOrCreate(account: "reticulum.transport", legacyDefaultsKey: "reticulumTransportIdentity")
         transportIdentity = (try? ReticulumIdentity(privateKey: identityMaterial)) ?? ReticulumIdentity()
         let interfaceMaterial = UserDefaults.standard.data(forKey: "reticulumTCPInterfaceHash") ?? ReticulumIdentity.fullHash(Data(UUID().uuidString.utf8))
@@ -879,17 +880,10 @@ public final class SidebandStore {
 
         let completeData: Data
         if incoming.advertisement.totalSegments > 1 {
-            let key = incoming.advertisement.originalHash.hex
-            var accumulator = incomingSegmentAccumulators[key] ?? (try? ReticulumResourceSegmentAccumulator(originalHash: incoming.advertisement.originalHash, totalSegments: incoming.advertisement.totalSegments, totalDataSize: incoming.advertisement.dataSize))
-            guard var accumulator else { return }
-            do { try accumulator.accept(data, segmentIndex: incoming.advertisement.segmentIndex, originalHash: incoming.advertisement.originalHash, totalSegments: incoming.advertisement.totalSegments) } catch { return }
-            if accumulator.isComplete {
-                guard let assembled = try? accumulator.assemble() else { return }
-                incomingSegmentAccumulators.removeValue(forKey: key); completeData = assembled
-            } else {
-                incomingSegmentAccumulators[key] = accumulator
-                return
-            }
+            guard (try? await resourceStagingStore.stage(data: data, originalHash: incoming.advertisement.originalHash, segmentIndex: incoming.advertisement.segmentIndex, totalSegments: incoming.advertisement.totalSegments, totalSize: incoming.advertisement.dataSize)) != nil else { return }
+            guard await resourceStagingStore.isComplete(originalHash: incoming.advertisement.originalHash),
+                  let assembled = try? await resourceStagingStore.assemble(originalHash: incoming.advertisement.originalHash) else { return }
+            completeData = assembled
         } else { completeData = data }
 
         guard let envelope = try? LXMFResourceEnvelope(encoded: completeData),

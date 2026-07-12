@@ -214,6 +214,17 @@ import Testing
     #expect(try session.decrypt(initiator) == hash)
 }
 
+@Test func resourceSegmentsStageOnDiskAndCleanUpAfterAssembly() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let store = ReticulumResourceStagingStore(directory: root)
+    let hash = Data(repeating: 0x77, count: 32)
+    _ = try await store.stage(data: Data("cd".utf8), originalHash: hash, segmentIndex: 2, totalSegments: 2, totalSize: 4)
+    _ = try await store.stage(data: Data("ab".utf8), originalHash: hash, segmentIndex: 1, totalSegments: 2, totalSize: 4)
+    #expect(await store.isComplete(originalHash: hash))
+    #expect(try await store.assemble(originalHash: hash) == Data("abcd".utf8))
+    #expect(!FileManager.default.fileExists(atPath: root.appending(path: hash.hex).path))
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))
