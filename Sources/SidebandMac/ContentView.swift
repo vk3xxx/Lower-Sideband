@@ -165,6 +165,18 @@ private struct NetworkView: View {
                     Text(store.notifications.authorizationDescription).font(.caption).foregroundStyle(.secondary)
                 }.padding(6)
             }
+            if !store.incomingResourceProgress.isEmpty {
+                GroupBox("Incoming Resources") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(store.incomingResourceProgress.keys.sorted(), id: \.self) { hash in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack { Text("\(hash.prefix(12))…").font(.caption.monospaced()); Spacer(); Text("\(Int((store.incomingResourceProgress[hash] ?? 0) * 100))%") }
+                                ProgressView(value: store.incomingResourceProgress[hash] ?? 0)
+                            }
+                        }
+                    }.padding(6)
+                }
+            }
             GroupBox("LAN gateways") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {

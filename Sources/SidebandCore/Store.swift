@@ -28,6 +28,7 @@ public final class SidebandStore {
     public private(set) var deliveryTimeoutCount = 0
     public private(set) var reconnectDelaySeconds: Int?
     public private(set) var recoveredOutboundCount = 0
+    public private(set) var incomingResourceProgress: [String: Double] = [:]
     public var networkHost: String
     public var networkIPv6Host: String
     public var networkPort: Int
@@ -831,6 +832,7 @@ public final class SidebandStore {
               !receivedResourceHashes.contains(advertisement.resourceHash.hex),
               let manifest = try? ReticulumResourceManifest(advertisement: advertisement) else { return }
         incomingResources[manifest.resourceHash.hex] = IncomingResource(session: session, advertisement: advertisement, receiver: ReticulumResourceReceiver(manifest: manifest))
+        incomingResourceProgress[advertisement.originalHash.hex] = Double(advertisement.segmentIndex - 1) / Double(advertisement.totalSegments)
         scheduleResourceTimeout(hash: manifest.resourceHash.hex, incoming: true)
         requestIncomingResourceParts(resourceHash: manifest.resourceHash.hex)
     }
@@ -864,6 +866,7 @@ public final class SidebandStore {
         do { try incoming.receiver.accept(part: part, at: index) } catch { return }
         incoming.timeoutToken = UUID()
         incomingResources[hash] = incoming
+        incomingResourceProgress[incoming.advertisement.originalHash.hex] = (Double(incoming.advertisement.segmentIndex - 1) + incoming.receiver.progress) / Double(incoming.advertisement.totalSegments)
         scheduleResourceTimeout(hash: hash, incoming: true)
         if incoming.receiver.isComplete { Task { await finishIncomingResource(resourceHash: hash) } }
         else if incoming.receiver.receivedPartCount.isMultiple(of: 4) { requestIncomingResourceParts(resourceHash: hash) }
@@ -898,6 +901,7 @@ public final class SidebandStore {
         }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }) else { return }
         messages.append(Message(conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment]))
+        incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
         save()
         await notifications.notifyIncoming(title: conversation.displayName, body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody)
     }
