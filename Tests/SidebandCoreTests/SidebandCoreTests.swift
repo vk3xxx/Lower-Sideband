@@ -194,6 +194,16 @@ import Testing
     #expect(segments[2].manifest.dataSize == 17)
 }
 
+@Test func inboundResourceSegmentsAccumulateInProtocolOrder() throws {
+    let originalHash = Data(repeating: 0x55, count: 32)
+    var accumulator = try ReticulumResourceSegmentAccumulator(originalHash: originalHash, totalSegments: 3, totalDataSize: 6)
+    try accumulator.accept(Data("cd".utf8), segmentIndex: 2, originalHash: originalHash, totalSegments: 3)
+    try accumulator.accept(Data("ab".utf8), segmentIndex: 1, originalHash: originalHash, totalSegments: 3)
+    #expect(accumulator.progress == 2.0 / 3.0)
+    try accumulator.accept(Data("ef".utf8), segmentIndex: 3, originalHash: originalHash, totalSegments: 3)
+    #expect(try accumulator.assemble() == Data("abcdef".utf8))
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

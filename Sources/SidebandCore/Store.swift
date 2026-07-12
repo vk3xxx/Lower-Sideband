@@ -63,8 +63,9 @@ public final class SidebandStore {
         var sentIndices: Set<Int> = []
     }
     private var outgoingResources: [String: OutgoingResource] = [:]
-    private struct IncomingResource { let session: ReticulumLinkSession; var receiver: ReticulumResourceReceiver }
+    private struct IncomingResource { let session: ReticulumLinkSession; let advertisement: ReticulumResourceAdvertisement; var receiver: ReticulumResourceReceiver }
     private var incomingResources: [String: IncomingResource] = [:]
+    private var incomingSegmentAccumulators: [String: ReticulumResourceSegmentAccumulator] = [:]
     private var receivedResourceHashes: Set<String> = []
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
@@ -819,7 +820,7 @@ public final class SidebandStore {
               advertisement.flags & 0x01 == 0x01, advertisement.flags & 0x20 == 0x20,
               !receivedResourceHashes.contains(advertisement.resourceHash.hex),
               let manifest = try? ReticulumResourceManifest(advertisement: advertisement) else { return }
-        incomingResources[manifest.resourceHash.hex] = IncomingResource(session: session, receiver: ReticulumResourceReceiver(manifest: manifest))
+        incomingResources[manifest.resourceHash.hex] = IncomingResource(session: session, advertisement: advertisement, receiver: ReticulumResourceReceiver(manifest: manifest))
         requestIncomingResourceParts(resourceHash: manifest.resourceHash.hex)
     }
 
@@ -857,8 +858,27 @@ public final class SidebandStore {
         guard let incoming = incomingResources.removeValue(forKey: resourceHash),
               let encrypted = try? incoming.receiver.assemble(),
               let data = try? incoming.session.decryptResourcePayload(encrypted),
-              incoming.receiver.manifest.validate(data: data),
-              let envelope = try? LXMFResourceEnvelope(encoded: data),
+              incoming.receiver.manifest.validate(data: data) else { return }
+        receivedResourceHashes.insert(resourceHash)
+        let proof = incoming.receiver.manifest.resourceHash + ReticulumIdentity.fullHash(data + incoming.receiver.manifest.resourceHash)
+        try? await transmitRawPacket(Data([0x0f, 0x00]) + incoming.session.linkID + Data([0x05]) + proof)
+
+        let completeData: Data
+        if incoming.advertisement.totalSegments > 1 {
+            let key = incoming.advertisement.originalHash.hex
+            var accumulator = incomingSegmentAccumulators[key] ?? (try? ReticulumResourceSegmentAccumulator(originalHash: incoming.advertisement.originalHash, totalSegments: incoming.advertisement.totalSegments, totalDataSize: incoming.advertisement.dataSize))
+            guard var accumulator else { return }
+            do { try accumulator.accept(data, segmentIndex: incoming.advertisement.segmentIndex, originalHash: incoming.advertisement.originalHash, totalSegments: incoming.advertisement.totalSegments) } catch { return }
+            if accumulator.isComplete {
+                guard let assembled = try? accumulator.assemble() else { return }
+                incomingSegmentAccumulators.removeValue(forKey: key); completeData = assembled
+            } else {
+                incomingSegmentAccumulators[key] = accumulator
+                return
+            }
+        } else { completeData = data }
+
+        guard let envelope = try? LXMFResourceEnvelope(encoded: completeData),
               let identity = identityForIncomingResource(envelope: envelope, session: incoming.session) else { return }
         let expectedNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         guard envelope.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + identity.hash),
@@ -870,9 +890,7 @@ public final class SidebandStore {
         }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }) else { return }
         messages.append(Message(conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment]))
-        receivedResourceHashes.insert(resourceHash); save()
-        let proof = incoming.receiver.manifest.resourceHash + ReticulumIdentity.fullHash(data + incoming.receiver.manifest.resourceHash)
-        try? await transmitRawPacket(Data([0x0f, 0x00]) + incoming.session.linkID + Data([0x05]) + proof)
+        save()
         await notifications.notifyIncoming(title: conversation.displayName, body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody)
     }
 
