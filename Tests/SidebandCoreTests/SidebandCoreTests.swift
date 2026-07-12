@@ -77,6 +77,28 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: storedURL.path))
 }
 
+@Test func resourcePartsVerifyReassembleAndReportProgress() throws {
+    let data = Data((0..<1_200).map { UInt8($0 % 251) })
+    let manifest = try ReticulumResourceManifest(data: data, resourceRandomHash: Data([1, 2, 3, 4]), mapRandomHash: Data([5, 6, 7, 8]))
+    let parts = try manifest.parts(from: data)
+    var receiver = ReticulumResourceReceiver(manifest: manifest)
+
+    #expect(manifest.partCount == 3)
+    try receiver.accept(part: parts[1], at: 1)
+    #expect(receiver.progress == 1.0 / 3.0)
+    try receiver.accept(part: parts[0], at: 0)
+    try receiver.accept(part: parts[2], at: 2)
+    #expect(receiver.isComplete)
+    #expect(try receiver.assemble() == data)
+}
+
+@Test func resourceReceiverRejectsCorruptParts() throws {
+    let data = Data(repeating: 0x41, count: 600)
+    let manifest = try ReticulumResourceManifest(data: data, resourceRandomHash: Data([1, 1, 1, 1]), mapRandomHash: Data([2, 2, 2, 2]))
+    var receiver = ReticulumResourceReceiver(manifest: manifest)
+    #expect(throws: ResourceError.self) { try receiver.accept(part: Data(repeating: 0x42, count: 465), at: 0) }
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))
