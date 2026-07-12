@@ -40,6 +40,7 @@ public final class SidebandStore {
     public let reachability = NetworkReachability()
     public let notifications = LocalNotificationManager()
     public let backgroundRefresh = BackgroundRefreshCoordinator()
+    public let attachmentStore: AttachmentStore
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
     public var selectedConversationID: UUID?
@@ -72,6 +73,7 @@ public final class SidebandStore {
     public init(transport: any MessageTransport = QueuedTransport(), persistenceURL: URL? = nil) {
         self.transport = transport
         self.persistenceURL = persistenceURL ?? Self.defaultPersistenceURL()
+        attachmentStore = AttachmentStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "Attachments", directoryHint: .isDirectory))
         let identityMaterial = SecureIdentityStore.loadOrCreate(account: "reticulum.transport", legacyDefaultsKey: "reticulumTransportIdentity")
         transportIdentity = (try? ReticulumIdentity(privateKey: identityMaterial)) ?? ReticulumIdentity()
         let interfaceMaterial = UserDefaults.standard.data(forKey: "reticulumTCPInterfaceHash") ?? ReticulumIdentity.fullHash(Data(UUID().uuidString.utf8))

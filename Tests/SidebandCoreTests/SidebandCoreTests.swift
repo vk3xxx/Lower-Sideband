@@ -63,6 +63,20 @@ import Testing
     #expect(store.recoveredOutboundCount == 1)
 }
 
+@Test func attachmentStoreImportsFilesAndReturnsDurableMetadata() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let source = root.appending(path: "sample.txt")
+    try Data("attachment".utf8).write(to: source)
+    let store = AttachmentStore(directory: root.appending(path: "stored"))
+    let attachment = try await store.importFile(from: source)
+    let storedURL = await store.url(for: attachment)
+
+    #expect(attachment.filename == "sample.txt")
+    #expect(attachment.byteCount == 10)
+    #expect(FileManager.default.fileExists(atPath: storedURL.path))
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

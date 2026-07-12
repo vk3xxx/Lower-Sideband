@@ -28,14 +28,42 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var timestamp: Date
     public var direction: Direction
     public var state: DeliveryState
+    public var attachments: [Attachment]
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = []) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
         self.timestamp = timestamp
         self.direction = direction
         self.state = state
+        self.attachments = attachments
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        conversationID = try values.decode(UUID.self, forKey: .conversationID)
+        body = try values.decode(String.self, forKey: .body)
+        timestamp = try values.decode(Date.self, forKey: .timestamp)
+        direction = try values.decode(Direction.self, forKey: .direction)
+        state = try values.decode(DeliveryState.self, forKey: .state)
+        attachments = try values.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
+    }
+}
+
+public struct Attachment: Identifiable, Codable, Hashable, Sendable {
+    public enum TransferState: String, Codable, Sendable { case local, queued, transferring, available, failed }
+    public let id: UUID
+    public var filename: String
+    public var mimeType: String?
+    public var byteCount: Int
+    public var relativePath: String
+    public var state: TransferState
+
+    public init(id: UUID = UUID(), filename: String, mimeType: String? = nil, byteCount: Int, relativePath: String, state: TransferState) {
+        self.id = id; self.filename = filename; self.mimeType = mimeType; self.byteCount = byteCount; self.relativePath = relativePath; self.state = state
     }
 }
 
