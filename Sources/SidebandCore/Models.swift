@@ -62,17 +62,19 @@ public struct Attachment: Identifiable, Codable, Hashable, Sendable {
     public var relativePath: String
     public var state: TransferState
     public var progress: Double
+    public var contentHash: Data?
 
-    public init(id: UUID = UUID(), filename: String, mimeType: String? = nil, byteCount: Int, relativePath: String, state: TransferState, progress: Double = 0) {
-        self.id = id; self.filename = filename; self.mimeType = mimeType; self.byteCount = byteCount; self.relativePath = relativePath; self.state = state; self.progress = progress
+    public init(id: UUID = UUID(), filename: String, mimeType: String? = nil, byteCount: Int, relativePath: String, state: TransferState, progress: Double = 0, contentHash: Data? = nil) {
+        self.id = id; self.filename = filename; self.mimeType = mimeType; self.byteCount = byteCount; self.relativePath = relativePath; self.state = state; self.progress = progress; self.contentHash = contentHash
     }
-    private enum CodingKeys: String, CodingKey { case id, filename, mimeType, byteCount, relativePath, state, progress }
+    private enum CodingKeys: String, CodingKey { case id, filename, mimeType, byteCount, relativePath, state, progress, contentHash }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id); filename = try values.decode(String.self, forKey: .filename)
         mimeType = try values.decodeIfPresent(String.self, forKey: .mimeType); byteCount = try values.decode(Int.self, forKey: .byteCount)
         relativePath = try values.decode(String.self, forKey: .relativePath); state = try values.decode(TransferState.self, forKey: .state)
         progress = try values.decodeIfPresent(Double.self, forKey: .progress) ?? 0
+        contentHash = try values.decodeIfPresent(Data.self, forKey: .contentHash)
     }
 }
 

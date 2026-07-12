@@ -75,6 +75,19 @@ import Testing
     #expect(attachment.filename == "sample.txt")
     #expect(attachment.byteCount == 10)
     #expect(FileManager.default.fileExists(atPath: storedURL.path))
+    #expect(attachment.contentHash != nil)
+}
+
+@Test func attachmentStoreRejectsCorruptedLocalFiles() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let source = root.appending(path: "original.bin")
+    try Data([1, 2, 3]).write(to: source)
+    let store = AttachmentStore(directory: root.appending(path: "stored"))
+    let attachment = try await store.importFile(from: source)
+    try Data([9, 9, 9]).write(to: await store.url(for: attachment))
+    do { _ = try await store.read(attachment); Issue.record("Corrupted attachment was accepted") }
+    catch AttachmentStoreError.integrityMismatch { }
 }
 
 @Test func resourcePartsVerifyReassembleAndReportProgress() throws {

@@ -781,8 +781,7 @@ public final class SidebandStore {
         let sourceHash = ReticulumIdentity.truncatedHash(nameHash + messagingIdentity.hash)
         for attachment in message.attachments where attachment.state == .local || attachment.state == .queued {
             do {
-                let url = await attachmentStore.url(for: attachment)
-                let data = try Data(contentsOf: url)
+                let data = try await attachmentStore.read(attachment)
                 let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, groupID: message.id, fileData: data).encode()
                 let segments = try ReticulumResourceSegmentPlanner.prepare(data: envelope, session: session, hasMetadata: true)
                 guard let first = segments.first else { continue }

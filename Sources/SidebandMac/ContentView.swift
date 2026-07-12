@@ -470,8 +470,7 @@ private struct InlineImageAttachmentView: View {
             else if attachment.state == .transferring { Button("Cancel", action: onCancel).font(.caption) }
         }
         .task(id: attachment.id) {
-            let url = await store.url(for: attachment)
-            guard let data = try? Data(contentsOf: url) else { return }
+            guard let data = try? await store.read(attachment) else { return }
             image = thumbnail(from: data, maximumPixelSize: 640)
         }
         .sheet(isPresented: $showingPreview) {
@@ -480,8 +479,7 @@ private struct InlineImageAttachmentView: View {
                 if let preview = fullImage ?? image { swiftUIImage(preview).resizable().scaledToFit() }
             }.padding().frame(minWidth: 320, minHeight: 420)
                 .task {
-                    let url = await store.url(for: attachment)
-                    if let data = try? Data(contentsOf: url) { fullImage = PlatformImage(data: data) }
+                    if let data = try? await store.read(attachment) { fullImage = PlatformImage(data: data) }
                 }
         }
     }
