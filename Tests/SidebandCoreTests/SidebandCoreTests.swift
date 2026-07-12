@@ -99,6 +99,19 @@ import Testing
     #expect(throws: ResourceError.self) { try receiver.accept(part: Data(repeating: 0x42, count: 465), at: 0) }
 }
 
+@Test func resourceAdvertisementRoundTripsProtocolFields() throws {
+    let data = Data(repeating: 0x31, count: 900)
+    let manifest = try ReticulumResourceManifest(data: data, resourceRandomHash: Data([1, 2, 3, 4]), mapRandomHash: Data([5, 6, 7, 8]))
+    let advertisement = ReticulumResourceAdvertisement(manifest: manifest)
+    let decoded = try ReticulumResourceAdvertisement(encoded: advertisement.encode())
+
+    #expect(decoded.transferSize == 900)
+    #expect(decoded.partCount == 2)
+    #expect(decoded.resourceHash == manifest.resourceHash)
+    #expect(decoded.partHashes == manifest.partHashes)
+    #expect(decoded.flags == 0x01)
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

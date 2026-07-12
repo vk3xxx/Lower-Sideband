@@ -14,6 +14,25 @@ public enum MessagePack {
     }
 
     public static let null = Data([0xc0])
+    public static func map(_ entries: [(String, Data)]) -> Data {
+        precondition(entries.count < 16)
+        var output = Data([0x80 | UInt8(entries.count)])
+        for (key, value) in entries { output.append(string(key)); output.append(value) }
+        return output
+    }
+    public static func string(_ value: String) -> Data {
+        let bytes = Data(value.utf8)
+        precondition(bytes.count < 32)
+        return Data([0xa0 | UInt8(bytes.count)]) + bytes
+    }
+    public static func unsigned(_ value: UInt64) -> Data {
+        if value <= 0x7f { return Data([UInt8(value)]) }
+        if value <= 0xff { return Data([0xcc, UInt8(value)]) }
+        if value <= 0xffff { return Data([0xcd, UInt8(truncatingIfNeeded: value >> 8), UInt8(truncatingIfNeeded: value)]) }
+        if value <= 0xffff_ffff { return Data([0xce, UInt8(truncatingIfNeeded: value >> 24), UInt8(truncatingIfNeeded: value >> 16), UInt8(truncatingIfNeeded: value >> 8), UInt8(truncatingIfNeeded: value)]) }
+        var big = value.bigEndian
+        return Data([0xcf]) + withUnsafeBytes(of: &big) { Data($0) }
+    }
     public static func lxmfPayload(timestamp: Double, title: Data, content: Data) -> Data {
         var output = Data([0x94])
         output.append(0xcb)
