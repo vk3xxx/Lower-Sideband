@@ -39,6 +39,7 @@ public final class SidebandStore {
     public let autoInterfaceDiscovery = AutoInterfaceDiscovery()
     public let reachability = NetworkReachability()
     public let notifications = LocalNotificationManager()
+    public let backgroundRefresh = BackgroundRefreshCoordinator()
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
     public var selectedConversationID: UUID?
@@ -89,6 +90,7 @@ public final class SidebandStore {
         receivedLXMFIDs = Set(UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? [])
         load()
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
+        backgroundRefresh.register { [weak self] in await self?.performBackgroundRefresh() }
     }
 
     public var selectedConversation: Conversation? {
@@ -187,6 +189,12 @@ public final class SidebandStore {
 
     public func applicationDidEnterBackground() {
         stopPeriodicPropagationSync()
+        backgroundRefresh.schedule()
+    }
+
+    private func performBackgroundRefresh() async {
+        if autoConnectEnabled, networkState != .ready { await connectNetwork() }
+        await syncPropagationNow()
     }
 
     public func syncPropagationNow() async {

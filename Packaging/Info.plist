@@ -20,5 +20,9 @@
         <string>_rns._tcp</string>
         <string>_sideband._tcp</string>
     </array>
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array><string>io.unsigned.sideband.swift.refresh</string></array>
+    <key>UIBackgroundModes</key>
+    <array><string>fetch</string></array>
 </dict>
 </plist>
