@@ -101,6 +101,7 @@ private struct NetworkView: View {
                 GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
                 GridRow { Text("Reconnect"); Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) })) }
                 GridRow { Text("Transport"); Text("TCP · HDLC").foregroundStyle(.secondary) }
+                GridRow { Text("System network"); Text(reachabilityText).foregroundStyle(.secondary) }
             }.textFieldStyle(.roundedBorder).padding(6)
             }
             GroupBox("Routing") {
@@ -252,6 +253,11 @@ private struct NetworkView: View {
         if case .ready = store.networkState { return true }
         if case .connecting = store.networkState { return true }
         return false
+    }
+    private var reachabilityText: String {
+        let protocols = [store.reachability.supportsIPv4 ? "IPv4" : nil, store.reachability.supportsIPv6 ? "IPv6" : nil].compactMap { $0 }.joined(separator: "/")
+        let flags = [store.reachability.isExpensive ? "metered" : nil, store.reachability.isConstrained ? "constrained" : nil].compactMap { $0 }
+        return ([store.reachability.interfaceSummary, protocols] + flags).filter { !$0.isEmpty }.joined(separator: " · ")
     }
     private var statusText: String {
         switch store.networkState {

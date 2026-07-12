@@ -34,6 +34,7 @@ public final class SidebandStore {
     public var propagationNodeHash: String
     public let lanDiscovery = LANGatewayDiscovery()
     public let autoInterfaceDiscovery = AutoInterfaceDiscovery()
+    public let reachability = NetworkReachability()
     public private(set) var selectedGatewayName: String?
     public var selectedConversationID: UUID?
     public var lastError: String?
