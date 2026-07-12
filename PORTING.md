@@ -30,6 +30,13 @@
 | Direct and opportunistic inbound LXMF with delivery proofs | `SidebandStore`, `ReticulumProof` | Implemented, live Python interoperability tested |
 | Periodic propagation synchronization and lifecycle pause/resume | `SidebandStore` | Implemented |
 | iOS private identity persistence | `SecureIdentityStore` | Keychain-backed with legacy migration |
+| Receipt timeout and delivery escalation | `SidebandStore` | Implemented |
+| TCP reconnect, reachability and dual-stack fallback | `SidebandStore`, `NetworkReachability` | Implemented |
+| Relaunch-safe outbound recovery | Codable snapshot recovery | Implemented, tested |
+| LXMF announce display names | `LXMFAnnounceInfo` | Implemented, tested |
+| Verified incoming local notifications | `LocalNotificationManager` | Implemented, opt-in |
+| iOS background propagation refresh | `BackgroundRefreshCoordinator` | Implemented |
+| Attachment metadata and durable local storage | `Attachment`, `AttachmentStore` | Implemented; Resource transfer pending |
 | Reticulum routing/announces/link | Native Swift transport engine | In progress |
 | `LXMF.LXMRouter` | Native Swift LXMF router | Core direct, opportunistic and propagation delivery implemented; resources pending |
 | Identity and cryptography | CryptoKit-backed identity primitives | Implemented for current transport scope |

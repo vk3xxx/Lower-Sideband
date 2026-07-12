@@ -1,0 +1,27 @@
+name: Apple builds
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  macos-and-ios:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Toolchain
+        run: xcodebuild -version
+      - name: Swift tests
+        run: swift test
+      - name: macOS release build
+        run: swift build -c release
+      - name: iOS device build
+        run: >-
+          xcodebuild -scheme SidebandMac
+          -destination 'generic/platform=iOS'
+          -derivedDataPath .build/ios-ci
+          CODE_SIGNING_ALLOWED=NO build
