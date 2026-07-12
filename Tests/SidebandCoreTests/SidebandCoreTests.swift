@@ -112,6 +112,24 @@ import Testing
     #expect(decoded.flags == 0x01)
 }
 
+@Test func resourceNegotiationPacketsRoundTripOverEncryptedLink() throws {
+    let session = ReticulumLinkSession(linkID: Data(repeating: 0x11, count: 16), destinationHash: Data(repeating: 0x22, count: 16), peerPublicKey: Data(repeating: 0x33, count: 32), derivedKey: Data(0..<64), mtu: 500)
+    let data = Data(repeating: 0x44, count: 800)
+    let manifest = try ReticulumResourceManifest(data: data, resourceRandomHash: Data([1, 2, 3, 4]), mapRandomHash: Data([5, 6, 7, 8]))
+    let advertisement = ReticulumResourceAdvertisement(manifest: manifest)
+    let advertisementPacket = try ReticulumPacket(raw: session.resourceAdvertisementPacket(advertisement, iv: Data(repeating: 9, count: 16)))
+    let decodedAdvertisement = try ReticulumResourceAdvertisement(encoded: session.decrypt(advertisementPacket))
+    let request = try ReticulumResourceRequest(manifest: manifest, missingIndices: [0, 1])
+    let requestPacket = try ReticulumPacket(raw: session.resourceRequestPacket(request, iv: Data(repeating: 10, count: 16)))
+    let decodedRequest = try ReticulumResourceRequest(encoded: session.decrypt(requestPacket))
+
+    #expect(advertisementPacket.context == 0x02)
+    #expect(decodedAdvertisement.resourceHash == manifest.resourceHash)
+    #expect(requestPacket.context == 0x03)
+    #expect(decodedRequest.resourceHash == manifest.resourceHash)
+    #expect(decodedRequest.requestedPartHashes == manifest.partHashes)
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

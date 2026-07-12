@@ -89,6 +89,14 @@ public struct ReticulumLinkSession: Sendable {
         Data([0x0c, 0x00]) + linkID + Data([0xfa, 0xff])
     }
 
+    public func resourceAdvertisementPacket(_ advertisement: ReticulumResourceAdvertisement, hashMapSegment: Int = 0, iv: Data? = nil) throws -> Data {
+        try encryptedPacket(advertisement.encode(hashMapSegment: hashMapSegment), context: 0x02, iv: iv)
+    }
+
+    public func resourceRequestPacket(_ request: ReticulumResourceRequest, iv: Data? = nil) throws -> Data {
+        try encryptedPacket(request.encode(), context: 0x03, iv: iv)
+    }
+
     public enum SessionError: Error { case wrongLink }
 }
 
