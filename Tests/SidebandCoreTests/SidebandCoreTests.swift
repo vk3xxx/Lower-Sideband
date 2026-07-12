@@ -182,6 +182,18 @@ import Testing
     #expect(try receiver.nextRequest().requestedPartHashes.count == 4)
 }
 
+@Test func largeResourcesPrepareLinkedProtocolSegments() throws {
+    let session = ReticulumLinkSession(linkID: Data(repeating: 1, count: 16), destinationHash: Data(repeating: 2, count: 16), peerPublicKey: Data(repeating: 3, count: 32), derivedKey: Data(0..<64), mtu: 500)
+    let data = Data(repeating: 0x5a, count: ReticulumResourceSegmentPlanner.maximumEfficientSize * 2 + 17)
+    let segments = try ReticulumResourceSegmentPlanner.prepare(data: data, session: session, hasMetadata: true)
+
+    #expect(segments.count == 3)
+    #expect(segments.map(\.index) == [1, 2, 3])
+    #expect(segments.allSatisfy { $0.totalSegments == 3 && $0.originalHash == segments[0].manifest.resourceHash })
+    #expect(segments.allSatisfy { $0.advertisement.dataSize == data.count && $0.advertisement.flags & 0x04 == 0x04 })
+    #expect(segments[2].manifest.dataSize == 17)
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))
