@@ -5,11 +5,12 @@ public struct LXMFResourceEnvelope: Equatable, Sendable {
     public let mimeType: String?
     public let messageBody: String
     public let sourceHash: Data
+    public let groupID: UUID
     public let fileData: Data
 
-    public init(filename: String, mimeType: String?, messageBody: String, sourceHash: Data, fileData: Data) throws {
+    public init(filename: String, mimeType: String?, messageBody: String, sourceHash: Data, groupID: UUID = UUID(), fileData: Data) throws {
         guard sourceHash.count == 16 else { throw EnvelopeError.invalidSource }
-        self.filename = filename; self.mimeType = mimeType; self.messageBody = messageBody; self.sourceHash = sourceHash; self.fileData = fileData
+        self.filename = filename; self.mimeType = mimeType; self.messageBody = messageBody; self.sourceHash = sourceHash; self.groupID = groupID; self.fileData = fileData
     }
 
     public func encode() throws -> Data {
@@ -17,7 +18,8 @@ public struct LXMFResourceEnvelope: Equatable, Sendable {
             ("n", MessagePack.binary(Data(filename.utf8))),
             ("m", mimeType.map { MessagePack.binary(Data($0.utf8)) } ?? MessagePack.null),
             ("b", MessagePack.binary(Data(messageBody.utf8))),
-            ("s", MessagePack.binary(sourceHash))
+            ("s", MessagePack.binary(sourceHash)),
+            ("g", MessagePack.binary(groupID.data))
         ])
         guard metadata.count <= 0xff_ffff else { throw EnvelopeError.metadataTooLarge }
         return Data([UInt8(metadata.count >> 16), UInt8((metadata.count >> 8) & 0xff), UInt8(metadata.count & 0xff)]) + metadata + fileData
@@ -31,8 +33,9 @@ public struct LXMFResourceEnvelope: Equatable, Sendable {
         func binary(_ key: String) -> Data? { if case let .binary(data)? = value(key) { data } else { nil } }
         guard let nameData = binary("n"), let filename = String(data: nameData, encoding: .utf8),
               let bodyData = binary("b"), let messageBody = String(data: bodyData, encoding: .utf8),
-              let sourceHash = binary("s"), sourceHash.count == 16 else { throw EnvelopeError.invalidMetadata }
-        self.filename = filename; self.messageBody = messageBody; self.sourceHash = sourceHash
+              let sourceHash = binary("s"), sourceHash.count == 16,
+              let groupData = binary("g"), let groupID = UUID(data: groupData) else { throw EnvelopeError.invalidMetadata }
+        self.filename = filename; self.messageBody = messageBody; self.sourceHash = sourceHash; self.groupID = groupID
         if let mimeData = binary("m") { mimeType = String(data: mimeData, encoding: .utf8) } else { mimeType = nil }
         fileData = encoded.subdata(in: (3 + length)..<encoded.count)
     }
@@ -42,4 +45,14 @@ public struct LXMFResourceEnvelope: Equatable, Sendable {
 
 private extension Data {
     static func + (lhs: Data, rhs: Data) -> Data { var value = lhs; value.append(rhs); return value }
+}
+
+private extension UUID {
+    var data: Data { var value = uuid; return withUnsafeBytes(of: &value) { Data($0) } }
+    init?(data: Data) {
+        guard data.count == 16 else { return nil }
+        var value: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        withUnsafeMutableBytes(of: &value) { data.copyBytes(to: $0) }
+        self.init(uuid: value)
+    }
 }

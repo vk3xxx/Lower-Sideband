@@ -150,7 +150,8 @@ import Testing
 
 @Test func attachmentResourceEnvelopeRoundTripsMetadataAndFile() throws {
     let source = Data(repeating: 0x44, count: 16)
-    let envelope = try LXMFResourceEnvelope(filename: "photo.jpg", mimeType: "image/jpeg", messageBody: "A photo", sourceHash: source, fileData: Data([1, 2, 3]))
+    let groupID = UUID()
+    let envelope = try LXMFResourceEnvelope(filename: "photo.jpg", mimeType: "image/jpeg", messageBody: "A photo", sourceHash: source, groupID: groupID, fileData: Data([1, 2, 3]))
     let decoded = try LXMFResourceEnvelope(encoded: envelope.encode())
 
     #expect(decoded.filename == "photo.jpg")
@@ -158,6 +159,7 @@ import Testing
     #expect(decoded.messageBody == "A photo")
     #expect(decoded.sourceHash == source)
     #expect(decoded.fileData == Data([1, 2, 3]))
+    #expect(decoded.groupID == groupID)
 }
 
 @Test func resourceHashMapUpdatesContinueBeyondAdvertisementWindow() throws {

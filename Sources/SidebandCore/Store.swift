@@ -758,7 +758,7 @@ public final class SidebandStore {
             do {
                 let url = await attachmentStore.url(for: attachment)
                 let data = try Data(contentsOf: url)
-                let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, fileData: data).encode()
+                let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, groupID: message.id, fileData: data).encode()
                 let segments = try ReticulumResourceSegmentPlanner.prepare(data: envelope, session: session, hasMetadata: true)
                 guard let first = segments.first else { continue }
                 registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: message.id, attachmentID: attachment.id, session: session)
@@ -900,7 +900,11 @@ public final class SidebandStore {
             _ = addConversation(destinationHash: source, displayName: name)
         }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }) else { return }
-        messages.append(Message(conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment]))
+        if let index = messages.firstIndex(where: { $0.id == envelope.groupID && $0.conversationID == conversation.id }) {
+            messages[index].attachments.append(attachment)
+        } else {
+            messages.append(Message(id: envelope.groupID, conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment]))
+        }
         incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
         save()
         await notifications.notifyIncoming(title: conversation.displayName, body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody)
