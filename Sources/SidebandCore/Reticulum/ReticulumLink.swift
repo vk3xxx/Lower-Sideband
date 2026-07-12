@@ -101,6 +101,11 @@ public struct ReticulumLinkSession: Sendable {
         try encryptedPacket(update.encode(), context: 0x04, iv: iv)
     }
 
+    public func resourceCancelPacket(resourceHash: Data, initiatedBySender: Bool, iv: Data? = nil) throws -> Data {
+        guard resourceHash.count == 32 else { throw SessionError.invalidResource }
+        return try encryptedPacket(resourceHash, context: initiatedBySender ? 0x06 : 0x07, iv: iv)
+    }
+
     public func encryptResourcePayload(_ data: Data, iv: Data? = nil, payloadRandomHash: Data? = nil) throws -> Data {
         let prefix = payloadRandomHash ?? Data((0..<4).map { _ in UInt8.random(in: .min ... .max) })
         guard prefix.count == 4 else { throw SessionError.invalidResource }

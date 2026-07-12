@@ -204,6 +204,16 @@ import Testing
     #expect(try accumulator.assemble() == Data("abcdef".utf8))
 }
 
+@Test func resourceCancellationUsesReticulumContexts() throws {
+    let session = ReticulumLinkSession(linkID: Data(repeating: 1, count: 16), destinationHash: Data(repeating: 2, count: 16), peerPublicKey: Data(repeating: 3, count: 32), derivedKey: Data(0..<64), mtu: 500)
+    let hash = Data(repeating: 4, count: 32)
+    let initiator = try ReticulumPacket(raw: session.resourceCancelPacket(resourceHash: hash, initiatedBySender: true, iv: Data(repeating: 5, count: 16)))
+    let receiver = try ReticulumPacket(raw: session.resourceCancelPacket(resourceHash: hash, initiatedBySender: false, iv: Data(repeating: 6, count: 16)))
+    #expect(initiator.context == 0x06)
+    #expect(receiver.context == 0x07)
+    #expect(try session.decrypt(initiator) == hash)
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

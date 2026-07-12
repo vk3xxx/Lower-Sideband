@@ -60,10 +60,11 @@ public final class SidebandStore {
         let manifest: ReticulumResourceManifest; let parts: [Data]; let expectedProof: Data
         let messageID: UUID; let attachmentID: UUID; let linkID: String
         let segmentIndex: Int; let totalSegments: Int; let remainingSegments: [ReticulumPreparedResourceSegment]
+        var timeoutToken = UUID()
         var sentIndices: Set<Int> = []
     }
     private var outgoingResources: [String: OutgoingResource] = [:]
-    private struct IncomingResource { let session: ReticulumLinkSession; let advertisement: ReticulumResourceAdvertisement; var receiver: ReticulumResourceReceiver }
+    private struct IncomingResource { let session: ReticulumLinkSession; let advertisement: ReticulumResourceAdvertisement; var receiver: ReticulumResourceReceiver; var timeoutToken = UUID() }
     private var incomingResources: [String: IncomingResource] = [:]
     private var incomingSegmentAccumulators: [String: ReticulumResourceSegmentAccumulator] = [:]
     private var receivedResourceHashes: Set<String> = []
@@ -529,6 +530,10 @@ public final class SidebandStore {
                 handleResourceHashMapUpdate(plaintext, session: session)
                 return
             }
+            if packet.context == 0x06 || packet.context == 0x07 {
+                cancelResource(hash: plaintext.hex)
+                return
+            }
             if inboundLinkIDs.contains(session.linkID.hex) {
                 handleInboundLinkPacket(packet, plaintext: plaintext, session: session)
                 return
@@ -769,10 +774,14 @@ public final class SidebandStore {
             messageID: messageID, attachmentID: attachmentID, linkID: session.linkID.hex,
             segmentIndex: segment.index, totalSegments: segment.totalSegments, remainingSegments: remaining
         )
+        scheduleResourceTimeout(hash: segment.manifest.resourceHash.hex, incoming: false)
     }
 
     private func handleResourceRequest(_ plaintext: Data, session: ReticulumLinkSession) {
         guard let request = try? ReticulumResourceRequest(encoded: plaintext), var resource = outgoingResources[request.resourceHash.hex], resource.linkID == session.linkID.hex else { return }
+        resource.timeoutToken = UUID()
+        outgoingResources[request.resourceHash.hex] = resource
+        scheduleResourceTimeout(hash: request.resourceHash.hex, incoming: false)
         Task {
             for requestedHash in request.requestedPartHashes {
                 guard let index = resource.manifest.partHashes.firstIndex(of: requestedHash) else { continue }
@@ -821,6 +830,7 @@ public final class SidebandStore {
               !receivedResourceHashes.contains(advertisement.resourceHash.hex),
               let manifest = try? ReticulumResourceManifest(advertisement: advertisement) else { return }
         incomingResources[manifest.resourceHash.hex] = IncomingResource(session: session, advertisement: advertisement, receiver: ReticulumResourceReceiver(manifest: manifest))
+        scheduleResourceTimeout(hash: manifest.resourceHash.hex, incoming: true)
         requestIncomingResourceParts(resourceHash: manifest.resourceHash.hex)
     }
 
@@ -834,7 +844,9 @@ public final class SidebandStore {
         guard let update = try? ReticulumResourceHashMapUpdate(encoded: plaintext),
               var incoming = incomingResources[update.resourceHash.hex], incoming.session.linkID == session.linkID else { return }
         do { try incoming.receiver.applyHashMap(segment: update.segment, hashes: update.partHashes) } catch { return }
+        incoming.timeoutToken = UUID()
         incomingResources[update.resourceHash.hex] = incoming
+        scheduleResourceTimeout(hash: update.resourceHash.hex, incoming: true)
         requestIncomingResourceParts(resourceHash: update.resourceHash.hex)
     }
 
@@ -849,7 +861,9 @@ public final class SidebandStore {
         var incoming = match.value
         guard let index = incoming.receiver.missingPartIndices.first(where: { incoming.receiver.expectedHash(at: $0) == Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4)) }) else { return }
         do { try incoming.receiver.accept(part: part, at: index) } catch { return }
+        incoming.timeoutToken = UUID()
         incomingResources[hash] = incoming
+        scheduleResourceTimeout(hash: hash, incoming: true)
         if incoming.receiver.isComplete { Task { await finishIncomingResource(resourceHash: hash) } }
         else if incoming.receiver.receivedPartCount.isMultiple(of: 4) { requestIncomingResourceParts(resourceHash: hash) }
     }
@@ -897,6 +911,34 @@ public final class SidebandStore {
     private func identityForIncomingResource(envelope: LXMFResourceEnvelope, session: ReticulumLinkSession) -> ReticulumIdentity? {
         if let identity = inboundRemoteIdentities[session.linkID.hex] { return identity }
         return discoveries.first(where: { $0.destinationHash == envelope.sourceHash.hex })?.publicKey.flatMap { try? ReticulumIdentity(publicKey: $0) }
+    }
+
+    private func scheduleResourceTimeout(hash: String, incoming: Bool) {
+        let token = incoming ? incomingResources[hash]?.timeoutToken : outgoingResources[hash]?.timeoutToken
+        guard let token else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            guard !Task.isCancelled else { return }
+            await self?.expireResource(hash: hash, token: token, incoming: incoming)
+        }
+    }
+
+    private func expireResource(hash: String, token: UUID, incoming: Bool) async {
+        if incoming {
+            guard let resource = incomingResources[hash], resource.timeoutToken == token else { return }
+            incomingResources.removeValue(forKey: hash)
+            try? await transmitRawPacket(try resource.session.resourceCancelPacket(resourceHash: resource.receiver.manifest.resourceHash, initiatedBySender: false))
+        } else {
+            guard let resource = outgoingResources[hash], resource.timeoutToken == token else { return }
+            outgoingResources.removeValue(forKey: hash)
+            updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .failed, progress: 0)
+            if let session = activeLinks[resource.linkID] { try? await transmitRawPacket(try session.resourceCancelPacket(resourceHash: resource.manifest.resourceHash, initiatedBySender: true)) }
+        }
+    }
+
+    private func cancelResource(hash: String) {
+        if let outgoing = outgoingResources.removeValue(forKey: hash) { updateAttachment(messageID: outgoing.messageID, attachmentID: outgoing.attachmentID, state: .failed, progress: 0) }
+        incomingResources.removeValue(forKey: hash)
     }
 
     private func updateAttachment(messageID: UUID, attachmentID: UUID, state: Attachment.TransferState, progress: Double) {
