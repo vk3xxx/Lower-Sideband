@@ -227,6 +227,12 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: root.appending(path: hash.hex).path))
 }
 
+@Test func resourceSafetyLimitsRejectOversizedTransfers() {
+    #expect(ReticulumResourceLimits.accepts(dataSize: 1024, transferSize: 1100, segments: 1))
+    #expect(!ReticulumResourceLimits.accepts(dataSize: ReticulumResourceLimits.maximumAttachmentBytes + 100_000, transferSize: 1, segments: 1))
+    #expect(!ReticulumResourceLimits.accepts(dataSize: 1, transferSize: 1, segments: 66))
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

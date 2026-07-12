@@ -7,6 +7,8 @@ public actor AttachmentStore {
     public init(directory: URL) { self.directory = directory }
 
     public func importFile(from source: URL, preferredName: String? = nil) throws -> Attachment {
+        let sourceValues = try source.resourceValues(forKeys: [.fileSizeKey])
+        guard (sourceValues.fileSize ?? 0) <= ReticulumResourceLimits.maximumAttachmentBytes else { throw AttachmentStoreError.tooLarge }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let id = UUID()
         let originalName = preferredName ?? source.lastPathComponent
@@ -30,3 +32,5 @@ public actor AttachmentStore {
     public func url(for attachment: Attachment) -> URL { directory.appending(path: attachment.relativePath) }
     public func remove(_ attachment: Attachment) throws { try FileManager.default.removeItem(at: url(for: attachment)) }
 }
+
+public enum AttachmentStoreError: Error { case tooLarge }

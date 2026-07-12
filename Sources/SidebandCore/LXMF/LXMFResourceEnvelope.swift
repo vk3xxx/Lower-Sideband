@@ -52,7 +52,7 @@ private extension UUID {
     init?(data: Data) {
         guard data.count == 16 else { return nil }
         var value: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        withUnsafeMutableBytes(of: &value) { data.copyBytes(to: $0) }
+        _ = withUnsafeMutableBytes(of: &value) { data.copyBytes(to: $0) }
         self.init(uuid: value)
     }
 }

@@ -829,6 +829,8 @@ public final class SidebandStore {
     private func acceptResourceAdvertisement(_ plaintext: Data, session: ReticulumLinkSession) {
         guard let advertisement = try? ReticulumResourceAdvertisement(encoded: plaintext),
               advertisement.flags & 0x01 == 0x01, advertisement.flags & 0x20 == 0x20,
+              incomingResources.count < ReticulumResourceLimits.maximumConcurrentIncoming,
+              ReticulumResourceLimits.accepts(dataSize: advertisement.dataSize, transferSize: advertisement.transferSize, segments: advertisement.totalSegments),
               !receivedResourceHashes.contains(advertisement.resourceHash.hex),
               let manifest = try? ReticulumResourceManifest(advertisement: advertisement) else { return }
         incomingResources[manifest.resourceHash.hex] = IncomingResource(session: session, advertisement: advertisement, receiver: ReticulumResourceReceiver(manifest: manifest))
