@@ -27,6 +27,7 @@ public final class SidebandStore {
     public private(set) var lastPropagationSync: Date?
     public private(set) var deliveryTimeoutCount = 0
     public private(set) var reconnectDelaySeconds: Int?
+    public private(set) var recoveredOutboundCount = 0
     public var networkHost: String
     public var networkIPv6Host: String
     public var networkPort: Int
@@ -778,8 +779,13 @@ public final class SidebandStore {
               let snapshot = try? JSONDecoder.sideband.decode(AppSnapshot.self, from: data) else { return }
         conversations = snapshot.conversations
         messages = snapshot.messages
+        for index in messages.indices where messages[index].direction == .outgoing && messages[index].state == .sent {
+            messages[index].state = .queued
+            recoveredOutboundCount += 1
+        }
         discoveries = snapshot.discoveries
         selectedConversationID = conversations.first?.id
+        if recoveredOutboundCount > 0 { save() }
     }
 
     private func save() {

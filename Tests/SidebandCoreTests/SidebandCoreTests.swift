@@ -49,6 +49,20 @@ import Testing
     #expect(store.messages[0].state == .queued)
 }
 
+@MainActor @Test func recoversUnprovedSentOutboxAcrossRelaunch() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let message = Message(conversationID: conversation.id, body: "retry me", direction: .outgoing, state: .sent)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [message])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(store.messages[0].state == .queued)
+    #expect(store.recoveredOutboundCount == 1)
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))
