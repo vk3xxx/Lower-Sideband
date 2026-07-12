@@ -8,39 +8,37 @@ public struct ReticulumResourceManifest: Equatable, Sendable {
     public let size: Int
     public let dataSize: Int
     public let sdu: Int
-    public let resourceRandomHash: Data
-    public let mapRandomHash: Data
+    public let randomHash: Data
     public let resourceHash: Data
     public let partHashes: [Data]
 
     public var partCount: Int { partHashes.count }
 
-    public init(data: Data, sdu: Int = Self.defaultSDU, resourceRandomHash: Data, mapRandomHash: Data) throws {
-        try self.init(data: data, transferData: data, sdu: sdu, resourceRandomHash: resourceRandomHash, mapRandomHash: mapRandomHash)
+    public init(data: Data, sdu: Int = Self.defaultSDU, randomHash: Data) throws {
+        try self.init(data: data, transferData: data, sdu: sdu, randomHash: randomHash)
     }
 
-    public init(data: Data, transferData: Data, sdu: Int = Self.defaultSDU, resourceRandomHash: Data, mapRandomHash: Data) throws {
-        guard sdu > 0, resourceRandomHash.count == Self.randomHashLength, mapRandomHash.count == Self.randomHashLength else { throw ResourceError.invalidManifest }
+    public init(data: Data, transferData: Data, sdu: Int = Self.defaultSDU, randomHash: Data) throws {
+        guard sdu > 0, randomHash.count == Self.randomHashLength else { throw ResourceError.invalidManifest }
         size = transferData.count
         dataSize = data.count
         self.sdu = sdu
-        self.resourceRandomHash = resourceRandomHash
-        self.mapRandomHash = mapRandomHash
-        resourceHash = ReticulumIdentity.fullHash(data + resourceRandomHash)
+        self.randomHash = randomHash
+        resourceHash = ReticulumIdentity.fullHash(data + randomHash)
         let parts = transferData.chunks(of: sdu)
-        partHashes = parts.map { Data(ReticulumIdentity.fullHash($0 + mapRandomHash).prefix(Self.mapHashLength)) }
+        partHashes = parts.map { Data(ReticulumIdentity.fullHash($0 + randomHash).prefix(Self.mapHashLength)) }
         guard Set(partHashes).count == partHashes.count else { throw ResourceError.mapHashCollision }
     }
 
     public func parts(from transferData: Data) throws -> [Data] {
         guard transferData.count == size else { throw ResourceError.hashMismatch }
         let parts = transferData.chunks(of: sdu)
-        guard parts.map({ Data(ReticulumIdentity.fullHash($0 + mapRandomHash).prefix(Self.mapHashLength)) }) == partHashes else { throw ResourceError.hashMismatch }
+        guard parts.map({ Data(ReticulumIdentity.fullHash($0 + randomHash).prefix(Self.mapHashLength)) }) == partHashes else { throw ResourceError.hashMismatch }
         return parts
     }
 
     public func validate(data: Data) -> Bool {
-        data.count == dataSize && ReticulumIdentity.fullHash(data + resourceRandomHash) == resourceHash
+        data.count == dataSize && ReticulumIdentity.fullHash(data + randomHash) == resourceHash
     }
 }
 
@@ -56,7 +54,7 @@ public struct ReticulumResourceReceiver: Sendable {
 
     public mutating func accept(part: Data, at index: Int) throws {
         guard manifest.partHashes.indices.contains(index) else { throw ResourceError.invalidPartIndex }
-        let hash = Data(ReticulumIdentity.fullHash(part + manifest.mapRandomHash).prefix(ReticulumResourceManifest.mapHashLength))
+        let hash = Data(ReticulumIdentity.fullHash(part + manifest.randomHash).prefix(ReticulumResourceManifest.mapHashLength))
         guard hash == manifest.partHashes[index] else { throw ResourceError.hashMismatch }
         received[index] = part
     }

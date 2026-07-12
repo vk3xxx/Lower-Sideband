@@ -79,7 +79,7 @@ import Testing
 
 @Test func resourcePartsVerifyReassembleAndReportProgress() throws {
     let data = Data((0..<1_200).map { UInt8($0 % 251) })
-    let manifest = try ReticulumResourceManifest(data: data, resourceRandomHash: Data([1, 2, 3, 4]), mapRandomHash: Data([5, 6, 7, 8]))
+    let manifest = try ReticulumResourceManifest(data: data, randomHash: Data([1, 2, 3, 4]))
     let parts = try manifest.parts(from: data)
     var receiver = ReticulumResourceReceiver(manifest: manifest)
 
@@ -94,14 +94,14 @@ import Testing
 
 @Test func resourceReceiverRejectsCorruptParts() throws {
     let data = Data(repeating: 0x41, count: 600)
-    let manifest = try ReticulumResourceManifest(data: data, resourceRandomHash: Data([1, 1, 1, 1]), mapRandomHash: Data([2, 2, 2, 2]))
+    let manifest = try ReticulumResourceManifest(data: data, randomHash: Data([1, 1, 1, 1]))
     var receiver = ReticulumResourceReceiver(manifest: manifest)
     #expect(throws: ResourceError.self) { try receiver.accept(part: Data(repeating: 0x42, count: 465), at: 0) }
 }
 
 @Test func resourceAdvertisementRoundTripsProtocolFields() throws {
     let data = Data(repeating: 0x31, count: 900)
-    let manifest = try ReticulumResourceManifest(data: data, resourceRandomHash: Data([1, 2, 3, 4]), mapRandomHash: Data([5, 6, 7, 8]))
+    let manifest = try ReticulumResourceManifest(data: data, randomHash: Data([1, 2, 3, 4]))
     let advertisement = ReticulumResourceAdvertisement(manifest: manifest)
     let decoded = try ReticulumResourceAdvertisement(encoded: advertisement.encode())
 
@@ -115,7 +115,7 @@ import Testing
 @Test func resourceNegotiationPacketsRoundTripOverEncryptedLink() throws {
     let session = ReticulumLinkSession(linkID: Data(repeating: 0x11, count: 16), destinationHash: Data(repeating: 0x22, count: 16), peerPublicKey: Data(repeating: 0x33, count: 32), derivedKey: Data(0..<64), mtu: 500)
     let data = Data(repeating: 0x44, count: 800)
-    let manifest = try ReticulumResourceManifest(data: data, resourceRandomHash: Data([1, 2, 3, 4]), mapRandomHash: Data([5, 6, 7, 8]))
+    let manifest = try ReticulumResourceManifest(data: data, randomHash: Data([1, 2, 3, 4]))
     let advertisement = ReticulumResourceAdvertisement(manifest: manifest)
     let advertisementPacket = try ReticulumPacket(raw: session.resourceAdvertisementPacket(advertisement, iv: Data(repeating: 9, count: 16)))
     let decodedAdvertisement = try ReticulumResourceAdvertisement(encoded: session.decrypt(advertisementPacket))
@@ -133,8 +133,8 @@ import Testing
 @Test func encryptedResourcePartsReassembleDecryptAndValidate() throws {
     let session = ReticulumLinkSession(linkID: Data(repeating: 0x10, count: 16), destinationHash: Data(repeating: 0x20, count: 16), peerPublicKey: Data(repeating: 0x30, count: 32), derivedKey: Data(0..<64), mtu: 500)
     let original = Data((0..<1_000).map { UInt8($0 % 239) })
-    let encrypted = try session.encryptResourcePayload(original, iv: Data(repeating: 0x40, count: 16))
-    let manifest = try ReticulumResourceManifest(data: original, transferData: encrypted, resourceRandomHash: Data([1, 3, 5, 7]), mapRandomHash: Data([2, 4, 6, 8]))
+    let encrypted = try session.encryptResourcePayload(original, iv: Data(repeating: 0x40, count: 16), payloadRandomHash: Data([9, 9, 9, 9]))
+    let manifest = try ReticulumResourceManifest(data: original, transferData: encrypted, randomHash: Data([1, 3, 5, 7]))
     let parts = try manifest.parts(from: encrypted)
     var receiver = ReticulumResourceReceiver(manifest: manifest)
     for (index, part) in parts.enumerated() {

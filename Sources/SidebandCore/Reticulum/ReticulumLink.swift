@@ -97,19 +97,23 @@ public struct ReticulumLinkSession: Sendable {
         try encryptedPacket(request.encode(), context: 0x03, iv: iv)
     }
 
-    public func encryptResourcePayload(_ data: Data, iv: Data? = nil) throws -> Data {
-        try ReticulumToken(key: derivedKey).encrypt(data, iv: iv)
+    public func encryptResourcePayload(_ data: Data, iv: Data? = nil, payloadRandomHash: Data? = nil) throws -> Data {
+        let prefix = payloadRandomHash ?? Data((0..<4).map { _ in UInt8.random(in: .min ... .max) })
+        guard prefix.count == 4 else { throw SessionError.invalidResource }
+        return try ReticulumToken(key: derivedKey).encrypt(prefix + data, iv: iv)
     }
 
     public func decryptResourcePayload(_ data: Data) throws -> Data {
-        try ReticulumToken(key: derivedKey).decrypt(data)
+        let plaintext = try ReticulumToken(key: derivedKey).decrypt(data)
+        guard plaintext.count >= 4 else { throw SessionError.invalidResource }
+        return Data(plaintext.dropFirst(4))
     }
 
     public func resourcePartPacket(_ part: Data) -> Data {
         Data([0x0c, 0x00]) + linkID + Data([0x01]) + part
     }
 
-    public enum SessionError: Error { case wrongLink }
+    public enum SessionError: Error { case wrongLink, invalidResource }
 }
 
 public struct ReticulumIncomingLink: Sendable {
