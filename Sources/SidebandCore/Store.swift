@@ -278,7 +278,7 @@ public final class SidebandStore {
     }
 
     public func addConversation(from discovery: DiscoveredDestination) {
-        _ = addConversation(destinationHash: discovery.destinationHash, displayName: "Discovered \(discovery.destinationHash.prefix(8))")
+        _ = addConversation(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName ?? "Discovered \(discovery.destinationHash.prefix(8))")
     }
 
     public func requestPath(to destinationHash: String) async {
@@ -622,7 +622,10 @@ public final class SidebandStore {
         guard message.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + sourceIdentity.hash),
               !receivedLXMFIDs.contains(message.messageID.hex) else { return false }
         let source = message.sourceHash.hex
-        if !conversations.contains(where: { $0.destinationHash == source }) { _ = addConversation(destinationHash: source, displayName: "Received \(source.prefix(8))") }
+        if !conversations.contains(where: { $0.destinationHash == source }) {
+            let name = discoveries.first(where: { $0.destinationHash == source })?.announcedDisplayName ?? "Received \(source.prefix(8))"
+            _ = addConversation(destinationHash: source, displayName: name)
+        }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }), let body = String(data: message.content, encoding: .utf8) else { return false }
         messages.append(Message(conversationID: conversation.id, body: body, timestamp: Date(timeIntervalSince1970: message.timestamp), direction: .incoming, state: .delivered))
         receivedLXMFIDs.insert(message.messageID.hex)

@@ -21,7 +21,7 @@ struct ContentView: View {
                         ForEach(store.discoveries) { discovery in
                             Button { store.addConversation(from: discovery) } label: {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(discovery.destinationHash).font(.caption.monospaced()).lineLimit(1)
+                                    Text(discovery.announcedDisplayName ?? discovery.destinationHash).font(.caption.monospaced()).lineLimit(1)
                                     Text("\(discovery.hops) hops · \(discovery.isValidated ? "validated" : "unverified")").font(.caption2).foregroundStyle(.secondary)
                                 }
                             }.buttonStyle(.plain)

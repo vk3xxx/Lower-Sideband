@@ -131,6 +131,13 @@ import Testing
     #expect(announce.destinationHash.hex == "fae321c442e3c9bdcd7a3e79d850e03c")
 }
 
+@Test func decodesLXMFAnnounceDisplayNameAndStampCost() {
+    let appData = MessagePack.array([MessagePack.binary(Data("Alice".utf8)), Data([0x07]), MessagePack.array([Data([0x00])])])
+    let info = LXMFAnnounceInfo(appData: appData)
+    #expect(info?.displayName == "Alice")
+    #expect(info?.stampCost == 7)
+}
+
 @Test func pathRequestMatchesPythonReferenceLayout() throws {
     let target = Data(0..<16)
     let tag = Data(16..<32)

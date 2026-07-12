@@ -68,6 +68,7 @@ public struct DiscoveredDestination: Identifiable, Codable, Hashable, Sendable {
     public var publicKey: Data?
     public var appData: Data?
     public var ratchet: Data?
+    public var announcedDisplayName: String? { appData.flatMap { LXMFAnnounceInfo(appData: $0)?.displayName } }
 
     public init(destinationHash: String, hops: UInt8, lastSeen: Date = .now, packetCount: Int = 1, isValidated: Bool = false, publicKey: Data? = nil, appData: Data? = nil, ratchet: Data? = nil) {
         self.destinationHash = destinationHash
