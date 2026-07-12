@@ -160,6 +160,28 @@ import Testing
     #expect(decoded.fileData == Data([1, 2, 3]))
 }
 
+@Test func resourceHashMapUpdatesContinueBeyondAdvertisementWindow() throws {
+    let data = Data((0..<43_000).map { UInt8($0 % 251) })
+    let manifest = try ReticulumResourceManifest(data: data, randomHash: Data([7, 7, 7, 7]))
+    let encodedAdvertisement = ReticulumResourceAdvertisement(manifest: manifest).encode()
+    let advertised = try ReticulumResourceAdvertisement(encoded: encodedAdvertisement)
+    let partialManifest = try ReticulumResourceManifest(advertisement: advertised)
+    var receiver = ReticulumResourceReceiver(manifest: partialManifest)
+    let parts = try manifest.parts(from: data)
+    for index in 0..<ReticulumResourceAdvertisement.hashMapMaximumEntries { try receiver.accept(part: parts[index], at: index) }
+
+    let mapRequest = try receiver.nextRequest()
+    #expect(mapRequest.wantsMoreHashMap)
+    let remaining = Array(manifest.partHashes.dropFirst(ReticulumResourceAdvertisement.hashMapMaximumEntries))
+    let update = try ReticulumResourceHashMapUpdate(resourceHash: manifest.resourceHash, segment: 1, partHashes: remaining)
+    let decoded = try ReticulumResourceHashMapUpdate(encoded: update.encode())
+    try receiver.applyHashMap(segment: decoded.segment, hashes: decoded.partHashes)
+
+    #expect(receiver.knownHashCount == manifest.partCount)
+    #expect(!receiver.needsMoreHashMap)
+    #expect(try receiver.nextRequest().requestedPartHashes.count == 4)
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

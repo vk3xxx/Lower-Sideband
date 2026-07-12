@@ -523,6 +523,10 @@ public final class SidebandStore {
                 acceptResourceAdvertisement(plaintext, session: session)
                 return
             }
+            if packet.context == 0x04 {
+                handleResourceHashMapUpdate(plaintext, session: session)
+                return
+            }
             if inboundLinkIDs.contains(session.linkID.hex) {
                 handleInboundLinkPacket(packet, plaintext: plaintext, session: session)
                 return
@@ -768,6 +772,16 @@ public final class SidebandStore {
                 do { try await transmitRawPacket(session.resourcePartPacket(resource.parts[index])); resource.sentIndices.insert(index) }
                 catch { return }
             }
+            if request.wantsMoreHashMap, let last = request.lastKnownMapHash,
+               let lastIndex = resource.manifest.partHashes.firstIndex(of: last) {
+                let segment = (lastIndex + 1) / ReticulumResourceAdvertisement.hashMapMaximumEntries
+                let start = segment * ReticulumResourceAdvertisement.hashMapMaximumEntries
+                let end = min(start + ReticulumResourceAdvertisement.hashMapMaximumEntries, resource.manifest.partHashes.count)
+                if start < end {
+                    let update = try ReticulumResourceHashMapUpdate(resourceHash: resource.manifest.resourceHash, segment: segment, partHashes: Array(resource.manifest.partHashes[start..<end]))
+                    try? await transmitRawPacket(try session.resourceHashMapUpdatePacket(update))
+                }
+            }
             outgoingResources[request.resourceHash.hex] = resource
             let progress = resource.parts.isEmpty ? 1 : Double(resource.sentIndices.count) / Double(resource.parts.count)
             updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .transferring, progress: progress)
@@ -797,20 +811,28 @@ public final class SidebandStore {
 
     private func requestIncomingResourceParts(resourceHash: String) {
         guard let incoming = incomingResources[resourceHash],
-              let request = try? ReticulumResourceRequest(manifest: incoming.receiver.manifest, missingIndices: incoming.receiver.missingPartIndices) else { return }
+              let request = try? incoming.receiver.nextRequest() else { return }
         Task { try? await transmitRawPacket(try incoming.session.resourceRequestPacket(request)) }
+    }
+
+    private func handleResourceHashMapUpdate(_ plaintext: Data, session: ReticulumLinkSession) {
+        guard let update = try? ReticulumResourceHashMapUpdate(encoded: plaintext),
+              var incoming = incomingResources[update.resourceHash.hex], incoming.session.linkID == session.linkID else { return }
+        do { try incoming.receiver.applyHashMap(segment: update.segment, hashes: update.partHashes) } catch { return }
+        incomingResources[update.resourceHash.hex] = incoming
+        requestIncomingResourceParts(resourceHash: update.resourceHash.hex)
     }
 
     private func handleIncomingResourcePart(_ part: Data, session: ReticulumLinkSession) {
         let match = incomingResources.first { _, incoming in
             incoming.session.linkID == session.linkID && incoming.receiver.missingPartIndices.contains { index in
-                Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4)) == incoming.receiver.manifest.partHashes[index]
+                Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4)) == incoming.receiver.expectedHash(at: index)
             }
         }
         guard let match else { return }
         let hash = match.key
         var incoming = match.value
-        guard let index = incoming.receiver.missingPartIndices.first(where: { incoming.receiver.manifest.partHashes[$0] == Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4)) }) else { return }
+        guard let index = incoming.receiver.missingPartIndices.first(where: { incoming.receiver.expectedHash(at: $0) == Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4)) }) else { return }
         do { try incoming.receiver.accept(part: part, at: index) } catch { return }
         incomingResources[hash] = incoming
         if incoming.receiver.isComplete { Task { await finishIncomingResource(resourceHash: hash) } }
