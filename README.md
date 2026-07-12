@@ -12,7 +12,9 @@ The Network Status panel can also discover Bonjour-advertised `_reticulum._tcp`,
 
 Live interoperability is implemented for direct links, opportunistic single-packet delivery, and propagation-node upload/download with acknowledgements and deduplication. The app periodically synchronizes with the configured propagation node while active and resumes on foreground activation. On iOS, private Reticulum and LXMF identities are stored in the Keychain. Resource transfer for larger messages and attachments remains pending. Voice, telemetry, maps, QR transport, hardware interfaces, and plugins follow afterward.
 
-Network reliability includes receipt timeouts with delivery fallback, exponential reconnect backoff, live system reachability, IPv6 preference with IPv4 fallback, and relaunch recovery for unproved outbound messages. Verified incoming messages can generate opt-in local notifications. iOS background refresh coordinates propagation sync, and attachment metadata plus durable local file storage are ready for the upcoming Reticulum Resource transport layer.
+Network reliability includes receipt timeouts with delivery fallback, exponential reconnect backoff, live system reachability, IPv6 preference with IPv4 fallback, and relaunch recovery for unproved outbound messages. Verified incoming messages can generate opt-in local notifications. iOS background refresh coordinates propagation sync.
+
+Attachments use native Reticulum Resource advertisements, part requests, hash-map updates, encrypted parts, multi-segment sequencing, proofs and cancellation. Incoming segments are staged on disk, image attachments render inline with downsampled thumbnails and full-size previews, and interrupted transfers recover or clean up safely. Python-generated wire fixtures cover the Resource negotiation formats; live attachment interoperability with upstream Sideband remains an active validation target.
 
 ## Build and run
 

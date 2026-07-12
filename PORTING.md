@@ -37,8 +37,11 @@
 | Verified incoming local notifications | `LocalNotificationManager` | Implemented, opt-in |
 | iOS background propagation refresh | `BackgroundRefreshCoordinator` | Implemented |
 | Attachment metadata and durable local storage | `Attachment`, `AttachmentStore` | Implemented; Resource transfer pending |
+| Reticulum Resource advertisements, requests, parts, proofs and cancellation | `ReticulumResource*` | Implemented, Python-fixture tested |
+| Resource hash-map updates and multi-segment transfer | `ReticulumResourceHashMapUpdate`, segment planner/staging | Implemented |
+| Attachment sending, receiving, progress and inline images | `SidebandStore`, SwiftUI attachment views | Implemented for native Swift peers |
 | Reticulum routing/announces/link | Native Swift transport engine | In progress |
-| `LXMF.LXMRouter` | Native Swift LXMF router | Core direct, opportunistic and propagation delivery implemented; resources pending |
+| `LXMF.LXMRouter` | Native Swift LXMF router | Direct, opportunistic, propagation and attachment Resource delivery implemented |
 | Identity and cryptography | CryptoKit-backed identity primitives | Implemented for current transport scope |
 | Telemetry, maps, audio, voice | Platform services behind shared protocols | Planned |
 

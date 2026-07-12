@@ -243,6 +243,16 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: folder.path))
 }
 
+@Test func resourceWireFormatsMatchPythonReticulumFixtures() throws {
+    let advertisementBytes = Data(hex: "8ba174cd0384a164cd0370a16e02a168c420000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fa172c40401020304a16fc420202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fa16901a16c01a171c0a16621a16dc408aabbccdd11223344")
+    let requestBytes = Data(hex: "00000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1faabbccdd11223344")
+    let updateBytes = Data(hex: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f9201c408aabbccdd11223344")
+
+    #expect(try ReticulumResourceAdvertisement(encoded: advertisementBytes).encode() == advertisementBytes)
+    #expect(try ReticulumResourceRequest(encoded: requestBytes).encode() == requestBytes)
+    #expect(try ReticulumResourceHashMapUpdate(encoded: updateBytes).encode() == updateBytes)
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))
