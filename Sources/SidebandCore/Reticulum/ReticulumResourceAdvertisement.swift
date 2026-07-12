@@ -15,7 +15,7 @@ public struct ReticulumResourceAdvertisement: Equatable, Sendable {
     public let partHashes: [Data]
 
     public init(manifest: ReticulumResourceManifest, dataSize: Int? = nil, originalHash: Data? = nil, segmentIndex: Int = 1, totalSegments: Int = 1, requestID: Data? = nil, flags: UInt8 = 0x01) {
-        transferSize = manifest.size; self.dataSize = dataSize ?? manifest.size; partCount = manifest.partCount
+        transferSize = manifest.size; self.dataSize = dataSize ?? manifest.dataSize; partCount = manifest.partCount
         resourceHash = manifest.resourceHash; mapRandomHash = manifest.mapRandomHash; self.originalHash = originalHash ?? manifest.resourceHash
         self.segmentIndex = segmentIndex; self.totalSegments = totalSegments; self.requestID = requestID; self.flags = flags; partHashes = manifest.partHashes
     }

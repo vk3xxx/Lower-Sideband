@@ -130,6 +130,24 @@ import Testing
     #expect(decodedRequest.requestedPartHashes == manifest.partHashes)
 }
 
+@Test func encryptedResourcePartsReassembleDecryptAndValidate() throws {
+    let session = ReticulumLinkSession(linkID: Data(repeating: 0x10, count: 16), destinationHash: Data(repeating: 0x20, count: 16), peerPublicKey: Data(repeating: 0x30, count: 32), derivedKey: Data(0..<64), mtu: 500)
+    let original = Data((0..<1_000).map { UInt8($0 % 239) })
+    let encrypted = try session.encryptResourcePayload(original, iv: Data(repeating: 0x40, count: 16))
+    let manifest = try ReticulumResourceManifest(data: original, transferData: encrypted, resourceRandomHash: Data([1, 3, 5, 7]), mapRandomHash: Data([2, 4, 6, 8]))
+    let parts = try manifest.parts(from: encrypted)
+    var receiver = ReticulumResourceReceiver(manifest: manifest)
+    for (index, part) in parts.enumerated() {
+        let packet = try ReticulumPacket(raw: session.resourcePartPacket(part))
+        #expect(packet.context == 0x01)
+        try receiver.accept(part: packet.data, at: index)
+    }
+    let decrypted = try session.decryptResourcePayload(receiver.assemble())
+
+    #expect(decrypted == original)
+    #expect(manifest.validate(data: decrypted))
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))
