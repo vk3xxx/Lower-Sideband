@@ -150,6 +150,30 @@ public final class SidebandStore {
         await attemptDelivery(for: conversation.id)
     }
 
+    public func retryAttachment(messageID: UUID, attachmentID: UUID) async {
+        guard let messageIndex = messages.firstIndex(where: { $0.id == messageID }),
+              let attachmentIndex = messages[messageIndex].attachments.firstIndex(where: { $0.id == attachmentID }) else { return }
+        await cancelActiveResources(messageID: messageID, attachmentID: attachmentID)
+        messages[messageIndex].attachments[attachmentIndex].state = .queued
+        messages[messageIndex].attachments[attachmentIndex].progress = 0
+        messages[messageIndex].state = .queued
+        save()
+        await attemptDelivery(for: messages[messageIndex].conversationID)
+    }
+
+    public func cancelAttachment(messageID: UUID, attachmentID: UUID) async {
+        await cancelActiveResources(messageID: messageID, attachmentID: attachmentID)
+        updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .failed, progress: 0)
+    }
+
+    private func cancelActiveResources(messageID: UUID, attachmentID: UUID) async {
+        let matches = outgoingResources.filter { $0.value.messageID == messageID && $0.value.attachmentID == attachmentID }
+        for (hash, resource) in matches {
+            outgoingResources.removeValue(forKey: hash)
+            if let session = activeLinks[resource.linkID] { try? await transmitRawPacket(try session.resourceCancelPacket(resourceHash: resource.manifest.resourceHash, initiatedBySender: true)) }
+        }
+    }
+
     public func startTransport() async {
         await transport.start()
         transportState = await transport.state

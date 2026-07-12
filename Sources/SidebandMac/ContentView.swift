@@ -337,7 +337,7 @@ private struct ConversationView: View {
                                 if !message.body.isEmpty { Text(message.body) }
                                 ForEach(message.attachments) { attachment in
                                     if isImage(attachment) {
-                                        InlineImageAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment))
+                                        InlineImageAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment), onRetry: { retry(message, attachment) }, onCancel: { cancel(message, attachment) })
                                     } else {
                                         Label {
                                             VStack(alignment: .leading, spacing: 1) {
@@ -345,6 +345,7 @@ private struct ConversationView: View {
                                                 Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
                                             }
                                         } icon: { Image(systemName: "doc.fill") }
+                                        attachmentControls(message, attachment)
                                     }
                                 }
                                 HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
@@ -414,6 +415,13 @@ private struct ConversationView: View {
         return UTType(filenameExtension: String(ext))?.conforms(to: .image) == true
     }
 
+    @ViewBuilder private func attachmentControls(_ message: Message, _ attachment: Attachment) -> some View {
+        if attachment.state == .failed { Button("Retry") { retry(message, attachment) }.font(.caption) }
+        else if attachment.state == .transferring { Button("Cancel") { cancel(message, attachment) }.font(.caption) }
+    }
+    private func retry(_ message: Message, _ attachment: Attachment) { Task { await store.retryAttachment(messageID: message.id, attachmentID: attachment.id) } }
+    private func cancel(_ message: Message, _ attachment: Attachment) { Task { await store.cancelAttachment(messageID: message.id, attachmentID: attachment.id) } }
+
     private var routingStatus: String {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "Encrypted" }
         if store.pendingLinkHashes.contains(conversation.destinationHash) { return "Connecting securely" }
@@ -432,6 +440,8 @@ private struct InlineImageAttachmentView: View {
     let store: AttachmentStore
     let attachment: Attachment
     let status: String
+    let onRetry: () -> Void
+    let onCancel: () -> Void
     @State private var image: PlatformImage?
     @State private var showingPreview = false
     @State private var fullImage: PlatformImage?
@@ -456,6 +466,8 @@ private struct InlineImageAttachmentView: View {
             .onTapGesture { if image != nil { showingPreview = true } }
             Text(attachment.filename).font(.caption).lineLimit(1)
             Text(status).font(.caption2).foregroundStyle(.secondary)
+            if attachment.state == .failed { Button("Retry", action: onRetry).font(.caption) }
+            else if attachment.state == .transferring { Button("Cancel", action: onCancel).font(.caption) }
         }
         .task(id: attachment.id) {
             let url = await store.url(for: attachment)
