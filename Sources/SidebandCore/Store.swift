@@ -26,6 +26,7 @@ public final class SidebandStore {
     public private(set) var opportunisticDeliveriesReceived = 0
     public private(set) var lastPropagationSync: Date?
     public private(set) var deliveryTimeoutCount = 0
+    public private(set) var reconnectDelaySeconds: Int?
     public var networkHost: String
     public var networkPort: Int
     public var autoConnectEnabled: Bool
@@ -56,6 +57,7 @@ public final class SidebandStore {
     private var reconnectTask: Task<Void, Never>?
     private var deferredPathRequests: Set<String> = []
     private var intentionallyDisconnected = false
+    private var reconnectAttempt = 0
     private let transportIdentity: ReticulumIdentity
     private let tcpInterfaceHash: Data
     private let messagingIdentity: ReticulumIdentity
@@ -151,6 +153,8 @@ public final class SidebandStore {
 
     public func disconnectNetwork() async {
         intentionallyDisconnected = true
+        reconnectAttempt = 0
+        reconnectDelaySeconds = nil
         networkConnectionGeneration = UUID()
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -322,6 +326,8 @@ public final class SidebandStore {
         if state == .ready {
             reconnectTask?.cancel()
             reconnectTask = nil
+            reconnectAttempt = 0
+            reconnectDelaySeconds = nil
             startPeriodicPropagationSync()
             Task {
                 await synthesizeTCPTunnel()
@@ -347,8 +353,11 @@ public final class SidebandStore {
 
     private func scheduleReconnect() {
         guard autoConnectEnabled, !intentionallyDisconnected, reconnectTask == nil else { return }
+        let delay = min(60, 1 << min(reconnectAttempt + 1, 5))
+        reconnectAttempt += 1
+        reconnectDelaySeconds = delay
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             await self?.connectNetwork()
         }

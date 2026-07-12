@@ -254,7 +254,12 @@ private struct NetworkView: View {
         return false
     }
     private var statusText: String {
-        switch store.networkState { case .stopped: "Disconnected"; case .connecting: "Connecting"; case .ready: "TCP connected"; case .failed(let reason): "Failed: \(reason)" }
+        switch store.networkState {
+        case .stopped: "Disconnected"
+        case .connecting: "Connecting"
+        case .ready: "TCP connected"
+        case .failed(let reason): store.reconnectDelaySeconds.map { "Retrying in \($0)s · \(reason)" } ?? "Failed: \(reason)"
+        }
     }
     private var statusIcon: String {
         switch store.networkState { case .ready: "checkmark.circle.fill"; case .connecting: "arrow.triangle.2.circlepath"; case .failed: "exclamationmark.triangle.fill"; case .stopped: "circle" }
