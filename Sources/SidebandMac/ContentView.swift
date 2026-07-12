@@ -432,6 +432,7 @@ private struct InlineImageAttachmentView: View {
     let attachment: Attachment
     let status: String
     @State private var image: PlatformImage?
+    @State private var showingPreview = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -449,6 +450,8 @@ private struct InlineImageAttachmentView: View {
             .frame(maxWidth: 320, maxHeight: 240)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .accessibilityLabel("Image attachment \(attachment.filename)")
+            .contentShape(Rectangle())
+            .onTapGesture { if image != nil { showingPreview = true } }
             Text(attachment.filename).font(.caption).lineLimit(1)
             Text(status).font(.caption2).foregroundStyle(.secondary)
         }
@@ -456,6 +459,12 @@ private struct InlineImageAttachmentView: View {
             let url = await store.url(for: attachment)
             guard let data = try? Data(contentsOf: url) else { return }
             image = PlatformImage(data: data)
+        }
+        .sheet(isPresented: $showingPreview) {
+            VStack(spacing: 12) {
+                HStack { Text(attachment.filename).font(.headline); Spacer(); Button("Close") { showingPreview = false } }
+                if let image { swiftUIImage(image).resizable().scaledToFit() }
+            }.padding().frame(minWidth: 320, minHeight: 420)
         }
     }
 
