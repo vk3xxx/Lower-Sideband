@@ -122,9 +122,13 @@ public final class SidebandStore {
     }
 
     public func send(_ text: String) async {
+        await send(text, attachments: [])
+    }
+
+    public func send(_ text: String, attachments: [Attachment]) async {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty, let conversation = selectedConversation else { return }
-        let message = Message(conversationID: conversation.id, body: body, direction: .outgoing, state: .queued)
+        guard (!body.isEmpty || !attachments.isEmpty), let conversation = selectedConversation else { return }
+        let message = Message(conversationID: conversation.id, body: body, direction: .outgoing, state: .queued, attachments: attachments)
         messages.append(message)
         touch(conversation.id)
         save()
@@ -661,7 +665,7 @@ public final class SidebandStore {
 
     private func attemptDelivery(for conversationID: UUID) async {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
-        let queued = messages.filter { $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }
+        let queued = messages.filter { $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty }
         guard !queued.isEmpty else { return }
         if !hasPath(to: conversation.destinationHash) {
             if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash) }

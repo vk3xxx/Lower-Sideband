@@ -1,5 +1,6 @@
 import SwiftUI
 import SidebandCore
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
@@ -292,6 +293,8 @@ private struct ConversationView: View {
     @Bindable var store: SidebandStore
     let conversation: Conversation
     @State private var draft = ""
+    @State private var pendingAttachments: [Attachment] = []
+    @State private var showingFileImporter = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -311,7 +314,15 @@ private struct ConversationView: View {
                         HStack {
                             if message.direction == .outgoing { Spacer(minLength: 80) }
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(message.body)
+                                if !message.body.isEmpty { Text(message.body) }
+                                ForEach(message.attachments) { attachment in
+                                    Label {
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(attachment.filename).lineLimit(1)
+                                            Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
+                                        }
+                                    } icon: { Image(systemName: "doc.fill") }
+                                }
                                 HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
                                     .font(.caption2).foregroundStyle(.secondary)
                             }.padding(10).background(message.direction == .outgoing ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
@@ -321,16 +332,54 @@ private struct ConversationView: View {
                 }.padding()
             }
             Divider()
-            HStack {
-                TextField("Message", text: $draft, axis: .vertical).textFieldStyle(.roundedBorder).onSubmit(send)
-                Button(action: send) { Image(systemName: "paperplane.fill") }.buttonStyle(.borderedProminent).disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            VStack(alignment: .leading, spacing: 8) {
+                if !pendingAttachments.isEmpty {
+                    ScrollView(.horizontal) {
+                        HStack {
+                            ForEach(pendingAttachments) { attachment in
+                                HStack(spacing: 5) {
+                                    Image(systemName: "paperclip")
+                                    Text(attachment.filename).lineLimit(1)
+                                    Button { pendingAttachments.removeAll { $0.id == attachment.id } } label: { Image(systemName: "xmark.circle.fill") }
+                                        .buttonStyle(.plain)
+                                }.font(.caption).padding(6).background(.quaternary, in: Capsule())
+                            }
+                        }
+                    }
+                }
+                HStack {
+                    Button { showingFileImporter = true } label: { Image(systemName: "paperclip") }.help("Attach files")
+                    TextField("Message", text: $draft, axis: .vertical).textFieldStyle(.roundedBorder).onSubmit(send)
+                    Button(action: send) { Image(systemName: "paperplane.fill") }.buttonStyle(.borderedProminent).disabled(!canSend)
+                }
             }.padding()
+        }
+        .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            if case let .success(urls) = result { Task { await importAttachments(urls) } }
         }
     }
 
     private func send() {
-        let text = draft; draft = ""
-        Task { await store.send(text) }
+        let text = draft
+        let attachments = pendingAttachments
+        draft = ""
+        pendingAttachments = []
+        Task { await store.send(text, attachments: attachments) }
+    }
+
+    private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty }
+
+    private func importAttachments(_ urls: [URL]) async {
+        for url in urls {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if let attachment = try? await store.attachmentStore.importFile(from: url) { pendingAttachments.append(attachment) }
+        }
+    }
+
+    private func attachmentStatus(_ attachment: Attachment) -> String {
+        let size = ByteCountFormatter.string(fromByteCount: Int64(attachment.byteCount), countStyle: .file)
+        return attachment.state == .local ? "\(size) · Queued for Resource transfer" : "\(size) · \(attachment.state.rawValue.capitalized)"
     }
 
     private var routingStatus: String {
