@@ -164,7 +164,8 @@ import Testing
 @Test func attachmentResourceEnvelopeRoundTripsMetadataAndFile() throws {
     let source = Data(repeating: 0x44, count: 16)
     let groupID = UUID()
-    let envelope = try LXMFResourceEnvelope(filename: "photo.jpg", mimeType: "image/jpeg", messageBody: "A photo", sourceHash: source, groupID: groupID, fileData: Data([1, 2, 3]))
+    let identity = try ReticulumIdentity(privateKey: Data(0..<64))
+    let envelope = try LXMFResourceEnvelope(filename: "photo.jpg", mimeType: "image/jpeg", messageBody: "A photo", sourceHash: source, groupID: groupID, fileData: Data([1, 2, 3]), signingIdentity: identity)
     let decoded = try LXMFResourceEnvelope(encoded: envelope.encode())
 
     #expect(decoded.filename == "photo.jpg")
@@ -173,6 +174,9 @@ import Testing
     #expect(decoded.sourceHash == source)
     #expect(decoded.fileData == Data([1, 2, 3]))
     #expect(decoded.groupID == groupID)
+    #expect(decoded.validate(with: identity))
+    var tampered = try envelope.encode(); tampered[tampered.count - 1] ^= 0xff
+    #expect(!((try? LXMFResourceEnvelope(encoded: tampered))?.validate(with: identity) ?? true))
 }
 
 @Test func resourceHashMapUpdatesContinueBeyondAdvertisementWindow() throws {

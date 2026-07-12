@@ -782,7 +782,7 @@ public final class SidebandStore {
         for attachment in message.attachments where attachment.state == .local || attachment.state == .queued {
             do {
                 let data = try await attachmentStore.read(attachment)
-                let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, groupID: message.id, fileData: data).encode()
+                let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, groupID: message.id, fileData: data, signingIdentity: messagingIdentity).encode()
                 let segments = try ReticulumResourceSegmentPlanner.prepare(data: envelope, session: session, hasMetadata: true)
                 guard let first = segments.first else { continue }
                 registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: message.id, attachmentID: attachment.id, session: session)
@@ -918,7 +918,7 @@ public final class SidebandStore {
         guard let envelope = try? LXMFResourceEnvelope(encoded: completeData),
               let identity = identityForIncomingResource(envelope: envelope, session: incoming.session) else { return }
         let expectedNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
-        guard envelope.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + identity.hash),
+        guard envelope.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + identity.hash), envelope.validate(with: identity),
               let attachment = try? await attachmentStore.save(data: envelope.fileData, filename: envelope.filename, mimeType: envelope.mimeType) else { return }
         let source = envelope.sourceHash.hex
         if !conversations.contains(where: { $0.destinationHash == source }) {

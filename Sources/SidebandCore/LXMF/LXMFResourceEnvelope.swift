@@ -7,10 +7,12 @@ public struct LXMFResourceEnvelope: Equatable, Sendable {
     public let sourceHash: Data
     public let groupID: UUID
     public let fileData: Data
+    public let signature: Data
 
-    public init(filename: String, mimeType: String?, messageBody: String, sourceHash: Data, groupID: UUID = UUID(), fileData: Data) throws {
+    public init(filename: String, mimeType: String?, messageBody: String, sourceHash: Data, groupID: UUID = UUID(), fileData: Data, signingIdentity: ReticulumIdentity) throws {
         guard sourceHash.count == 16 else { throw EnvelopeError.invalidSource }
         self.filename = filename; self.mimeType = mimeType; self.messageBody = messageBody; self.sourceHash = sourceHash; self.groupID = groupID; self.fileData = fileData
+        signature = try signingIdentity.sign(Self.signedPayload(filename: filename, mimeType: mimeType, messageBody: messageBody, sourceHash: sourceHash, groupID: groupID, fileData: fileData))
     }
 
     public func encode() throws -> Data {
@@ -19,7 +21,8 @@ public struct LXMFResourceEnvelope: Equatable, Sendable {
             ("m", mimeType.map { MessagePack.binary(Data($0.utf8)) } ?? MessagePack.null),
             ("b", MessagePack.binary(Data(messageBody.utf8))),
             ("s", MessagePack.binary(sourceHash)),
-            ("g", MessagePack.binary(groupID.data))
+            ("g", MessagePack.binary(groupID.data)),
+            ("v", MessagePack.binary(signature))
         ])
         guard metadata.count <= 0xff_ffff else { throw EnvelopeError.metadataTooLarge }
         return Data([UInt8(metadata.count >> 16), UInt8((metadata.count >> 8) & 0xff), UInt8(metadata.count & 0xff)]) + metadata + fileData
@@ -34,10 +37,23 @@ public struct LXMFResourceEnvelope: Equatable, Sendable {
         guard let nameData = binary("n"), let filename = String(data: nameData, encoding: .utf8),
               let bodyData = binary("b"), let messageBody = String(data: bodyData, encoding: .utf8),
               let sourceHash = binary("s"), sourceHash.count == 16,
-              let groupData = binary("g"), let groupID = UUID(data: groupData) else { throw EnvelopeError.invalidMetadata }
-        self.filename = filename; self.messageBody = messageBody; self.sourceHash = sourceHash; self.groupID = groupID
+              let groupData = binary("g"), let groupID = UUID(data: groupData),
+              let signature = binary("v"), signature.count == 64 else { throw EnvelopeError.invalidMetadata }
+        self.filename = filename; self.messageBody = messageBody; self.sourceHash = sourceHash; self.groupID = groupID; self.signature = signature
         if let mimeData = binary("m") { mimeType = String(data: mimeData, encoding: .utf8) } else { mimeType = nil }
         fileData = encoded.subdata(in: (3 + length)..<encoded.count)
+    }
+
+    public func validate(with identity: ReticulumIdentity) -> Bool {
+        identity.validate(signature: signature, message: Self.signedPayload(filename: filename, mimeType: mimeType, messageBody: messageBody, sourceHash: sourceHash, groupID: groupID, fileData: fileData))
+    }
+
+    private static func signedPayload(filename: String, mimeType: String?, messageBody: String, sourceHash: Data, groupID: UUID, fileData: Data) -> Data {
+        MessagePack.array([
+            MessagePack.binary(Data(filename.utf8)), mimeType.map { MessagePack.binary(Data($0.utf8)) } ?? MessagePack.null,
+            MessagePack.binary(Data(messageBody.utf8)), MessagePack.binary(sourceHash), MessagePack.binary(groupID.data),
+            MessagePack.binary(ReticulumIdentity.fullHash(fileData))
+        ])
     }
 
     public enum EnvelopeError: Error { case invalidSource, metadataTooLarge, truncated, invalidMetadata }
