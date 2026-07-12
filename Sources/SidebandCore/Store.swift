@@ -25,6 +25,7 @@ public final class SidebandStore {
     public private(set) var inboundLinksAccepted = 0
     public private(set) var opportunisticDeliveriesReceived = 0
     public private(set) var lastPropagationSync: Date?
+    public private(set) var deliveryTimeoutCount = 0
     public var networkHost: String
     public var networkPort: Int
     public var autoConnectEnabled: Bool
@@ -636,6 +637,7 @@ public final class SidebandStore {
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .opportunistic, destinationHash: conversation.destinationHash)
                 try await transmitRawPacket(raw)
                 updateMessage(item.id, state: .sent)
+                scheduleReceiptTimeout(packetHash)
             } catch { requiresLink = true }
         }
         guard requiresLink else { return }
@@ -652,6 +654,7 @@ public final class SidebandStore {
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
                 try await transmitRawPacket(raw)
                 updateMessage(item.id, state: .sent)
+                scheduleReceiptTimeout(packetHash)
             } catch { lastError = "LXMF delivery failed: \(error.localizedDescription)" }
         }
     }
@@ -669,6 +672,31 @@ public final class SidebandStore {
         if receipt.kind == .propagation {
             propagationUploadsAccepted += 1
             UserDefaults.standard.set(propagationUploadsAccepted, forKey: "lxmfPropagationUploadsAccepted")
+        }
+    }
+
+    private func scheduleReceiptTimeout(_ packetHash: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            await self?.expireReceipt(packetHash)
+        }
+    }
+
+    private func expireReceipt(_ packetHash: String) async {
+        guard let receipt = pendingReceipts.removeValue(forKey: packetHash) else { return }
+        deliveryTimeoutCount += 1
+        switch receipt.kind {
+        case .opportunistic:
+            updateMessage(receipt.messageID, state: .queued)
+            await requestLink(to: receipt.destinationHash)
+        case .direct:
+            updateMessage(receipt.messageID, state: .queued)
+            if let conversation = conversations.first(where: { $0.destinationHash == receipt.destinationHash }) {
+                await propagateQueued(for: conversation.id)
+            }
+        case .propagation:
+            updateMessage(receipt.messageID, state: .queued)
         }
     }
 
@@ -690,6 +718,7 @@ public final class SidebandStore {
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .propagation, destinationHash: propagationNodeHash)
                 try await transmitRawPacket(raw)
                 updateMessage(item.id, state: .sent)
+                scheduleReceiptTimeout(packetHash)
             } catch { lastError = "Propagation upload failed: \(error.localizedDescription)" }
         }
     }
