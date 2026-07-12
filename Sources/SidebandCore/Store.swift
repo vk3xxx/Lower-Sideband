@@ -59,6 +59,7 @@ public final class SidebandStore {
     private struct OutgoingResource {
         let manifest: ReticulumResourceManifest; let parts: [Data]; let expectedProof: Data
         let messageID: UUID; let attachmentID: UUID; let linkID: String
+        let segmentIndex: Int; let totalSegments: Int; let remainingSegments: [ReticulumPreparedResourceSegment]
         var sentIndices: Set<Int> = []
     }
     private var outgoingResources: [String: OutgoingResource] = [:]
@@ -750,18 +751,23 @@ public final class SidebandStore {
                 let url = await attachmentStore.url(for: attachment)
                 let data = try Data(contentsOf: url)
                 let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, fileData: data).encode()
-                let encrypted = try session.encryptResourcePayload(envelope)
-                let random = Data((0..<4).map { _ in UInt8.random(in: .min ... .max) })
-                let manifest = try ReticulumResourceManifest(data: envelope, transferData: encrypted, randomHash: random)
-                let parts = try manifest.parts(from: encrypted)
-                let expectedProof = ReticulumIdentity.fullHash(envelope + manifest.resourceHash)
-                outgoingResources[manifest.resourceHash.hex] = OutgoingResource(manifest: manifest, parts: parts, expectedProof: expectedProof, messageID: message.id, attachmentID: attachment.id, linkID: session.linkID.hex)
+                let segments = try ReticulumResourceSegmentPlanner.prepare(data: envelope, session: session, hasMetadata: true)
+                guard let first = segments.first else { continue }
+                registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: message.id, attachmentID: attachment.id, session: session)
                 updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .transferring, progress: 0)
-                try await transmitRawPacket(try session.resourceAdvertisementPacket(ReticulumResourceAdvertisement(manifest: manifest, flags: 0x21)))
+                try await transmitRawPacket(try session.resourceAdvertisementPacket(first.advertisement))
             } catch {
                 updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .failed, progress: 0)
             }
         }
+    }
+
+    private func registerOutgoingSegment(_ segment: ReticulumPreparedResourceSegment, remaining: [ReticulumPreparedResourceSegment], messageID: UUID, attachmentID: UUID, session: ReticulumLinkSession) {
+        outgoingResources[segment.manifest.resourceHash.hex] = OutgoingResource(
+            manifest: segment.manifest, parts: segment.parts, expectedProof: segment.expectedProof,
+            messageID: messageID, attachmentID: attachmentID, linkID: session.linkID.hex,
+            segmentIndex: segment.index, totalSegments: segment.totalSegments, remainingSegments: remaining
+        )
     }
 
     private func handleResourceRequest(_ plaintext: Data, session: ReticulumLinkSession) {
@@ -783,7 +789,8 @@ public final class SidebandStore {
                 }
             }
             outgoingResources[request.resourceHash.hex] = resource
-            let progress = resource.parts.isEmpty ? 1 : Double(resource.sentIndices.count) / Double(resource.parts.count)
+            let segmentProgress = resource.parts.isEmpty ? 1 : Double(resource.sentIndices.count) / Double(resource.parts.count)
+            let progress = (Double(resource.segmentIndex - 1) + segmentProgress) / Double(resource.totalSegments)
             updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .transferring, progress: progress)
         }
     }
@@ -794,6 +801,13 @@ public final class SidebandStore {
         guard let resource = outgoingResources[hash.hex], packet.destinationHash.hex == resource.linkID,
               Data(packet.data.suffix(32)) == resource.expectedProof else { return }
         outgoingResources.removeValue(forKey: hash.hex)
+        if let next = resource.remainingSegments.first, let session = activeLinks[resource.linkID] {
+            let remaining = Array(resource.remainingSegments.dropFirst())
+            registerOutgoingSegment(next, remaining: remaining, messageID: resource.messageID, attachmentID: resource.attachmentID, session: session)
+            updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .transferring, progress: Double(resource.segmentIndex) / Double(resource.totalSegments))
+            Task { try? await transmitRawPacket(try session.resourceAdvertisementPacket(next.advertisement)) }
+            return
+        }
         updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .available, progress: 1)
         if let message = messages.first(where: { $0.id == resource.messageID }), message.attachments.allSatisfy({ $0.state == .available }) {
             updateMessage(resource.messageID, state: .delivered)
