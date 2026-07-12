@@ -148,6 +148,18 @@ import Testing
     #expect(manifest.validate(data: decrypted))
 }
 
+@Test func attachmentResourceEnvelopeRoundTripsMetadataAndFile() throws {
+    let source = Data(repeating: 0x44, count: 16)
+    let envelope = try LXMFResourceEnvelope(filename: "photo.jpg", mimeType: "image/jpeg", messageBody: "A photo", sourceHash: source, fileData: Data([1, 2, 3]))
+    let decoded = try LXMFResourceEnvelope(encoded: envelope.encode())
+
+    #expect(decoded.filename == "photo.jpg")
+    #expect(decoded.mimeType == "image/jpeg")
+    #expect(decoded.messageBody == "A photo")
+    #expect(decoded.sourceHash == source)
+    #expect(decoded.fileData == Data([1, 2, 3]))
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

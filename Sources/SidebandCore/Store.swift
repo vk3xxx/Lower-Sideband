@@ -728,18 +728,21 @@ public final class SidebandStore {
     }
 
     private func advertiseAttachments(for message: Message, session: ReticulumLinkSession) async {
+        let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+        let sourceHash = ReticulumIdentity.truncatedHash(nameHash + messagingIdentity.hash)
         for attachment in message.attachments where attachment.state == .local || attachment.state == .queued {
             do {
                 let url = await attachmentStore.url(for: attachment)
                 let data = try Data(contentsOf: url)
-                let encrypted = try session.encryptResourcePayload(data)
+                let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, fileData: data).encode()
+                let encrypted = try session.encryptResourcePayload(envelope)
                 let random = Data((0..<4).map { _ in UInt8.random(in: .min ... .max) })
-                let manifest = try ReticulumResourceManifest(data: data, transferData: encrypted, randomHash: random)
+                let manifest = try ReticulumResourceManifest(data: envelope, transferData: encrypted, randomHash: random)
                 let parts = try manifest.parts(from: encrypted)
-                let expectedProof = ReticulumIdentity.fullHash(data + manifest.resourceHash)
+                let expectedProof = ReticulumIdentity.fullHash(envelope + manifest.resourceHash)
                 outgoingResources[manifest.resourceHash.hex] = OutgoingResource(manifest: manifest, parts: parts, expectedProof: expectedProof, messageID: message.id, attachmentID: attachment.id, linkID: session.linkID.hex)
                 updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .transferring, progress: 0)
-                try await transmitRawPacket(try session.resourceAdvertisementPacket(ReticulumResourceAdvertisement(manifest: manifest)))
+                try await transmitRawPacket(try session.resourceAdvertisementPacket(ReticulumResourceAdvertisement(manifest: manifest, flags: 0x21)))
             } catch {
                 updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .failed, progress: 0)
             }
