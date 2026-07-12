@@ -1,0 +1,13 @@
+[reticulum]
+  enable_transport = No
+  share_instance = No
+
+[logging]
+  loglevel = 5
+
+[interfaces]
+  [[Gateway TCP]]
+    type = TCPClientInterface
+    enabled = Yes
+    target_host = 10.20.20.133
+    target_port = 4242

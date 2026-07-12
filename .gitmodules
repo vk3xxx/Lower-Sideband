@@ -1,0 +1,9 @@
+[submodule "Sideband-Upstream"]
+	path = Sideband-Upstream
+	url = https://github.com/markqvist/Sideband.git
+[submodule "Reticulum-Upstream"]
+	path = Reticulum-Upstream
+	url = https://github.com/markqvist/Reticulum.git
+[submodule "LXMF-Upstream"]
+	path = LXMF-Upstream
+	url = https://github.com/markqvist/LXMF.git

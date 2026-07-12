@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+DerivedData/
+dist/
+TestConfig/storage/
+TestConfig/*-storage/
+*.xcuserstate
+.DS_Store

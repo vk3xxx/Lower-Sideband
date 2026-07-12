@@ -1,0 +1,34 @@
+# Sideband Swift
+
+Native Swift/SwiftUI port of [Sideband](https://github.com/markqvist/Sideband), beginning with macOS and structured for a later iOS target.
+
+## Current status
+
+This milestone is a buildable native macOS application with a shared iOS-compatible core. It includes the conversation/message model, LXMF destination validation, durable local storage, native Reticulum transport, and cryptographically verified LXMF delivery.
+
+The native network slice includes Reticulum-compatible HDLC framing, incremental TCP stream decoding, packet header parsing, CryptoKit identity primitives, cryptographic announce validation and a Network.framework TCP interface. The Network panel accepts a Reticulum TCP Server Interface host and port, reports live connection state and packet counts, and captures announce destination hashes in the sidebar. Validated announces retain their public identity, application data and ratchet key.
+
+The Network Status panel can also discover Bonjour-advertised `_reticulum._tcp`, `_rns._tcp`, and `_sideband._tcp` gateways on the LAN. A conventional Reticulum TCP Server Interface does not advertise these records automatically, so manual host/port remains available. Native Reticulum AutoInterface multicast discovery is planned separately.
+
+Live interoperability is implemented for direct links, opportunistic single-packet delivery, and propagation-node upload/download with acknowledgements and deduplication. The app periodically synchronizes with the configured propagation node while active and resumes on foreground activation. On iOS, private Reticulum and LXMF identities are stored in the Keychain. Resource transfer for larger messages and attachments remains pending. Voice, telemetry, maps, QR transport, hardware interfaces, and plugins follow afterward.
+
+## Build and run
+
+Requires Xcode 16 or newer and macOS 14 or newer.
+
+```sh
+swift test
+swift run SidebandMac
+```
+
+The shared `SidebandCore` target supports macOS 14 and iOS 17. The executable target is the macOS SwiftUI application.
+
+## Source snapshot
+
+`Sideband-Upstream/` is a shallow checkout of upstream tag `1.9.8`, commit `8601d84580341f2c499041615d772610edb9eaab`. It is kept as a porting reference and retains its own Git history.
+
+Protocol references are also pinned in `Reticulum-Upstream/` and `LXMF-Upstream/`; their individual licences apply.
+
+## Licensing
+
+The upstream application is licensed CC BY-NC-SA 4.0. This adaptation is provided under the same terms; see `LICENSE` and `NOTICE`.
