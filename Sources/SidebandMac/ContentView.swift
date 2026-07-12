@@ -98,9 +98,11 @@ private struct NetworkView: View {
             GroupBox("Interface") {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
                 GridRow { Text("Host"); TextField("127.0.0.1", text: $store.networkHost) }
+                GridRow { Text("IPv6 host"); TextField("IPv6 gateway", text: $store.networkIPv6Host) }
                 GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
+                GridRow { Text("Addressing"); Toggle("Prefer IPv6 with IPv4 fallback", isOn: Binding(get: { store.preferIPv6 }, set: { store.setPreferIPv6($0) })) }
                 GridRow { Text("Reconnect"); Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) })) }
-                GridRow { Text("Transport"); Text("TCP · HDLC").foregroundStyle(.secondary) }
+                GridRow { Text("Transport"); Text("TCP · HDLC" + (store.activeNetworkHost.map { " · \($0)" } ?? "")).foregroundStyle(.secondary) }
                 GridRow { Text("System network"); Text(reachabilityText).foregroundStyle(.secondary) }
             }.textFieldStyle(.roundedBorder).padding(6)
             }

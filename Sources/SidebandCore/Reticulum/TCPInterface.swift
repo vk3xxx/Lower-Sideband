@@ -31,6 +31,7 @@ public actor ReticulumTCPInterface {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         tcp.enableKeepalive = true
+        tcp.connectionTimeout = 5
         let connection = NWConnection(to: endpoint, using: NWParameters(tls: nil, tcp: tcp))
         self.connection = connection
         connection.stateUpdateHandler = { [weak self] newState in

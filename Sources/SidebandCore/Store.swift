@@ -28,7 +28,9 @@ public final class SidebandStore {
     public private(set) var deliveryTimeoutCount = 0
     public private(set) var reconnectDelaySeconds: Int?
     public var networkHost: String
+    public var networkIPv6Host: String
     public var networkPort: Int
+    public var preferIPv6: Bool
     public var autoConnectEnabled: Bool
     public var autoInterfaceEnabled: Bool
     public var propagationNodeHash: String
@@ -36,6 +38,7 @@ public final class SidebandStore {
     public let autoInterfaceDiscovery = AutoInterfaceDiscovery()
     public let reachability = NetworkReachability()
     public private(set) var selectedGatewayName: String?
+    public private(set) var activeNetworkHost: String?
     public var selectedConversationID: UUID?
     public var lastError: String?
 
@@ -74,8 +77,10 @@ public final class SidebandStore {
         let messagingMaterial = SecureIdentityStore.loadOrCreate(account: "lxmf.messaging", legacyDefaultsKey: "lxmfMessagingIdentity")
         messagingIdentity = (try? ReticulumIdentity(privateKey: messagingMaterial)) ?? ReticulumIdentity()
         networkHost = UserDefaults.standard.string(forKey: "reticulumHost") ?? "127.0.0.1"
+        networkIPv6Host = UserDefaults.standard.string(forKey: "reticulumIPv6Host") ?? "2403:5810:568a:1:be24:11ff:fe03:ff12"
         let savedPort = UserDefaults.standard.integer(forKey: "reticulumPort")
         networkPort = savedPort == 0 ? 4242 : savedPort
+        preferIPv6 = UserDefaults.standard.object(forKey: "reticulumPreferIPv6") as? Bool ?? true
         autoConnectEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoConnect")
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
@@ -127,13 +132,15 @@ public final class SidebandStore {
 
     public func clearError() { lastError = nil }
 
-    public func connectNetwork() async {
+    public func connectNetwork(forceIPv4: Bool = false) async {
         guard networkState != .connecting, networkState != .ready else { return }
         guard !networkHost.isEmpty, (1...65_535).contains(networkPort), let port = UInt16(exactly: networkPort) else {
             lastError = "Enter a valid TCP host and port."
             return
         }
         networkState = .connecting
+        let useIPv6 = !forceIPv4 && preferIPv6 && reachability.supportsIPv6 && !networkIPv6Host.isEmpty
+        let selectedHost = useIPv6 ? networkIPv6Host : networkHost
         let generation = UUID()
         networkConnectionGeneration = generation
         await networkInterface?.stop()
@@ -141,9 +148,12 @@ public final class SidebandStore {
         reconnectTask = nil
         intentionallyDisconnected = false
         UserDefaults.standard.set(networkHost, forKey: "reticulumHost")
+        UserDefaults.standard.set(networkIPv6Host, forKey: "reticulumIPv6Host")
         UserDefaults.standard.set(networkPort, forKey: "reticulumPort")
+        UserDefaults.standard.set(preferIPv6, forKey: "reticulumPreferIPv6")
         UserDefaults.standard.set(autoConnectEnabled, forKey: "reticulumAutoConnect")
-        let interface = ReticulumTCPInterface(host: networkHost, port: port) { [weak self] packet in
+        activeNetworkHost = selectedHost
+        let interface = ReticulumTCPInterface(host: selectedHost, port: port) { [weak self] packet in
             await self?.receive(packet)
         } stateHandler: { [weak self] state in
             await self?.setNetworkState(state, generation: generation)
@@ -163,6 +173,7 @@ public final class SidebandStore {
         await networkInterface?.stop()
         networkInterface = nil
         networkState = .stopped
+        activeNetworkHost = nil
     }
 
     public func applicationDidBecomeActive() async {
@@ -209,6 +220,11 @@ public final class SidebandStore {
     public func setAutoConnect(_ enabled: Bool) {
         autoConnectEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "reticulumAutoConnect")
+    }
+
+    public func setPreferIPv6(_ enabled: Bool) {
+        preferIPv6 = enabled
+        UserDefaults.standard.set(enabled, forKey: "reticulumPreferIPv6")
     }
 
     public func setPropagationNode(_ hash: String) {
@@ -346,7 +362,11 @@ public final class SidebandStore {
         switch state {
         case .failed:
             stopPeriodicPropagationSync()
-            scheduleReconnect()
+            if activeNetworkHost == networkIPv6Host, networkHost != networkIPv6Host {
+                Task { await connectNetwork(forceIPv4: true) }
+            } else {
+                scheduleReconnect()
+            }
         case .stopped: stopPeriodicPropagationSync()
         case .connecting, .ready: break
         }
