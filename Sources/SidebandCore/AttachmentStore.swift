@@ -18,6 +18,15 @@ public actor AttachmentStore {
         return Attachment(id: id, filename: originalName, mimeType: mimeType, byteCount: values.fileSize ?? 0, relativePath: storedName, state: .local)
     }
 
+    public func save(data: Data, filename: String, mimeType: String?) throws -> Attachment {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let id = UUID()
+        let safeName = URL(fileURLWithPath: filename).lastPathComponent
+        let storedName = "\(id.uuidString)-\(safeName)"
+        try data.write(to: directory.appending(path: storedName), options: .atomic)
+        return Attachment(id: id, filename: safeName, mimeType: mimeType, byteCount: data.count, relativePath: storedName, state: .available, progress: 1)
+    }
+
     public func url(for attachment: Attachment) -> URL { directory.appending(path: attachment.relativePath) }
     public func remove(_ attachment: Attachment) throws { try FileManager.default.removeItem(at: url(for: attachment)) }
 }

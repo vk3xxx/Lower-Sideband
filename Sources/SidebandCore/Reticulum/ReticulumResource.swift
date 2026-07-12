@@ -30,6 +30,12 @@ public struct ReticulumResourceManifest: Equatable, Sendable {
         guard Set(partHashes).count == partHashes.count else { throw ResourceError.mapHashCollision }
     }
 
+    public init(advertisement: ReticulumResourceAdvertisement, sdu: Int = Self.defaultSDU) throws {
+        guard advertisement.partCount == advertisement.partHashes.count, advertisement.transferSize >= 0, advertisement.dataSize >= 0 else { throw ResourceError.invalidManifest }
+        size = advertisement.transferSize; dataSize = advertisement.dataSize; self.sdu = sdu
+        randomHash = advertisement.mapRandomHash; resourceHash = advertisement.resourceHash; partHashes = advertisement.partHashes
+    }
+
     public func parts(from transferData: Data) throws -> [Data] {
         guard transferData.count == size else { throw ResourceError.hashMismatch }
         let parts = transferData.chunks(of: sdu)

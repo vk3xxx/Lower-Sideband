@@ -62,6 +62,9 @@ public final class SidebandStore {
         var sentIndices: Set<Int> = []
     }
     private var outgoingResources: [String: OutgoingResource] = [:]
+    private struct IncomingResource { let session: ReticulumLinkSession; var receiver: ReticulumResourceReceiver }
+    private var incomingResources: [String: IncomingResource] = [:]
+    private var receivedResourceHashes: Set<String> = []
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
     private var receivedLXMFIDs: Set<String> = []
@@ -506,10 +509,18 @@ public final class SidebandStore {
             keepalivesReceived += 1
             return
         }
+        if packet.context == 0x01 {
+            handleIncomingResourcePart(packet.data, session: session)
+            return
+        }
         if let plaintext = try? session.decrypt(packet) {
             encryptedPacketsReceived += 1
             if packet.context == 0x03 {
                 handleResourceRequest(plaintext, session: session)
+                return
+            }
+            if packet.context == 0x02 {
+                acceptResourceAdvertisement(plaintext, session: session)
                 return
             }
             if inboundLinkIDs.contains(session.linkID.hex) {
@@ -773,6 +784,65 @@ public final class SidebandStore {
         if let message = messages.first(where: { $0.id == resource.messageID }), message.attachments.allSatisfy({ $0.state == .available }) {
             updateMessage(resource.messageID, state: .delivered)
         }
+    }
+
+    private func acceptResourceAdvertisement(_ plaintext: Data, session: ReticulumLinkSession) {
+        guard let advertisement = try? ReticulumResourceAdvertisement(encoded: plaintext),
+              advertisement.flags & 0x01 == 0x01, advertisement.flags & 0x20 == 0x20,
+              !receivedResourceHashes.contains(advertisement.resourceHash.hex),
+              let manifest = try? ReticulumResourceManifest(advertisement: advertisement) else { return }
+        incomingResources[manifest.resourceHash.hex] = IncomingResource(session: session, receiver: ReticulumResourceReceiver(manifest: manifest))
+        requestIncomingResourceParts(resourceHash: manifest.resourceHash.hex)
+    }
+
+    private func requestIncomingResourceParts(resourceHash: String) {
+        guard let incoming = incomingResources[resourceHash],
+              let request = try? ReticulumResourceRequest(manifest: incoming.receiver.manifest, missingIndices: incoming.receiver.missingPartIndices) else { return }
+        Task { try? await transmitRawPacket(try incoming.session.resourceRequestPacket(request)) }
+    }
+
+    private func handleIncomingResourcePart(_ part: Data, session: ReticulumLinkSession) {
+        let match = incomingResources.first { _, incoming in
+            incoming.session.linkID == session.linkID && incoming.receiver.missingPartIndices.contains { index in
+                Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4)) == incoming.receiver.manifest.partHashes[index]
+            }
+        }
+        guard let match else { return }
+        let hash = match.key
+        var incoming = match.value
+        guard let index = incoming.receiver.missingPartIndices.first(where: { incoming.receiver.manifest.partHashes[$0] == Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4)) }) else { return }
+        do { try incoming.receiver.accept(part: part, at: index) } catch { return }
+        incomingResources[hash] = incoming
+        if incoming.receiver.isComplete { Task { await finishIncomingResource(resourceHash: hash) } }
+        else if incoming.receiver.receivedPartCount.isMultiple(of: 4) { requestIncomingResourceParts(resourceHash: hash) }
+    }
+
+    private func finishIncomingResource(resourceHash: String) async {
+        guard let incoming = incomingResources.removeValue(forKey: resourceHash),
+              let encrypted = try? incoming.receiver.assemble(),
+              let data = try? incoming.session.decryptResourcePayload(encrypted),
+              incoming.receiver.manifest.validate(data: data),
+              let envelope = try? LXMFResourceEnvelope(encoded: data),
+              let identity = identityForIncomingResource(envelope: envelope, session: incoming.session) else { return }
+        let expectedNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+        guard envelope.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + identity.hash),
+              let attachment = try? await attachmentStore.save(data: envelope.fileData, filename: envelope.filename, mimeType: envelope.mimeType) else { return }
+        let source = envelope.sourceHash.hex
+        if !conversations.contains(where: { $0.destinationHash == source }) {
+            let name = discoveries.first(where: { $0.destinationHash == source })?.announcedDisplayName ?? "Received \(source.prefix(8))"
+            _ = addConversation(destinationHash: source, displayName: name)
+        }
+        guard let conversation = conversations.first(where: { $0.destinationHash == source }) else { return }
+        messages.append(Message(conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment]))
+        receivedResourceHashes.insert(resourceHash); save()
+        let proof = incoming.receiver.manifest.resourceHash + ReticulumIdentity.fullHash(data + incoming.receiver.manifest.resourceHash)
+        try? await transmitRawPacket(Data([0x0f, 0x00]) + incoming.session.linkID + Data([0x05]) + proof)
+        await notifications.notifyIncoming(title: conversation.displayName, body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody)
+    }
+
+    private func identityForIncomingResource(envelope: LXMFResourceEnvelope, session: ReticulumLinkSession) -> ReticulumIdentity? {
+        if let identity = inboundRemoteIdentities[session.linkID.hex] { return identity }
+        return discoveries.first(where: { $0.destinationHash == envelope.sourceHash.hex })?.publicKey.flatMap { try? ReticulumIdentity(publicKey: $0) }
     }
 
     private func updateAttachment(messageID: UUID, attachmentID: UUID, state: Attachment.TransferState, progress: Double) {
