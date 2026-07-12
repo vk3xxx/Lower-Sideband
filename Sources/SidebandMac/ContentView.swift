@@ -317,6 +317,7 @@ private struct ConversationView: View {
     @State private var showingFileImporter = false
 
     var body: some View {
+        let conversationMessages = store.messages(for: conversation.id)
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading) {
@@ -328,33 +329,41 @@ private struct ConversationView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.padding()
             Divider()
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(store.messages(for: conversation.id)) { message in
-                        HStack {
-                            if message.direction == .outgoing { Spacer(minLength: 80) }
-                            VStack(alignment: .leading, spacing: 5) {
-                                if !message.body.isEmpty { Text(message.body) }
-                                ForEach(message.attachments) { attachment in
-                                    if isImage(attachment) {
-                                        InlineImageAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment), onRetry: { retry(message, attachment) }, onCancel: { cancel(message, attachment) })
-                                    } else {
-                                        Label {
-                                            VStack(alignment: .leading, spacing: 1) {
-                                                Text(attachment.filename).lineLimit(1)
-                                                Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
-                                            }
-                                        } icon: { Image(systemName: "doc.fill") }
-                                        attachmentControls(message, attachment)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(conversationMessages) { message in
+                            HStack {
+                                if message.direction == .outgoing { Spacer(minLength: 80) }
+                                VStack(alignment: .leading, spacing: 5) {
+                                    if !message.body.isEmpty { Text(message.body) }
+                                    ForEach(message.attachments) { attachment in
+                                        if isImage(attachment) {
+                                            InlineImageAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment), onRetry: { retry(message, attachment) }, onCancel: { cancel(message, attachment) })
+                                        } else {
+                                            Label {
+                                                VStack(alignment: .leading, spacing: 1) {
+                                                    Text(attachment.filename).lineLimit(1)
+                                                    Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
+                                                }
+                                            } icon: { Image(systemName: "doc.fill") }
+                                            attachmentControls(message, attachment)
+                                        }
                                     }
+                                    HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
+                                        .font(.caption2).foregroundStyle(.secondary)
                                 }
-                                HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }.padding(10).background(message.direction == .outgoing ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                            if message.direction == .incoming { Spacer(minLength: 80) }
+                                .padding(10)
+                                .background(message.direction == .outgoing ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                                if message.direction == .incoming { Spacer(minLength: 80) }
+                            }
                         }
-                    }
-                }.padding()
+                        Color.clear.frame(height: 1).id(bottomAnchorID)
+                    }.padding()
+                }
+                .onAppear { scrollToBottom(using: proxy) }
+                .onChange(of: conversation.id) { _, _ in scrollToBottom(using: proxy) }
+                .onChange(of: conversationMessages.last?.id) { _, _ in scrollToBottom(using: proxy) }
             }
             Divider()
             VStack(alignment: .leading, spacing: 8) {
@@ -381,6 +390,15 @@ private struct ConversationView: View {
         }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case let .success(urls) = result { Task { await importAttachments(urls) } }
+        }
+    }
+
+    private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
+
+    private func scrollToBottom(using proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            await Task.yield()
+            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
         }
     }
 
