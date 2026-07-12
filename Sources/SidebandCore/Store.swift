@@ -43,7 +43,9 @@ public final class SidebandStore {
     private let pathTable = ReticulumPathTable()
     private var pendingLinks: [String: ReticulumLinkRequest] = [:]
     private var activeLinks: [String: ReticulumLinkSession] = [:]
-    private var pendingReceipts: [String: (messageID: UUID, direct: Bool)] = [:]
+    private enum ReceiptKind { case direct, opportunistic, propagation }
+    private struct PendingReceipt { let messageID: UUID; let kind: ReceiptKind; let destinationHash: String }
+    private var pendingReceipts: [String: PendingReceipt] = [:]
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
     private var receivedLXMFIDs: Set<String> = []
@@ -378,7 +380,7 @@ public final class SidebandStore {
             acceptIncomingLink(packet)
             return
         }
-        if packet.packetType == .proof, packet.destinationType == .link {
+        if packet.packetType == .proof {
             receiveDeliveryProof(packet)
             return
         }
@@ -618,20 +620,36 @@ public final class SidebandStore {
             if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash) }
             return
         }
+        guard let destination = Data(hexadecimal: conversation.destinationHash),
+              let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash }),
+              let publicKey = discovery.publicKey,
+              let recipient = try? ReticulumIdentity(publicKey: publicKey) else { return }
+        let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+        let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
+        var requiresLink = false
+        for item in queued {
+            do {
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8))
+                let raw = try lxmf.opportunisticPacket(recipientIdentity: recipient, ratchet: discovery.ratchet)
+                guard raw.count <= 500 else { requiresLink = true; continue }
+                let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
+                pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .opportunistic, destinationHash: conversation.destinationHash)
+                try await transmitRawPacket(raw)
+                updateMessage(item.id, state: .sent)
+            } catch { requiresLink = true }
+        }
+        guard requiresLink else { return }
         if !activeLinkHashes.contains(conversation.destinationHash) {
             if !pendingLinkHashes.contains(conversation.destinationHash) { await requestLink(to: conversation.destinationHash) }
             return
         }
-        guard let session = activeLinks.values.first(where: { $0.destinationHash.hex == conversation.destinationHash }),
-              let destination = Data(hexadecimal: conversation.destinationHash) else { return }
-        let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
-        let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
-        for item in queued {
+        guard let session = activeLinks.values.first(where: { $0.destinationHash.hex == conversation.destinationHash }) else { return }
+        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }) {
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8))
                 let raw = try session.encryptedPacket(lxmf.packed)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
-                pendingReceipts[packetHash] = (item.id, true)
+                pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
                 try await transmitRawPacket(raw)
                 updateMessage(item.id, state: .sent)
             } catch { lastError = "LXMF delivery failed: \(error.localizedDescription)" }
@@ -642,14 +660,13 @@ public final class SidebandStore {
         guard packet.data.count == 96 else { return }
         let provedHash = Data(packet.data.prefix(32))
         guard let receipt = pendingReceipts[provedHash.hex],
-              let session = activeLinks[packet.destinationHash.hex],
-              let discovery = discoveries.first(where: { $0.destinationHash == session.destinationHash.hex }),
+              let discovery = discoveries.first(where: { $0.destinationHash == receipt.destinationHash }),
               let publicKey = discovery.publicKey,
               let identity = try? ReticulumIdentity(publicKey: publicKey),
               identity.validate(signature: Data(packet.data.suffix(64)), message: provedHash) else { return }
         pendingReceipts.removeValue(forKey: provedHash.hex)
-        updateMessage(receipt.messageID, state: receipt.direct ? .delivered : .sent)
-        if !receipt.direct {
+        updateMessage(receipt.messageID, state: receipt.kind == .propagation ? .sent : .delivered)
+        if receipt.kind == .propagation {
             propagationUploadsAccepted += 1
             UserDefaults.standard.set(propagationUploadsAccepted, forKey: "lxmfPropagationUploadsAccepted")
         }
@@ -670,7 +687,7 @@ public final class SidebandStore {
                 let envelope = try lxmf.propagatedEnvelope(recipientIdentity: recipient, ratchet: discovery.ratchet)
                 let raw = try propagationSession.encryptedPacket(envelope)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
-                pendingReceipts[packetHash] = (item.id, false)
+                pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .propagation, destinationHash: propagationNodeHash)
                 try await transmitRawPacket(raw)
                 updateMessage(item.id, state: .sent)
             } catch { lastError = "Propagation upload failed: \(error.localizedDescription)" }

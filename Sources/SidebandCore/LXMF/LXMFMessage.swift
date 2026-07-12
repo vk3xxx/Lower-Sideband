@@ -35,6 +35,11 @@ public struct LXMFMessage: Sendable {
         let lxmfData = destinationHash + encrypted
         return MessagePack.array([MessagePack.double(timestamp), MessagePack.array([MessagePack.binary(lxmfData)])])
     }
+
+    public func opportunisticPacket(recipientIdentity: ReticulumIdentity, ephemeralPrivateKey: Data? = nil, iv: Data? = nil, ratchet: Data? = nil) throws -> Data {
+        let encrypted = try recipientIdentity.encrypt(Data(packed.dropFirst(16)), ephemeralPrivateKey: ephemeralPrivateKey, iv: iv, ratchet: ratchet)
+        return Data([0x00, 0x00]) + destinationHash + Data([0x00]) + encrypted
+    }
     public enum MessageError: Error { case invalidDestination }
 }
 

@@ -16,6 +16,24 @@ import Testing
     #expect(identity.validate(signature: Data(proof.data.suffix(64)), message: received.packetHash))
 }
 
+@Test func opportunisticLXMFPacketRoundTripsThroughRecipientIdentity() throws {
+    let source = try ReticulumIdentity(privateKey: Data(0..<64))
+    let recipient = try ReticulumIdentity(privateKey: Data(64..<128))
+    let destination = ReticulumIdentity.truncatedHash(Data("destination".utf8))
+    let sourceHash = ReticulumIdentity.truncatedHash(Data("source".utf8))
+    let message = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: source, timestamp: 1_700_000_000, content: Data("hello".utf8))
+    let raw = try message.opportunisticPacket(recipientIdentity: recipient, ephemeralPrivateKey: Data(repeating: 7, count: 32), iv: Data(repeating: 9, count: 16))
+    let packet = try ReticulumPacket(raw: raw)
+    let decrypted = try recipient.decrypt(packet.data)
+    let received = try LXMFReceivedMessage(packed: packet.destinationHash + decrypted)
+
+    #expect(raw.count <= 500)
+    #expect(packet.packetType == .data)
+    #expect(packet.destinationType == .single)
+    #expect(received.content == Data("hello".utf8))
+    #expect(received.validate(with: source))
+}
+
 @Test func destinationValidation() {
     #expect(DestinationHash.isValid("0123456789abcdef0123456789ABCDEF"))
     #expect(!DestinationHash.isValid("0123"))
