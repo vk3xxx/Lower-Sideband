@@ -233,6 +233,16 @@ import Testing
     #expect(!ReticulumResourceLimits.accepts(dataSize: 1, transferSize: 1, segments: 66))
 }
 
+@Test func staleResourceStagingIsRemoved() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let folder = root.appending(path: "stale")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -100)], ofItemAtPath: folder.path)
+    let store = ReticulumResourceStagingStore(directory: root)
+    #expect(try await store.removeStale(olderThan: Date(timeIntervalSinceNow: -50)) == 1)
+    #expect(!FileManager.default.fileExists(atPath: folder.path))
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))

@@ -34,6 +34,18 @@ public actor ReticulumResourceStagingStore {
         try? FileManager.default.removeItem(at: folder); transfers.removeValue(forKey: key)
         return data
     }
+
+    @discardableResult
+    public func removeStale(olderThan cutoff: Date) throws -> Int {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return 0 }
+        let folders = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles])
+        var removed = 0
+        for folder in folders {
+            let modified = try folder.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? .distantPast
+            if modified < cutoff { try? FileManager.default.removeItem(at: folder); transfers.removeValue(forKey: folder.lastPathComponent); removed += 1 }
+        }
+        return removed
+    }
 }
 
 private extension Data { var hex: String { map { String(format: "%02x", $0) }.joined() } }

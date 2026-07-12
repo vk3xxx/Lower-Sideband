@@ -107,6 +107,7 @@ public final class SidebandStore {
         load()
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
         backgroundRefresh.register { [weak self] in await self?.performBackgroundRefresh() }
+        Task { try? await resourceStagingStore.removeStale(olderThan: Date(timeIntervalSinceNow: -86_400)) }
     }
 
     public var selectedConversation: Conversation? {
@@ -1045,6 +1046,14 @@ public final class SidebandStore {
         for index in messages.indices where messages[index].direction == .outgoing && messages[index].state == .sent {
             messages[index].state = .queued
             recoveredOutboundCount += 1
+        }
+        for messageIndex in messages.indices where messages[messageIndex].direction == .outgoing {
+            for attachmentIndex in messages[messageIndex].attachments.indices where messages[messageIndex].attachments[attachmentIndex].state == .transferring {
+                messages[messageIndex].attachments[attachmentIndex].state = .queued
+                messages[messageIndex].attachments[attachmentIndex].progress = 0
+                messages[messageIndex].state = .queued
+                recoveredOutboundCount += 1
+            }
         }
         discoveries = snapshot.discoveries
         selectedConversationID = conversations.first?.id
