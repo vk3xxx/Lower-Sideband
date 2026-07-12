@@ -38,6 +38,7 @@ public final class SidebandStore {
     public let lanDiscovery = LANGatewayDiscovery()
     public let autoInterfaceDiscovery = AutoInterfaceDiscovery()
     public let reachability = NetworkReachability()
+    public let notifications = LocalNotificationManager()
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
     public var selectedConversationID: UUID?
@@ -631,6 +632,7 @@ public final class SidebandStore {
         receivedLXMFIDs.insert(message.messageID.hex)
         UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
         save()
+        Task { await notifications.notifyIncoming(title: conversation.displayName, body: body) }
         return true
     }
 

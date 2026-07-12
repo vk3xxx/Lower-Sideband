@@ -147,6 +147,16 @@ private struct NetworkView: View {
                     }
                 }.padding(6)
             }
+            GroupBox("Notifications") {
+                HStack {
+                    Toggle("Notify for verified incoming messages", isOn: Binding(
+                        get: { store.notifications.isEnabled },
+                        set: { enabled in Task { await store.notifications.setEnabled(enabled) } }
+                    ))
+                    Spacer()
+                    Text(store.notifications.authorizationDescription).font(.caption).foregroundStyle(.secondary)
+                }.padding(6)
+            }
             GroupBox("LAN gateways") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
