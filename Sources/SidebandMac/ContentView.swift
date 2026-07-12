@@ -1,6 +1,13 @@
 import SwiftUI
 import SidebandCore
 import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+private typealias PlatformImage = NSImage
+#else
+import UIKit
+private typealias PlatformImage = UIImage
+#endif
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
@@ -316,12 +323,16 @@ private struct ConversationView: View {
                             VStack(alignment: .leading, spacing: 5) {
                                 if !message.body.isEmpty { Text(message.body) }
                                 ForEach(message.attachments) { attachment in
-                                    Label {
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            Text(attachment.filename).lineLimit(1)
-                                            Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
-                                        }
-                                    } icon: { Image(systemName: "doc.fill") }
+                                    if isImage(attachment) {
+                                        InlineImageAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment))
+                                    } else {
+                                        Label {
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text(attachment.filename).lineLimit(1)
+                                                Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
+                                            }
+                                        } icon: { Image(systemName: "doc.fill") }
+                                    }
                                 }
                                 HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
                                     .font(.caption2).foregroundStyle(.secondary)
@@ -384,6 +395,12 @@ private struct ConversationView: View {
         return "\(size) · \(attachment.state.rawValue.capitalized)"
     }
 
+    private func isImage(_ attachment: Attachment) -> Bool {
+        if let mimeType = attachment.mimeType, UTType(mimeType: mimeType)?.conforms(to: .image) == true { return true }
+        guard let ext = attachment.filename.split(separator: ".").last else { return false }
+        return UTType(filenameExtension: String(ext))?.conforms(to: .image) == true
+    }
+
     private var routingStatus: String {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "Encrypted" }
         if store.pendingLinkHashes.contains(conversation.destinationHash) { return "Connecting securely" }
@@ -395,6 +412,47 @@ private struct ConversationView: View {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
         if store.networkState == .ready { return "network" }
         return "arrow.triangle.2.circlepath"
+    }
+}
+
+private struct InlineImageAttachmentView: View {
+    let store: AttachmentStore
+    let attachment: Attachment
+    let status: String
+    @State private var image: PlatformImage?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Group {
+                if let image {
+                    swiftUIImage(image)
+                        .resizable().scaledToFit()
+                } else {
+                    ZStack {
+                        Rectangle().fill(.quaternary)
+                        ProgressView()
+                    }
+                }
+            }
+            .frame(maxWidth: 320, maxHeight: 240)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .accessibilityLabel("Image attachment \(attachment.filename)")
+            Text(attachment.filename).font(.caption).lineLimit(1)
+            Text(status).font(.caption2).foregroundStyle(.secondary)
+        }
+        .task(id: attachment.id) {
+            let url = await store.url(for: attachment)
+            guard let data = try? Data(contentsOf: url) else { return }
+            image = PlatformImage(data: data)
+        }
+    }
+
+    private func swiftUIImage(_ image: PlatformImage) -> Image {
+#if os(macOS)
+        Image(nsImage: image)
+#else
+        Image(uiImage: image)
+#endif
     }
 }
 
