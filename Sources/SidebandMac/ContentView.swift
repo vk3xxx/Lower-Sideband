@@ -652,6 +652,7 @@ private struct ConversationView: View {
     @State private var previewAttachmentURL: URL?
     @State private var showingContactQR = false
     @State private var telemetryCapture = TelemetryCapture()
+    @State private var voiceRecorder = VoiceMessageRecorder()
     @State private var showingTelemetryMap = false
 
     var body: some View {
@@ -735,6 +736,8 @@ private struct ConversationView: View {
                                     ForEach(message.attachments) { attachment in
                                         if isImage(attachment) {
                                             InlineImageAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment), onRetry: { retry(message, attachment) }, onCancel: { cancel(message, attachment) })
+                                        } else if isAudio(attachment) {
+                                            InlineAudioAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment), onRetry: { retry(message, attachment) }, onCancel: { cancel(message, attachment) })
                                         } else {
                                             Button { preview(attachment) } label: {
                                                 Label {
@@ -799,7 +802,7 @@ private struct ConversationView: View {
                         HStack {
                             ForEach(pendingAttachments) { attachment in
                                 HStack(spacing: 5) {
-                                    Image(systemName: "paperclip")
+                                    Image(systemName: isAudio(attachment) ? "waveform" : "paperclip")
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(attachment.filename).lineLimit(1)
                                         Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.byteCount), countStyle: .file))
@@ -823,10 +826,25 @@ private struct ConversationView: View {
                     Button { showingFileImporter = true } label: { Image(systemName: "paperclip") }
                         .help("Attach files")
                         .disabled(pendingAttachments.count >= SidebandMessageLimits.maximumAttachments)
+                    Button(action: toggleVoiceRecording) {
+                        Image(systemName: voiceRecorder.isRecording ? "stop.circle.fill" : "mic.fill")
+                            .foregroundStyle(voiceRecorder.isRecording ? .red : Color.accentColor)
+                    }
+                    .help(voiceRecorder.isRecording ? "Finish voice message" : "Record voice message")
+                    .disabled(voiceRecorder.isPreparing || (!voiceRecorder.isRecording && pendingAttachments.count >= SidebandMessageLimits.maximumAttachments))
                     TextField("Message", text: $draft, axis: .vertical).textFieldStyle(.roundedBorder).onSubmit(send)
-                    Button(action: send) { Image(systemName: "paperplane.fill") }.buttonStyle(.borderedProminent).disabled(!canSend)
+                        .disabled(voiceRecorder.isRecording)
+                    Button(action: send) { Image(systemName: "paperplane.fill") }.buttonStyle(.borderedProminent).disabled(!canSend || voiceRecorder.isRecording)
                 }
                 HStack {
+                    if voiceRecorder.isRecording {
+                        Label(formatDuration(voiceRecorder.elapsed), systemImage: "waveform")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(.red)
+                            .accessibilityLabel("Recording voice message, \(formatDuration(voiceRecorder.elapsed))")
+                        Button("Cancel recording", role: .destructive) { voiceRecorder.cancel() }
+                            .font(.caption)
+                    }
                     Spacer()
                     Text("\(draft.count)/\(SidebandMessageLimits.maximumTextCharacters)")
                         .font(.caption2.monospacedDigit())
@@ -846,7 +864,10 @@ private struct ConversationView: View {
             draft = store.draft(for: conversation.id)
             store.conversationDidAppear(conversation.id)
         }
-        .onDisappear { store.conversationDidDisappear(conversation.id) }
+        .onDisappear {
+            voiceRecorder.cancel()
+            store.conversationDidDisappear(conversation.id)
+        }
         .onChange(of: draft) { _, value in
             if value.count > SidebandMessageLimits.maximumTextCharacters {
                 draft = String(value.prefix(SidebandMessageLimits.maximumTextCharacters))
@@ -903,6 +924,42 @@ private struct ConversationView: View {
             } else if let error = telemetryCapture.lastError {
                 store.lastError = error
             }
+        }
+    }
+
+    private func toggleVoiceRecording() {
+        if voiceRecorder.isRecording {
+            let duration = voiceRecorder.elapsed
+            guard let url = voiceRecorder.stop() else { return }
+            guard duration >= 0.6 else {
+                try? FileManager.default.removeItem(at: url)
+                store.lastError = "Voice messages must be at least one second long."
+                return
+            }
+            Task { await importVoiceRecording(url) }
+        } else {
+            Task {
+                do { try await voiceRecorder.start() }
+                catch { store.lastError = error.localizedDescription }
+            }
+        }
+    }
+
+    private func importVoiceRecording(_ url: URL) async {
+        defer { try? FileManager.default.removeItem(at: url) }
+        guard store.validateAttachmentSelection(currentCount: pendingAttachments.count, adding: 1) else { return }
+        do {
+            let timestamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
+                .replacingOccurrences(of: ":", with: "-")
+            let attachment = try await store.attachmentStore.importFile(from: url, preferredName: "Voice message \(timestamp).m4a")
+            if store.validateAttachmentIsUnique(attachment, among: pendingAttachments),
+               store.validateAttachmentTotal(pendingAttachments + [attachment]) {
+                pendingAttachments.append(attachment)
+            } else {
+                try? await store.attachmentStore.remove(attachment)
+            }
+        } catch {
+            store.reportAttachmentImportFailure(filename: "Voice message.m4a", error: error)
         }
     }
 
@@ -986,6 +1043,17 @@ private struct ConversationView: View {
         return UTType(filenameExtension: String(ext))?.conforms(to: .image) == true
     }
 
+    private func isAudio(_ attachment: Attachment) -> Bool {
+        if let mimeType = attachment.mimeType, UTType(mimeType: mimeType)?.conforms(to: .audio) == true { return true }
+        guard let ext = attachment.filename.split(separator: ".").last else { return false }
+        return UTType(filenameExtension: String(ext))?.conforms(to: .audio) == true
+    }
+
+    private func formatDuration(_ duration: TimeInterval) -> String {
+        let total = max(0, Int(duration.rounded(.down)))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
     @ViewBuilder private func attachmentControls(_ message: Message, _ attachment: Attachment) -> some View {
         if attachment.state == .failed { Button("Retry") { retry(message, attachment) }.font(.caption) }
         else if attachment.state == .transferring { Button("Cancel") { cancel(message, attachment) }.font(.caption) }
@@ -1067,6 +1135,59 @@ private struct AttachmentShareButton: View {
             let candidate = await store.url(for: attachment)
             url = FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
         }
+    }
+}
+
+private struct InlineAudioAttachmentView: View {
+    let store: AttachmentStore
+    let attachment: Attachment
+    let status: String
+    let onRetry: () -> Void
+    let onCancel: () -> Void
+    @State private var player = AudioAttachmentPlayer()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Button { player.togglePlayback() } label: {
+                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.title2)
+                }
+                .buttonStyle(.plain)
+                .disabled(!player.isReady)
+                Slider(
+                    value: Binding(get: { player.currentTime }, set: { player.seek(to: $0) }),
+                    in: 0...max(0.1, player.duration)
+                )
+                .frame(minWidth: 120)
+                .disabled(!player.isReady)
+                Text("\(format(player.currentTime))/\(format(player.duration))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Label(attachment.filename, systemImage: "waveform")
+                .font(.caption)
+                .lineLimit(1)
+            Text(status).font(.caption2).foregroundStyle(.secondary)
+            if attachment.state == .failed { Button("Retry", action: onRetry).font(.caption) }
+            else if attachment.state == .transferring { Button("Cancel", action: onCancel).font(.caption) }
+        }
+        .frame(maxWidth: 340)
+        .task(id: attachment.id) {
+            guard attachment.state == .available || attachment.state == .local else { return }
+            let url = await store.url(for: attachment)
+            guard FileManager.default.fileExists(atPath: url.path) else { return }
+            player.load(url)
+        }
+        .onDisappear { player.stop() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Audio attachment \(attachment.filename)")
+    }
+
+    private func format(_ duration: TimeInterval) -> String {
+        guard duration.isFinite else { return "0:00" }
+        let total = max(0, Int(duration.rounded(.down)))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

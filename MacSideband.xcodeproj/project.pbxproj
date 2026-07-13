@@ -45,6 +45,7 @@
 		C3AED9F45A9A29D7881185E2 /* DestinationHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E194B906C9B4844994C97C4 /* DestinationHash.swift */; };
 		C6A7F579F12508B84057AE05 /* TCPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */; };
 		C9FBBAFC8455CCB2B8D43735 /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668FFE37826A8100E1CA09FF /* Store.swift */; };
+		D04A2F901E8C4A42B20E1601 /* VoiceMessageAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04A2F901E8C4A42B20E1602 /* VoiceMessageAudio.swift */; };
 		D12CA1E59042A522571C47CC /* ReticulumResourceLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */; };
 		D1E4A2CCEE53DAE8DB98144F /* SidebandCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */; };
 		D365CFC7A7FE5E7B2E4B8846 /* LXMFReceivedMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */; };
@@ -117,6 +118,7 @@
 		C5D406BCA1BD18C778F10EA3 /* ReticulumProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumProof.swift; sourceTree = "<group>"; };
 		C93625631542290E7226AC8E /* ReticulumPathRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPathRequest.swift; sourceTree = "<group>"; };
 		CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStore.swift; sourceTree = "<group>"; };
+		D04A2F901E8C4A42B20E1602 /* VoiceMessageAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageAudio.swift; sourceTree = "<group>"; };
 		DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumTunnel.swift; sourceTree = "<group>"; };
 		E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SidebandCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryCapture.swift; sourceTree = "<group>"; };
@@ -210,6 +212,7 @@
 				F48887EC9B5C518D3AFB7565 /* SidebandMacApp.swift */,
 				E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */,
 				BC7290C1251DFC249932DBC0 /* TelemetryViews.swift */,
+				D04A2F901E8C4A42B20E1602 /* VoiceMessageAudio.swift */,
 			);
 			path = SidebandMac;
 			sourceTree = "<group>";
@@ -411,6 +414,7 @@
 				91FD929272BA3B900D30332E /* SidebandMacApp.swift in Sources */,
 				612902045745242AA9383C85 /* TelemetryCapture.swift in Sources */,
 				BFCC9E8D2B1B6F34169A774D /* TelemetryViews.swift in Sources */,
+				D04A2F901E8C4A42B20E1601 /* VoiceMessageAudio.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

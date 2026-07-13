@@ -594,6 +594,20 @@ import Testing
     #expect(attachment.contentHash != nil)
 }
 
+@Test func attachmentStoreRecognizesVoiceMessageAudio() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let source = root.appending(path: "voice.m4a")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data([0, 1, 2, 3]).write(to: source)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = AttachmentStore(directory: root.appending(path: "stored"))
+    let attachment = try await store.importFile(from: source)
+
+    #expect(attachment.filename == "voice.m4a")
+    #expect(attachment.mimeType?.hasPrefix("audio/") == true)
+}
+
 @Test func attachmentStoreRejectsCorruptedLocalFiles() async throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
