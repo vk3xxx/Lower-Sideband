@@ -469,6 +469,9 @@ private struct ConversationView: View {
                                             .disabled(attachment.state == .transferring || attachment.state == .queued || attachment.state == .failed)
                                             attachmentControls(message, attachment)
                                         }
+                                        if attachment.state == .available || attachment.state == .local {
+                                            AttachmentShareButton(store: store.attachmentStore, attachment: attachment)
+                                        }
                                     }
                                     HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
                                         .font(.caption2).foregroundStyle(.secondary)
@@ -597,6 +600,24 @@ private struct ConversationView: View {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
         if store.networkState == .ready { return "network" }
         return "arrow.triangle.2.circlepath"
+    }
+}
+
+private struct AttachmentShareButton: View {
+    let store: AttachmentStore
+    let attachment: Attachment
+    @State private var url: URL?
+
+    var body: some View {
+        Group {
+            if let url {
+                ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up").font(.caption) }
+            }
+        }
+        .task(id: attachment.relativePath) {
+            let candidate = await store.url(for: attachment)
+            url = FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+        }
     }
 }
 
