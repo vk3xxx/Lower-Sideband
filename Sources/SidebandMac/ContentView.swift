@@ -2,6 +2,7 @@ import SwiftUI
 import SidebandCore
 import UniformTypeIdentifiers
 import ImageIO
+import QuickLook
 #if os(macOS)
 import AppKit
 private typealias PlatformImage = NSImage
@@ -406,6 +407,7 @@ private struct ConversationView: View {
     @State private var pendingAttachments: [Attachment] = []
     @State private var showingFileImporter = false
     @State private var messageSearch = ""
+    @State private var previewAttachmentURL: URL?
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -455,12 +457,16 @@ private struct ConversationView: View {
                                         if isImage(attachment) {
                                             InlineImageAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment), onRetry: { retry(message, attachment) }, onCancel: { cancel(message, attachment) })
                                         } else {
-                                            Label {
-                                                VStack(alignment: .leading, spacing: 1) {
-                                                    Text(attachment.filename).lineLimit(1)
-                                                    Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
-                                                }
-                                            } icon: { Image(systemName: "doc.fill") }
+                                            Button { preview(attachment) } label: {
+                                                Label {
+                                                    VStack(alignment: .leading, spacing: 1) {
+                                                        Text(attachment.filename).lineLimit(1)
+                                                        Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
+                                                    }
+                                                } icon: { Image(systemName: "doc.fill") }
+                                            }
+                                            .buttonStyle(.plain)
+                                            .disabled(attachment.state == .transferring || attachment.state == .queued || attachment.state == .failed)
                                             attachmentControls(message, attachment)
                                         }
                                     }
@@ -518,6 +524,7 @@ private struct ConversationView: View {
         }
         .onAppear { store.conversationDidAppear(conversation.id) }
         .onDisappear { store.conversationDidDisappear(conversation.id) }
+        .quickLookPreview($previewAttachmentURL)
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
@@ -575,6 +582,9 @@ private struct ConversationView: View {
     }
     private func retry(_ message: Message, _ attachment: Attachment) { Task { await store.retryAttachment(messageID: message.id, attachmentID: attachment.id) } }
     private func cancel(_ message: Message, _ attachment: Attachment) { Task { await store.cancelAttachment(messageID: message.id, attachmentID: attachment.id) } }
+    private func preview(_ attachment: Attachment) {
+        Task { previewAttachmentURL = await store.attachmentStore.url(for: attachment) }
+    }
 
     private var routingStatus: String {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "Encrypted" }
