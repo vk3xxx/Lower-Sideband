@@ -414,8 +414,8 @@ private struct NetworkView: View {
                     Text("Local name")
                     TextField("Sideband Swift", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
                 }
-                GridRow { Text("Host"); TextField("127.0.0.1", text: $store.networkHost) }
-                GridRow { Text("IPv6 host"); TextField("IPv6 gateway", text: $store.networkIPv6Host) }
+                GridRow { Text("Host"); TextField("Optional configured IPv4 or DNS hostname", text: $store.networkHost) }
+                GridRow { Text("IPv6 host"); TextField("Optional configured IPv6 gateway", text: $store.networkIPv6Host) }
                 GridRow { Text("Internet override"); TextField("Optional public IPv6 or DNS hostname", text: $store.networkInternetHost) }
                 GridRow { Text("Internet port"); TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never)) }
                 GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
@@ -513,7 +513,7 @@ private struct NetworkView: View {
                         }
                     }
                     if store.lanDiscovery.gateways.isEmpty {
-                        ContentUnavailableView("No advertised gateways", systemImage: "dot.radiowaves.left.and.right", description: Text(store.lanDiscovery.isSearching ? "Listening automatically; the configured dual-stack gateway remains available as fallback." : "Start discovery or connect manually above."))
+                        ContentUnavailableView("No advertised gateways", systemImage: "dot.radiowaves.left.and.right", description: Text(store.lanDiscovery.isSearching ? "Listening automatically; public Internet gateways will be tried if no LAN gateway appears." : "Start discovery or connect automatically."))
                             .frame(maxHeight: 95)
                     } else {
                         ForEach(store.lanDiscovery.gateways) { gateway in
