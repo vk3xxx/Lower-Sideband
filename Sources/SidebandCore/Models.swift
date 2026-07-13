@@ -133,6 +133,12 @@ public struct AppSnapshot: Codable, Sendable {
     }
 }
 
+public enum SnapshotError: LocalizedError {
+    case unsupportedVersion
+
+    public var errorDescription: String? { "This Sideband backup was created by a newer, unsupported app version." }
+}
+
 public struct DiscoveredDestination: Identifiable, Codable, Hashable, Sendable {
     public var id: String { destinationHash }
     public let destinationHash: String

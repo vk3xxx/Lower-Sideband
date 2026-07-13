@@ -122,6 +122,18 @@ import Testing
     #expect(decoded.schemaVersion == AppSnapshot.currentSchemaVersion)
 }
 
+@MainActor @Test func exportedSnapshotDataRoundTripsCurrentState() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Backup Peer"))
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let snapshot = try decoder.decode(AppSnapshot.self, from: store.exportSnapshotData())
+    #expect(snapshot.schemaVersion == AppSnapshot.currentSchemaVersion)
+    #expect(snapshot.conversations.first?.displayName == "Backup Peer")
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

@@ -600,6 +600,14 @@ public final class SidebandStore {
         ].joined(separator: "\n")
     }
 
+    public func exportSnapshotData() throws -> Data {
+        let snapshot = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts)
+        let data = try JSONEncoder.sideband.encode(snapshot)
+        let validated = try JSONDecoder.sideband.decode(AppSnapshot.self, from: data)
+        guard validated.schemaVersion <= AppSnapshot.currentSchemaVersion else { throw SnapshotError.unsupportedVersion }
+        return data
+    }
+
     public func startGatewayDiscovery() { lanDiscovery.start() }
     public func stopGatewayDiscovery() { lanDiscovery.stop() }
     public func startAutoInterfaceDiscovery() {
