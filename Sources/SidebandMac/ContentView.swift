@@ -113,6 +113,12 @@ struct ContentView: View {
                         } label: {
                             Label(conversation.notificationsMuted ? "Unmute Notifications" : "Mute Notifications", systemImage: conversation.notificationsMuted ? "bell" : "bell.slash")
                         }
+                        Button {
+                            Task { await store.requestPath(to: conversation.destinationHash) }
+                        } label: {
+                            Label(store.isPathPending(to: conversation.destinationHash) ? "Finding Route" : "Request Path", systemImage: "point.3.connected.trianglepath.dotted")
+                        }
+                        .disabled(store.networkState != .ready || store.isPathPending(to: conversation.destinationHash))
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }
                 } }
