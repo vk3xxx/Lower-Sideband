@@ -15,11 +15,12 @@ struct ContentView: View {
     @Bindable var store: SidebandStore
     @State private var showingNewConversation = false
     @State private var showingNetwork = false
+    @State private var conversationSearch = ""
 
     var body: some View {
         NavigationSplitView {
             List(selection: $store.selectedConversationID) {
-                Section("Conversations") { ForEach(store.conversations) { conversation in
+                Section("Conversations") { ForEach(filteredConversations) { conversation in
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
@@ -64,6 +65,7 @@ struct ContentView: View {
                     }
                 }
             }
+            .searchable(text: $conversationSearch, prompt: "Search conversations")
             .navigationTitle("Sideband")
             .toolbar {
                 Button(action: { showingNetwork = true }) {
@@ -105,6 +107,14 @@ struct ContentView: View {
         case .connecting: "Connecting"
         case .failed: "Network error"
         case .stopped: "Offline"
+        }
+    }
+
+    private var filteredConversations: [Conversation] {
+        let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return store.conversations }
+        return store.conversations.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query) || $0.destinationHash.localizedCaseInsensitiveContains(query)
         }
     }
 
