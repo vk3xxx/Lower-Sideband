@@ -143,12 +143,16 @@ public final class SidebandStore {
 
     public func conversationContactCard(_ conversationID: UUID) -> String? {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
-        return [
+        var lines = [
             "Sideband Contact",
             "Name: \(conversation.displayName)",
             "LXMF Destination: \(conversation.destinationHash)",
             "Trusted: \(conversation.isTrusted ? "yes" : "no")"
-        ].joined(separator: "\n")
+        ]
+        if let link = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+            lines.append("Contact Link: \(link.url.absoluteString)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     public func draft(for conversationID: UUID) -> String { drafts[conversationID] ?? "" }

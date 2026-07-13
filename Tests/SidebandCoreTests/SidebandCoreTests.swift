@@ -122,6 +122,7 @@ import Testing
     #expect(card.contains("Name: Peer"))
     #expect(card.contains("LXMF Destination: \(conversation.destinationHash)"))
     #expect(card.contains("Trusted: yes"))
+    #expect(card.contains("sideband://contact/\(conversation.destinationHash)?name=Peer"))
 }
 
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
