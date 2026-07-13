@@ -114,7 +114,7 @@ public final class SidebandStore {
         let interfaceMaterial = UserDefaults.standard.data(forKey: "reticulumTCPInterfaceHash") ?? ReticulumIdentity.fullHash(Data(UUID().uuidString.utf8))
         tcpInterfaceHash = interfaceMaterial
         UserDefaults.standard.set(interfaceMaterial, forKey: "reticulumTCPInterfaceHash")
-        let messagingMaterial = SecureIdentityStore.loadOrCreate(account: "lxmf.messaging", legacyDefaultsKey: "lxmfMessagingIdentity")
+        let messagingMaterial = SecureIdentityStore.loadOrCreate(account: "lxmf.messaging", legacyDefaultsKey: "lxmfMessagingIdentity", synchronizable: true)
         messagingIdentity = (try? ReticulumIdentity(privateKey: messagingMaterial)) ?? ReticulumIdentity()
         networkHost = UserDefaults.standard.string(forKey: "reticulumHost") ?? ""
         networkIPv6Host = UserDefaults.standard.string(forKey: "reticulumIPv6Host") ?? ""
