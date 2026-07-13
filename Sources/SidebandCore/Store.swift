@@ -67,6 +67,7 @@ public final class SidebandStore {
     private var pendingLinkTimeoutTokens: [String: UUID] = [:]
     private var deferredLinkRetryTokens: [String: UUID] = [:]
     private var activeLinks: [String: ReticulumLinkSession] = [:]
+    private var linkRemoteDestinations: [String: String] = [:]
     private enum ReceiptKind { case direct, opportunistic, propagation }
     private struct PendingReceipt { let messageID: UUID; let kind: ReceiptKind; let destinationHash: String }
     private var pendingReceipts: [String: PendingReceipt] = [:]
@@ -874,6 +875,7 @@ public final class SidebandStore {
         pendingLinks.removeAll()
         pendingLinkTimeoutTokens.removeAll()
         activeLinks.removeAll()
+        linkRemoteDestinations.removeAll()
         pendingLinkHashes.removeAll()
         activeLinkHashes.removeAll()
         inboundLinkIDs.removeAll()
@@ -1120,6 +1122,7 @@ public final class SidebandStore {
         pendingLinks.removeValue(forKey: linkID)
         pendingLinkTimeoutTokens.removeValue(forKey: linkID)
         let destination = request.destinationHash.hex
+        linkRemoteDestinations[linkID] = destination
         pendingLinkHashes.remove(destination)
         activeLinkHashes.insert(destination)
         UserDefaults.standard.set(linkID, forKey: "reticulumLastActiveLink")
@@ -1158,7 +1161,7 @@ public final class SidebandStore {
                 cancelResource(hash: plaintext.hex)
                 return
             }
-            if inboundLinkIDs.contains(session.linkID.hex) {
+            if packet.context == 0x00 || packet.context == 0xfb || packet.context == 0xfe {
                 handleInboundLinkPacket(packet, plaintext: plaintext, session: session)
                 return
             }
@@ -1189,11 +1192,14 @@ public final class SidebandStore {
             let signature = Data(plaintext.suffix(64))
             guard let identity = try? ReticulumIdentity(publicKey: publicKey), identity.validate(signature: signature, message: session.linkID + publicKey) else { return }
             inboundRemoteIdentities[session.linkID.hex] = identity
+            bind(session: session, to: identity)
             return
         }
         guard packet.context == 0x00, let message = try? LXMFReceivedMessage(packed: plaintext), message.destinationHash.hex == localDeliveryHash else { return }
         let remoteIdentity = inboundRemoteIdentities[session.linkID.hex] ?? discoveries.first(where: { $0.destinationHash == message.sourceHash.hex }).flatMap { $0.publicKey }.flatMap { try? ReticulumIdentity(publicKey: $0) }
-        guard let remoteIdentity, message.validate(with: remoteIdentity), importReceivedMessage(message, sourceIdentity: remoteIdentity) else { return }
+        guard let remoteIdentity, message.validate(with: remoteIdentity) else { return }
+        bind(session: session, to: remoteIdentity)
+        guard importReceivedMessage(message, sourceIdentity: remoteIdentity) else { return }
         Task {
             do {
                 let hash = packet.packetHash
@@ -1202,6 +1208,23 @@ public final class SidebandStore {
                 try await transmitRawPacket(proof)
             } catch { lastError = "Delivery proof failed: \(error.localizedDescription)" }
         }
+    }
+
+    private func bind(session: ReticulumLinkSession, to remoteIdentity: ReticulumIdentity) {
+        let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+        let destinationHash = ReticulumIdentity.truncatedHash(nameHash + remoteIdentity.hash).hex
+        let linkID = session.linkID.hex
+        guard linkRemoteDestinations[linkID] != destinationHash else { return }
+        linkRemoteDestinations[linkID] = destinationHash
+        activeLinkHashes.insert(destinationHash)
+        clearPendingLinks(to: destinationHash)
+        if let conversation = conversations.first(where: { $0.destinationHash == destinationHash }) {
+            Task { await attemptDelivery(for: conversation.id) }
+        }
+    }
+
+    private func activeSession(to destinationHash: String) -> ReticulumLinkSession? {
+        activeLinks.first { linkRemoteDestinations[$0.key] == destinationHash }.map(\.value)
     }
 
     private func receiveOpportunisticPacket(_ packet: ReticulumPacket) {
@@ -1385,7 +1408,7 @@ public final class SidebandStore {
             if !pendingLinkHashes.contains(conversation.destinationHash) { await requestLink(to: conversation.destinationHash) }
             return
         }
-        guard let session = activeLinks.values.first(where: { $0.destinationHash.hex == conversation.destinationHash }) else { return }
+        guard let session = activeSession(to: conversation.destinationHash) else { return }
         for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }) {
             guard item.attachments.isEmpty else { continue }
             do {
