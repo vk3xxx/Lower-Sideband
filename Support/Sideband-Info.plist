@@ -21,6 +21,7 @@
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSLocalNetworkUsageDescription</key><string>Sideband discovers and connects to Reticulum gateways and peers on your local network.</string>
+    <key>NSLocationWhenInUseUsageDescription</key><string>Sideband uses your location only when you choose to share telemetry with a contact.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_reticulum._tcp</string>

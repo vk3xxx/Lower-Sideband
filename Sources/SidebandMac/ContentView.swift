@@ -646,6 +646,8 @@ private struct ConversationView: View {
     @State private var messageSearch = ""
     @State private var previewAttachmentURL: URL?
     @State private var showingContactQR = false
+    @State private var telemetryCapture = TelemetryCapture()
+    @State private var showingTelemetryMap = false
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -682,6 +684,10 @@ private struct ConversationView: View {
                     Button { showingContactQR = true } label: { Image(systemName: "qrcode") }
                         .help("Show contact QR code")
                 }
+                if !telemetryMessages.isEmpty {
+                    Button { showingTelemetryMap = true } label: { Image(systemName: "map") }
+                        .help("Show conversation telemetry map")
+                }
                 if let transcript = store.conversationTranscript(conversation.id) {
                     ShareLink(item: transcript, subject: Text("Sideband conversation with \(conversation.displayName)")) {
                         Image(systemName: "square.and.arrow.up")
@@ -716,6 +722,11 @@ private struct ConversationView: View {
                                 if message.direction == .outgoing { Spacer(minLength: 80) }
                                 VStack(alignment: .leading, spacing: 5) {
                                     if !message.body.isEmpty { Text(message.body) }
+                                    if let telemetry = message.telemetry {
+                                        Button { showingTelemetryMap = true } label: { TelemetryMessageCard(telemetry: telemetry) }
+                                            .buttonStyle(.plain)
+                                            .help("Show telemetry on map")
+                                    }
                                     ForEach(message.attachments) { attachment in
                                         if isImage(attachment) {
                                             InlineImageAttachmentView(store: store.attachmentStore, attachment: attachment, status: attachmentStatus(attachment), onRetry: { retry(message, attachment) }, onCancel: { cancel(message, attachment) })
@@ -798,6 +809,12 @@ private struct ConversationView: View {
                     }
                 }
                 HStack {
+                    Button(action: shareTelemetry) {
+                        if telemetryCapture.isRequesting { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "location.fill") }
+                    }
+                    .help("Share current location and device telemetry")
+                    .disabled(telemetryCapture.isRequesting)
                     Button { showingFileImporter = true } label: { Image(systemName: "paperclip") }
                         .help("Attach files")
                         .disabled(pendingAttachments.count >= SidebandMessageLimits.maximumAttachments)
@@ -838,6 +855,9 @@ private struct ConversationView: View {
                 ContactQRCodeView(name: conversation.displayName, link: contactLink.url)
             }
         }
+        .sheet(isPresented: $showingTelemetryMap) {
+            ConversationTelemetryMapView(conversationName: conversation.displayName, messages: telemetryMessages)
+        }
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
@@ -849,6 +869,10 @@ private struct ConversationView: View {
         return all.filter { message in
             message.body.localizedCaseInsensitiveContains(query) || message.attachments.contains { $0.filename.localizedCaseInsensitiveContains(query) }
         }
+    }
+
+    private var telemetryMessages: [Message] {
+        store.messages(for: conversation.id).filter { $0.telemetry?.location != nil }
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy) {
@@ -865,6 +889,16 @@ private struct ConversationView: View {
         store.updateDraft("", for: conversation.id)
         pendingAttachments = []
         Task { await store.send(text, attachments: attachments) }
+    }
+
+    private func shareTelemetry() {
+        Task {
+            if let telemetry = await telemetryCapture.requestTelemetry() {
+                await store.send("Shared telemetry", attachments: [], telemetry: telemetry)
+            } else if let error = telemetryCapture.lastError {
+                store.lastError = error
+            }
+        }
     }
 
     private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty }
