@@ -3,6 +3,7 @@ import Foundation
 public actor ReticulumResourceStagingStore {
     private struct Transfer { let totalSegments: Int; let totalSize: Int; var received: Set<Int> = [] }
     public let directory: URL
+    private let localDataCipher = LocalDataCipher()
     private var transfers: [String: Transfer] = [:]
 
     public init(directory: URL) { self.directory = directory }
@@ -14,7 +15,8 @@ public actor ReticulumResourceStagingStore {
         guard transfer.totalSegments == totalSegments, transfer.totalSize == totalSize else { throw ResourceError.invalidManifest }
         let folder = directory.appending(path: key, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try data.write(to: folder.appending(path: "\(segmentIndex).part"), options: .atomic)
+        let encrypted = try localDataCipher.seal(data, context: encryptionContext(hash: key, segmentIndex: segmentIndex))
+        try encrypted.write(to: folder.appending(path: "\(segmentIndex).part"), options: .atomic)
         transfer.received.insert(segmentIndex); transfers[key] = transfer
         return Double(transfer.received.count) / Double(totalSegments)
     }
@@ -29,7 +31,14 @@ public actor ReticulumResourceStagingStore {
         guard let transfer = transfers[key], transfer.received.count == transfer.totalSegments else { throw ResourceError.incomplete }
         let folder = directory.appending(path: key, directoryHint: .isDirectory)
         var data = Data()
-        for index in 1...transfer.totalSegments { data.append(try Data(contentsOf: folder.appending(path: "\(index).part"))) }
+        do {
+            for index in 1...transfer.totalSegments {
+                let stored = try Data(contentsOf: folder.appending(path: "\(index).part"))
+                data.append(try localDataCipher.open(stored, context: encryptionContext(hash: key, segmentIndex: index)))
+            }
+        } catch {
+            throw ResourceError.hashMismatch
+        }
         guard data.count == transfer.totalSize else { throw ResourceError.hashMismatch }
         try? FileManager.default.removeItem(at: folder); transfers.removeValue(forKey: key)
         return data
@@ -45,6 +54,10 @@ public actor ReticulumResourceStagingStore {
             if modified < cutoff { try? FileManager.default.removeItem(at: folder); transfers.removeValue(forKey: folder.lastPathComponent); removed += 1 }
         }
         return removed
+    }
+
+    private func encryptionContext(hash: String, segmentIndex: Int) -> String {
+        "resource-staging-v1:\(hash):\(segmentIndex)"
     }
 }
 
