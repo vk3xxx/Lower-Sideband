@@ -176,7 +176,7 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
         let record: CKRecord
         do { record = try await database.record(for: attachmentRecordID(id)) }
         catch let error as CKError where error.code == .unknownItem { return nil }
-        guard let asset = record.encryptedValues["payload"] as? CKAsset,
+        guard let asset = record["payload"] as? CKAsset,
               let fileURL = asset.fileURL else { return nil }
         let ciphertext = try Data(contentsOf: fileURL)
         let envelope = try cipher.open(
@@ -211,7 +211,9 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
         let ciphertext = try cipher.seal(envelope, context: "attachment-v1:\(payload.id.uuidString.lowercased())")
         try ciphertext.write(to: temporaryURL, options: .atomic)
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
-        record.encryptedValues["payload"] = CKAsset(fileURL: temporaryURL)
+        // CloudKit does not permit CKAsset values in encryptedValues. The file itself is
+        // already AES-GCM ciphertext, so the regular asset field never contains plaintext.
+        record["payload"] = CKAsset(fileURL: temporaryURL)
         _ = try await database.save(record)
     }
 
