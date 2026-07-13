@@ -108,20 +108,24 @@ public struct Attachment: Identifiable, Codable, Hashable, Sendable {
 }
 
 public struct AppSnapshot: Codable, Sendable {
+    public static let currentSchemaVersion = 1
+    public var schemaVersion: Int
     public var conversations: [Conversation]
     public var messages: [Message]
     public var discoveries: [DiscoveredDestination]
     public var drafts: [UUID: String]
-    public init(conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:]) {
+    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:]) {
+        self.schemaVersion = schemaVersion
         self.conversations = conversations
         self.messages = messages
         self.discoveries = discoveries
         self.drafts = drafts
     }
 
-    private enum CodingKeys: String, CodingKey { case conversations, messages, discoveries, drafts }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
         conversations = try values.decodeIfPresent([Conversation].self, forKey: .conversations) ?? []
         messages = try values.decodeIfPresent([Message].self, forKey: .messages) ?? []
         discoveries = try values.decodeIfPresent([DiscoveredDestination].self, forKey: .discoveries) ?? []

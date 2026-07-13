@@ -116,6 +116,12 @@ import Testing
     #expect(!report.localizedCaseInsensitiveContains("private key"))
 }
 
+@Test func applicationSnapshotsCarrySchemaVersion() throws {
+    let data = try JSONEncoder().encode(AppSnapshot())
+    let decoded = try JSONDecoder().decode(AppSnapshot.self, from: data)
+    #expect(decoded.schemaVersion == AppSnapshot.currentSchemaVersion)
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
