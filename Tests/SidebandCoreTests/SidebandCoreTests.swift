@@ -61,6 +61,21 @@ import Testing
     #expect(!store.openContactLink(URL(string: "https://example.com")!))
 }
 
+@MainActor @Test func localDisplayNameIsNormalizedAndPersisted() {
+    let defaults = UserDefaults.standard
+    let previous = defaults.string(forKey: "lxmfLocalDisplayName")
+    defer {
+        if let previous { defaults.set(previous, forKey: "lxmfLocalDisplayName") }
+        else { defaults.removeObject(forKey: "lxmfLocalDisplayName") }
+    }
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    store.setLocalDisplayName("  Mesh Phone  ")
+
+    #expect(store.localDisplayName == "Mesh Phone")
+    #expect(SidebandStore(persistenceURL: url).localDisplayName == "Mesh Phone")
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

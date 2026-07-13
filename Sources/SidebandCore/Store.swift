@@ -40,6 +40,7 @@ public final class SidebandStore {
     public var autoConnectEnabled: Bool
     public var autoInterfaceEnabled: Bool
     public var propagationNodeHash: String
+    public private(set) var localDisplayName: String
     public let lanDiscovery = LANGatewayDiscovery()
     public let autoInterfaceDiscovery = AutoInterfaceDiscovery()
     public let reachability = NetworkReachability()
@@ -107,6 +108,7 @@ public final class SidebandStore {
         autoConnectEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoConnect")
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
+        localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Sideband Swift"
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         receivedLXMFIDs = Set(UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? [])
         load()
@@ -547,6 +549,12 @@ public final class SidebandStore {
     public func setPropagationNode(_ hash: String) {
         propagationNodeHash = hash.trimmingCharacters(in: CharacterSet(charactersIn: "<> ").union(.whitespacesAndNewlines)).lowercased()
         UserDefaults.standard.set(propagationNodeHash, forKey: "lxmfPropagationNode")
+    }
+
+    public func setLocalDisplayName(_ displayName: String) {
+        let normalized = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        localDisplayName = normalized.isEmpty ? "Sideband Swift" : String(normalized.prefix(64))
+        UserDefaults.standard.set(localDisplayName, forKey: "lxmfLocalDisplayName")
     }
 
     public func requestPropagationNodePath() async {
