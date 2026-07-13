@@ -258,6 +258,9 @@ struct ContentView: View {
             if store.autoConnectEnabled { await store.connectNetwork() }
             if store.autoInterfaceEnabled { store.startAutoInterfaceDiscovery() }
         }
+        .onOpenURL { url in
+            _ = store.openContactLink(url)
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active: Task { await store.applicationDidBecomeActive() }
