@@ -624,6 +624,11 @@ private struct ConversationView: View {
                 }
             }.padding()
         }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard !urls.isEmpty else { return false }
+            Task { await importAttachments(urls) }
+            return true
+        }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case let .success(urls) = result { Task { await importAttachments(urls) } }
         }
