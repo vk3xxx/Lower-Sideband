@@ -21,7 +21,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core
         MARKETING_VERSION: 0.2.0
-        CURRENT_PROJECT_VERSION: 7
+        CURRENT_PROJECT_VERSION: 8
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandIOS:
@@ -39,7 +39,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Sideband
         MARKETING_VERSION: 0.2.0
-        CURRENT_PROJECT_VERSION: 7
+        CURRENT_PROJECT_VERSION: 8
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-iOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
