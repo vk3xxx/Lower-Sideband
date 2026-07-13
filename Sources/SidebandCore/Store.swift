@@ -122,6 +122,10 @@ public final class SidebandStore {
         conversations.first { $0.id == selectedConversationID }
     }
 
+    public var automaticBackupURL: URL {
+        persistenceURL.deletingPathExtension().appendingPathExtension("backup.json")
+    }
+
     public var totalUnreadCount: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
 
     public func messages(for conversationID: UUID) -> [Message] {
@@ -1459,6 +1463,10 @@ public final class SidebandStore {
     private func save() {
         do {
             try FileManager.default.createDirectory(at: persistenceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let existingData = try? Data(contentsOf: persistenceURL),
+               (try? validatedSnapshot(from: existingData)) != nil {
+                try existingData.write(to: automaticBackupURL, options: .atomic)
+            }
             let data = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts))
             try data.write(to: persistenceURL, options: .atomic)
         } catch { lastError = "Could not save local data: \(error.localizedDescription)" }

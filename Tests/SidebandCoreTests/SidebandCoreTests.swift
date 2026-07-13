@@ -147,6 +147,18 @@ import Testing
     #expect(target.draft(for: target.conversations[0].id) == "saved draft")
 }
 
+@MainActor @Test func automaticBackupPreservesPreviousValidSnapshot() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Before Rename"))
+    #expect(store.renameConversation(store.conversations[0].id, to: "After Rename"))
+
+    let backupData = try Data(contentsOf: store.automaticBackupURL)
+    let backup = try store.validatedSnapshot(from: backupData)
+    #expect(backup.conversations.first?.displayName == "Before Rename")
+    #expect(store.conversations.first?.displayName == "After Rename")
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
