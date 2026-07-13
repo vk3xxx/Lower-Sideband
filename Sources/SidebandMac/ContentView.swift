@@ -22,7 +22,15 @@ struct ContentView: View {
                 Section("Conversations") { ForEach(store.conversations) { conversation in
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(conversation.displayName).font(.headline)
+                            HStack {
+                                Text(conversation.displayName).font(.headline)
+                                Spacer()
+                                if let message = store.latestMessage(for: conversation.id) {
+                                    Text(message.timestamp, style: .relative)
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
                             Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                             if let message = store.latestMessage(for: conversation.id) {
                                 Text(messagePreview(message))
