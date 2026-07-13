@@ -108,6 +108,33 @@ public struct InternetGateway: Identifiable, Hashable, Sendable {
     }
 }
 
+public enum ConfiguredReticulumGateways {
+    public static func ordered(
+        ipv4Host: String,
+        ipv6Host: String,
+        port: Int,
+        preferIPv6: Bool,
+        supportsIPv6: Bool,
+        excluding attemptedIDs: Set<String> = []
+    ) -> [InternetGateway] {
+        guard let port = UInt16(exactly: port), port > 0 else { return [] }
+        let ipv4 = ipv4Host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ipv6 = ipv6Host.trimmingCharacters(in: .whitespacesAndNewlines)
+        var gateways: [InternetGateway] = []
+        if preferIPv6, supportsIPv6, !ipv6.isEmpty {
+            gateways.append(InternetGateway(name: "Configured IPv6 gateway", host: ipv6, port: port))
+        }
+        if !ipv4.isEmpty {
+            gateways.append(InternetGateway(name: "Configured gateway", host: ipv4, port: port))
+        }
+        if (!preferIPv6 || !supportsIPv6), !ipv6.isEmpty {
+            gateways.append(InternetGateway(name: "Configured IPv6 gateway", host: ipv6, port: port))
+        }
+        var seen: Set<String> = []
+        return gateways.filter { seen.insert($0.id).inserted && !attemptedIDs.contains($0.id) }
+    }
+}
+
 public enum PublicReticulumGateways {
     public static let defaults: [InternetGateway] = [
         InternetGateway(name: "Sydney RNS", host: "sydney.reticulum.au", port: 4_242),

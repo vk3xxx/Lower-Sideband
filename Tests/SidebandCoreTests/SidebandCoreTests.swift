@@ -930,6 +930,42 @@ import Testing
     #expect(PublicReticulumGateways.ordered(customHost: nil, customPort: 4_242, preferredID: preferred.id, excluding: [preferred.id]).allSatisfy { $0.id != preferred.id })
 }
 
+@Test func configuredGatewaySelectionPrefersIPv6ThenFallsBackToIPv4() {
+    let ordered = ConfiguredReticulumGateways.ordered(
+        ipv4Host: " 10.20.20.133 ",
+        ipv6Host: " fd20:20:20::133 ",
+        port: 4_242,
+        preferIPv6: true,
+        supportsIPv6: true
+    )
+    #expect(ordered.map(\.host) == ["fd20:20:20::133", "10.20.20.133"])
+    #expect(ConfiguredReticulumGateways.ordered(
+        ipv4Host: "10.20.20.133",
+        ipv6Host: "fd20:20:20::133",
+        port: 4_242,
+        preferIPv6: true,
+        supportsIPv6: true,
+        excluding: [ordered[0].id]
+    ).map(\.host) == ["10.20.20.133"])
+}
+
+@Test func configuredGatewaySelectionIgnoresEmptyHostsAndInvalidPorts() {
+    #expect(ConfiguredReticulumGateways.ordered(
+        ipv4Host: "  ",
+        ipv6Host: "",
+        port: 4_242,
+        preferIPv6: true,
+        supportsIPv6: true
+    ).isEmpty)
+    #expect(ConfiguredReticulumGateways.ordered(
+        ipv4Host: "localhost",
+        ipv6Host: "::1",
+        port: 70_000,
+        preferIPv6: true,
+        supportsIPv6: true
+    ).isEmpty)
+}
+
 @Test func autoInterfaceAuthenticatesAndExpiresPeers() async {
     let address = "fe80::1234"
     let token = AutoInterfaceProtocol.discoveryToken(forIPv6Address: address)

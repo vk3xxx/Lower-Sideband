@@ -587,7 +587,7 @@ private struct NetworkView: View {
                     }
                     Button("Disconnect") { Task { await store.disconnectNetwork() } }
                 } else {
-                    Button("Connect") { Task { await store.connectNetwork() } }.buttonStyle(.borderedProminent)
+                    Button("Connect") { Task { await store.startAutomaticConnection() } }.buttonStyle(.borderedProminent)
                 }
             }
         }.padding(24)

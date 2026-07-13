@@ -90,8 +90,9 @@ public final class SidebandStore {
     private var propagationSyncTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var attemptedGatewayIDs: Set<String> = []
-    private var configuredGatewayAttempted = false
+    private var attemptedConfiguredGatewayIDs: Set<String> = []
     private var attemptedInternetGatewayIDs: Set<String> = []
+    private var observedLANDiscoveryGrace = false
     private var activeGatewayID: String?
     private var activeInternetGatewayID: String?
     private var preferredGatewayID: String?
@@ -524,7 +525,7 @@ public final class SidebandStore {
 
     public func reconnectNetwork() async {
         await disconnectNetwork()
-        await connectNetwork()
+        await startAutomaticConnection()
     }
 
     public func applicationDidBecomeActive() async {
@@ -547,7 +548,7 @@ public final class SidebandStore {
     }
 
     private func performBackgroundRefresh() async {
-        if autoConnectEnabled, networkState != .ready { await connectNetwork() }
+        if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
         await syncPropagationNow()
     }
 
@@ -743,7 +744,9 @@ public final class SidebandStore {
             deferredPathRequests.insert(normalized)
             pendingPathHashes.insert(normalized)
             switch networkState {
-            case .stopped, .failed: await connectNetwork()
+            case .stopped, .failed:
+                if autoConnectEnabled { await startAutomaticConnection() }
+                else { await connectNetwork() }
             case .connecting, .ready: break
             }
             return
@@ -922,12 +925,7 @@ public final class SidebandStore {
         case .failed:
             stopPeriodicPropagationSync()
             resetLinkState()
-            if activeGatewayID != nil, autoConnectEnabled, !intentionallyDisconnected {
-                Task { await tryNextAutomaticConnection() }
-            } else if activeNetworkHost == networkIPv6Host, networkHost != networkIPv6Host {
-                automaticConnectionDescription = "IPv6 unavailable; trying IPv4"
-                Task { await connectNetwork(forceIPv4: true) }
-            } else if autoConnectEnabled, !intentionallyDisconnected {
+            if autoConnectEnabled, !intentionallyDisconnected {
                 Task { await tryNextAutomaticConnection() }
             } else {
                 scheduleReconnect()
@@ -951,8 +949,9 @@ public final class SidebandStore {
             guard let self else { return }
             self.reconnectTask = nil
             self.attemptedGatewayIDs.removeAll()
-            self.configuredGatewayAttempted = false
+            self.attemptedConfiguredGatewayIDs.removeAll()
             self.attemptedInternetGatewayIDs.removeAll()
+            self.observedLANDiscoveryGrace = false
             await self.tryNextAutomaticConnection()
         }
     }
@@ -965,9 +964,10 @@ public final class SidebandStore {
         reconnectTask?.cancel()
         reconnectTask = nil
         attemptedGatewayIDs.removeAll()
-        configuredGatewayAttempted = false
+        attemptedConfiguredGatewayIDs.removeAll()
         attemptedInternetGatewayIDs.removeAll()
-        automaticConnectionDescription = "Discovering Reticulum gateways"
+        observedLANDiscoveryGrace = false
+        automaticConnectionDescription = "Trying configured Reticulum gateway"
         await tryNextAutomaticConnection()
     }
 
@@ -978,6 +978,21 @@ public final class SidebandStore {
             return
         }
         guard networkState != .ready, networkState != .connecting else { return }
+
+        let configuredCandidates = ConfiguredReticulumGateways.ordered(
+            ipv4Host: networkHost,
+            ipv6Host: networkIPv6Host,
+            port: networkPort,
+            preferIPv6: preferIPv6,
+            supportsIPv6: reachability.supportsIPv6,
+            excluding: attemptedConfiguredGatewayIDs
+        )
+        if let gateway = configuredCandidates.first {
+            attemptedConfiguredGatewayIDs.insert(gateway.id)
+            automaticConnectionDescription = "Trying \(gateway.name.lowercased())"
+            await connectNetwork(explicitHost: gateway.host, explicitPort: gateway.port)
+            return
+        }
 
         let candidates = AutomaticGatewaySelector.ordered(
             lanDiscovery.gateways,
@@ -990,10 +1005,12 @@ public final class SidebandStore {
             return
         }
 
-        if !configuredGatewayAttempted {
-            configuredGatewayAttempted = true
-            automaticConnectionDescription = "Trying configured local gateway"
-            await connectNetwork()
+        if lanDiscovery.isSearching, !observedLANDiscoveryGrace {
+            observedLANDiscoveryGrace = true
+            automaticConnectionDescription = "Looking for a local Reticulum gateway"
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await tryNextAutomaticConnection()
             return
         }
 
@@ -1029,8 +1046,9 @@ public final class SidebandStore {
             reconnectTask?.cancel()
             reconnectTask = nil
             attemptedGatewayIDs.removeAll()
-            configuredGatewayAttempted = false
+            attemptedConfiguredGatewayIDs.removeAll()
             attemptedInternetGatewayIDs.removeAll()
+            observedLANDiscoveryGrace = false
             Task { await tryNextAutomaticConnection() }
         } else if status == .unavailable {
             automaticConnectionDescription = "Waiting for a network"
