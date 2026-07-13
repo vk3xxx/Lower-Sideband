@@ -40,6 +40,10 @@ struct ContentView: View {
                                 Text(conversation.displayName).font(.headline)
                                 if conversation.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Pinned") }
                                 if conversation.notificationsMuted { Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Notifications muted") }
+                                Image(systemName: sidebarRouteIcon(for: conversation))
+                                    .font(.caption)
+                                    .foregroundStyle(sidebarRouteColor(for: conversation))
+                                    .accessibilityLabel(sidebarRouteLabel(for: conversation))
                                 if conversation.isTrusted {
                                     Image(systemName: "checkmark.shield.fill").foregroundStyle(.green).accessibilityLabel("Trusted contact")
                                 }
@@ -208,6 +212,26 @@ struct ContentView: View {
         case .delivered: "checkmark.circle.fill"
         case .failed: "exclamationmark.circle.fill"
         }
+    }
+
+    private func sidebarRouteIcon(for conversation: Conversation) -> String {
+        if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
+        if store.hasPath(to: conversation.destinationHash) { return "network" }
+        if store.isPathPending(to: conversation.destinationHash) { return "ellipsis.circle" }
+        return "network.slash"
+    }
+
+    private func sidebarRouteColor(for conversation: Conversation) -> Color {
+        if store.activeLinkHashes.contains(conversation.destinationHash) || store.hasPath(to: conversation.destinationHash) { return .green }
+        if store.isPathPending(to: conversation.destinationHash) { return .orange }
+        return .secondary
+    }
+
+    private func sidebarRouteLabel(for conversation: Conversation) -> String {
+        if store.activeLinkHashes.contains(conversation.destinationHash) { return "Encrypted link active" }
+        if store.hasPath(to: conversation.destinationHash) { return "Route available" }
+        if store.isPathPending(to: conversation.destinationHash) { return "Finding route" }
+        return "No known route"
     }
     private var networkToolbarIcon: String {
         switch store.networkState {
