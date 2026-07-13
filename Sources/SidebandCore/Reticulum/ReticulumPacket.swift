@@ -58,5 +58,16 @@ public struct ReticulumPacket: Equatable, Sendable {
     }
     public var packetHash: Data { ReticulumIdentity.fullHash(hashablePart) }
 
+    /// Adds the transport header required when forwarding a packet through a
+    /// known Reticulum transport. The hashable packet content remains unchanged.
+    public func routed(via transportID: Data) throws -> Data {
+        guard headerType == .normal, transportID.count == Self.truncatedHashBytes else { throw RoutingError.invalidRoute }
+        var routed = Data([raw[raw.startIndex] | 0x50, raw[raw.startIndex + 1]])
+        routed.append(transportID)
+        routed.append(raw.dropFirst(2))
+        return routed
+    }
+
     public enum ParseError: Error { case tooShort, invalidFlags }
+    public enum RoutingError: Error { case invalidRoute }
 }

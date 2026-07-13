@@ -951,6 +951,21 @@ import Testing
     #expect(try request.deriveKey(peerPublicKey: peerPublicKey).hex == "09e497207060e1f86c5af8e6799238216b85aeb5b6ee7111cdfc247f88fa5047dda46186f4847c9730b6001d080f6cfd163b0fadb84752cb3139abdc15ee1c16")
 }
 
+@Test func routedLinkRequestMatchesReticulumTransportHeader() throws {
+    let destination = Data(hex: "fae321c442e3c9bdcd7a3e79d850e03c")
+    let transportID = Data(hex: "9341153646d8038181a09e85bc5d2971")
+    let request = try ReticulumLinkRequest(destinationHash: destination, keyAgreementPrivateKey: Data(0..<32), signingPrivateKey: Data(32..<64))
+    let normal = try ReticulumPacket(raw: request.rawPacket)
+    let routed = try ReticulumPacket(raw: normal.routed(via: transportID))
+    #expect(routed.raw.prefix(2).hex == "5200")
+    #expect(routed.headerType == .transport)
+    #expect(routed.transportType == 1)
+    #expect(routed.transportID == transportID)
+    #expect(routed.destinationHash == destination)
+    #expect(routed.hashablePart == normal.hashablePart)
+    #expect(routed.packetHash == normal.packetHash)
+}
+
 @Test func validatesPythonLinkProofAndActivatesSession() throws {
     let destination = Data(hex: "fae321c442e3c9bdcd7a3e79d850e03c")
     let request = try ReticulumLinkRequest(destinationHash: destination, keyAgreementPrivateKey: Data(0..<32), signingPrivateKey: Data(32..<64))

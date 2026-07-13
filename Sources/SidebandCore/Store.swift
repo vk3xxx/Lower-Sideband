@@ -781,8 +781,7 @@ public final class SidebandStore {
         do {
             clearPendingLinks(to: normalized)
             let request = try ReticulumLinkRequest(destinationHash: target)
-            if let networkInterface, networkState == .ready { try await networkInterface.send(rawPacket: request.rawPacket) }
-            for peer in autoInterfaceDiscovery.peers { autoInterfaceDiscovery.send(rawPacket: request.rawPacket, to: peer) }
+            try await transmitDestinationPacket(request.rawPacket, destinationHash: target)
             let linkID = request.linkID.hex
             let timeoutToken = UUID()
             pendingLinks[linkID] = request
@@ -1284,6 +1283,25 @@ public final class SidebandStore {
         if !transmitted { throw TransportError.nativeEngineUnavailable }
     }
 
+    private func transmitDestinationPacket(_ packet: Data, destinationHash: Data) async throws {
+        var transmitted = false
+        if let networkInterface, networkState == .ready {
+            let routedPacket: Data
+            if let nextHop = await pathTable.path(to: destinationHash)?.nextHop {
+                routedPacket = try ReticulumPacket(raw: packet).routed(via: nextHop)
+            } else {
+                routedPacket = packet
+            }
+            try await networkInterface.send(rawPacket: routedPacket)
+            transmitted = true
+        }
+        for peer in autoInterfaceDiscovery.peers {
+            autoInterfaceDiscovery.send(rawPacket: packet, to: peer)
+            transmitted = true
+        }
+        if !transmitted { throw TransportError.nativeEngineUnavailable }
+    }
+
     private func attemptDelivery(for conversationID: UUID) async {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
         let pending = messages.filter { $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }
@@ -1308,7 +1326,7 @@ public final class SidebandStore {
                 guard raw.count <= 500 else { requiresLink = true; continue }
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .opportunistic, destinationHash: conversation.destinationHash)
-                try await transmitRawPacket(raw)
+                try await transmitDestinationPacket(raw, destinationHash: destination)
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
             } catch { requiresLink = true }
