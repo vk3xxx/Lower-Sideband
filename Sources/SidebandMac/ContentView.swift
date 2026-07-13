@@ -436,8 +436,8 @@ private struct NetworkView: View {
                     capability("Identity and announce validation", complete: true)
                     capability("Path discovery and route table", complete: true)
                     capability("AutoInterface discovery and UDP data plane", complete: true)
-                    capability("Encrypted links and resources", complete: false)
-                    capability("LXMF message delivery", complete: false)
+                    capability("Encrypted links and resources", complete: true)
+                    capability("LXMF message delivery", complete: true)
                 }.padding(6).frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {

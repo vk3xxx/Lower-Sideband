@@ -2,9 +2,9 @@
 
 | Upstream area | Swift destination | Status |
 | --- | --- | --- |
-| `sideband/core.py` conversation/message state | `SidebandCore` models and store | First milestone |
-| Kivy conversation/message screens | `SidebandMac` SwiftUI split view | First milestone |
-| SQLite state | Codable atomic application-support snapshot | First milestone; SQLite migration later |
+| `sideband/core.py` conversation/message state | `SidebandCore` models and store | Implemented for current messaging scope |
+| Kivy conversation/message screens | `SidebandMac` SwiftUI split view | Implemented for current messaging scope |
+| SQLite state | Codable atomic application-support snapshot | Implemented; SQLite import remains future work |
 | Reticulum TCP/HDLC and packet parsing | `ReticulumTCPInterface`, `HDLC`, `ReticulumPacket` | Implemented, unit tested |
 | Reticulum identity keys, hashes and signatures | `ReticulumIdentity` using CryptoKit | Implemented, Python-vector tested |
 | TCP configuration, packet counters and announce capture | Network panel and `SidebandStore` | Implemented |
@@ -12,7 +12,7 @@
 | Path-request packet generation | `ReticulumPathRequest` | Implemented, Python-layout tested |
 | Validated route selection, pending requests and expiry | `ReticulumPathTable` | Implemented |
 | Bonjour LAN gateway discovery | `LANGatewayDiscovery` | Implemented for three service names |
-| AutoInterface group, authenticated beacons, multicast listener and peer expiry | `AutoInterfaceDiscovery` | Active discovery implemented; UDP data pending |
+| AutoInterface group, authenticated beacons, multicast listener and peer expiry | `AutoInterfaceDiscovery` | Implemented |
 | AutoInterface UDP packet receive/send | `AutoInterfaceDiscovery` data listener | Implemented on port 42671 |
 | Link request, link ID and X25519/HKDF key derivation | `ReticulumLinkRequest` | Implemented, Python-vector tested |
 | Link proof signature validation and session activation | `ReticulumLinkSession` | Implemented, Python-vector tested |
@@ -36,22 +36,21 @@
 | LXMF announce display names | `LXMFAnnounceInfo` | Implemented, tested |
 | Verified incoming local notifications | `LocalNotificationManager` | Implemented, opt-in |
 | iOS background propagation refresh | `BackgroundRefreshCoordinator` | Implemented |
-| Attachment metadata and durable local storage | `Attachment`, `AttachmentStore` | Implemented; Resource transfer pending |
+| Attachment metadata and durable local storage | `Attachment`, `AttachmentStore` | Implemented |
 | Reticulum Resource advertisements, requests, parts, proofs and cancellation | `ReticulumResource*` | Implemented, Python-fixture tested |
 | Resource hash-map updates and multi-segment transfer | `ReticulumResourceHashMapUpdate`, segment planner/staging | Implemented |
 | Attachment sending, receiving, progress and inline images | `SidebandStore`, SwiftUI attachment views | Implemented for native Swift peers |
-| Reticulum routing/announces/link | Native Swift transport engine | In progress |
+| Reticulum routing/announces/link | Native Swift transport engine | Implemented for current TCP and AutoInterface scope |
 | `LXMF.LXMRouter` | Native Swift LXMF router | Direct, opportunistic, propagation and attachment Resource delivery implemented |
 | Identity and cryptography | CryptoKit-backed identity primitives | Implemented for current transport scope |
 | Telemetry, maps, audio, voice | Platform services behind shared protocols | Planned |
 
-## Recommended implementation sequence
+## Next priorities
 
-1. Cross-check the implemented TCP/HDLC framing and packet parser against a live shared Reticulum instance.
-2. Port identity, hashes and announces, then link establishment and encrypted resources.
-3. Implement MessagePack plus LXMF message packing/signature verification.
-4. Add LXMRouter delivery methods and receipts, then connect it to `MessageTransport`.
-5. Migrate the upstream Sideband SQLite schema and import existing desktop data.
-6. Add attachments, QR links, telemetry/maps, audio and LXST in that order.
+1. Complete live attachment and large-Resource interoperability testing against upstream Sideband and Reticulum.
+2. Add migration/import support for existing Sideband SQLite data.
+3. Harden iOS background delivery, power use, and network-transition behavior on physical devices.
+4. Add QR contact exchange and transport configuration.
+5. Port telemetry/maps, audio, LXST, hardware interfaces, and plugins incrementally.
 
 Avoid embedding Python in the product target: it would make the macOS prototype quick but would create a dead end for iOS sandboxing and distribution.
