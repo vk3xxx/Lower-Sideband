@@ -138,6 +138,20 @@ import Testing
     #expect(!reloaded.conversations[0].isPinned)
 }
 
+@MainActor @Test func blockedConversationStatePersistsAndPreventsSending() async {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let id = store.conversations[0].id
+    store.setConversationBlocked(true, conversationID: id)
+    await store.send("hello")
+
+    let reloaded = SidebandStore(persistenceURL: url)
+    #expect(reloaded.conversations[0].isBlocked)
+    #expect(reloaded.conversations[0].notificationsMuted)
+    #expect(reloaded.messages.isEmpty)
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

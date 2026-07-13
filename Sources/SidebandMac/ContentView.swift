@@ -44,6 +44,7 @@ struct ContentView: View {
                                 if conversation.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Pinned") }
                                 if conversation.isArchived { Image(systemName: "archivebox.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Archived") }
                                 if conversation.notificationsMuted { Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Notifications muted") }
+                                if conversation.isBlocked { Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(.red).accessibilityLabel("Blocked") }
                                 Image(systemName: sidebarRouteIcon(for: conversation))
                                     .font(.caption)
                                     .foregroundStyle(sidebarRouteColor(for: conversation))
@@ -134,6 +135,11 @@ struct ContentView: View {
                             store.setConversationNotificationsMuted(!conversation.notificationsMuted, conversationID: conversation.id)
                         } label: {
                             Label(conversation.notificationsMuted ? "Unmute Notifications" : "Mute Notifications", systemImage: conversation.notificationsMuted ? "bell" : "bell.slash")
+                        }
+                        Button {
+                            store.setConversationBlocked(!conversation.isBlocked, conversationID: conversation.id)
+                        } label: {
+                            Label(conversation.isBlocked ? "Unblock Contact" : "Block Contact", systemImage: conversation.isBlocked ? "hand.raised.slash" : "hand.raised")
                         }
                         Button {
                             Task { await store.requestPath(to: conversation.destinationHash) }

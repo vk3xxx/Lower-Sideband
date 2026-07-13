@@ -242,6 +242,13 @@ public final class SidebandStore {
         save()
     }
 
+    public func setConversationBlocked(_ blocked: Bool, conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].isBlocked = blocked
+        if blocked { conversations[index].notificationsMuted = true }
+        save()
+    }
+
     public func setConversationNotificationsMuted(_ muted: Bool, conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].notificationsMuted = muted
@@ -268,6 +275,10 @@ public final class SidebandStore {
     public func send(_ text: String, attachments: [Attachment]) async {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (!body.isEmpty || !attachments.isEmpty), let conversation = selectedConversation else { return }
+        guard !conversation.isBlocked else {
+            lastError = "Unblock this contact before sending a message."
+            return
+        }
         guard body.count <= SidebandMessageLimits.maximumTextCharacters else {
             lastError = "Messages are limited to \(SidebandMessageLimits.maximumTextCharacters.formatted()) characters."
             return
