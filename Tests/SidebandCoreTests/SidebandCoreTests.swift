@@ -49,6 +49,20 @@ import Testing
     #expect(store.messages[0].state == .queued)
 }
 
+@MainActor @Test func latestMessageUsesTimestampOrder() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let newer = Message(conversationID: conversation.id, body: "newer", timestamp: Date(timeIntervalSince1970: 20), direction: .incoming, state: .delivered)
+    let older = Message(conversationID: conversation.id, body: "older", timestamp: Date(timeIntervalSince1970: 10), direction: .incoming, state: .delivered)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [newer, older])).write(to: url)
+
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.latestMessage(for: conversation.id)?.id == newer.id)
+}
+
 @MainActor @Test func recoversUnprovedSentOutboxAcrossRelaunch() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

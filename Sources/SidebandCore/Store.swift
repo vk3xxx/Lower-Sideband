@@ -120,6 +120,10 @@ public final class SidebandStore {
         messages.filter { $0.conversationID == conversationID }.sorted { $0.timestamp < $1.timestamp }
     }
 
+    public func latestMessage(for conversationID: UUID) -> Message? {
+        messages.lazy.filter { $0.conversationID == conversationID }.max { $0.timestamp < $1.timestamp }
+    }
+
     @discardableResult
     public func addConversation(destinationHash: String, displayName: String, select: Bool = true) -> Bool {
         let hash = destinationHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

@@ -24,6 +24,12 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(conversation.displayName).font(.headline)
                             Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                            if let message = store.latestMessage(for: conversation.id) {
+                                Text(messagePreview(message))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
                         }
                         Spacer()
                         if conversation.unreadCount > 0 {
@@ -92,6 +98,12 @@ struct ContentView: View {
         case .failed: "Network error"
         case .stopped: "Offline"
         }
+    }
+
+    private func messagePreview(_ message: Message) -> String {
+        if !message.body.isEmpty { return message.body }
+        if message.attachments.count == 1, let attachment = message.attachments.first { return "Attachment: \(attachment.filename)" }
+        return "\(message.attachments.count) attachments"
     }
     private var networkToolbarIcon: String {
         switch store.networkState {
