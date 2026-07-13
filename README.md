@@ -20,12 +20,15 @@ The SwiftUI client includes durable drafts, transcript sharing, message search, 
 
 Network diagnostics can be copied from the status panel without exposing private identity material. Versioned JSON backups can be exported and restored after validation. Every save maintains a rolling copy of the previous valid snapshot; corrupt primary data is quarantined and recovered from that copy silently at launch. Unreferenced attachment files are cleaned conservatively in the background. Python-generated wire fixtures cover the Resource negotiation formats; live attachment interoperability with upstream Sideband remains an active validation target.
 
+Native telemetry now supports the upstream LXMF `FIELD_TELEMETRY` format for timestamp, location, and battery sensors. Location is captured only after an explicit share action, embedded in the encrypted LXMF message, persisted in backups, shown inline, included in transcript exports, and plotted as sent/received history with MapKit. `Scripts/verify-python-telemetry.py` generates the canonical fixture with upstream Python Sideband and checks byte-for-byte compatibility.
+
 ## Build and run
 
 Requires Xcode 16 or newer and macOS 14 or newer.
 
 ```sh
 swift test
+Scripts/verify-python-telemetry.py
 swift run SidebandMac
 ```
 

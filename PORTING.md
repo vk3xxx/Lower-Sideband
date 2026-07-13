@@ -20,6 +20,10 @@
 | TCP client tunnel synthesis | `ReticulumTunnelSynthesis` | Implemented, Python-vector tested |
 | Encrypted link packets and keepalives | `ReticulumLinkSession` | Implemented, Python-vector tested |
 | LXMF MessagePack payload, message ID and signature | `LXMFMessage` | Implemented, Python-vector tested |
+| LXMF extensible field dictionary | `LXMFMessage`, `LXMFReceivedMessage`, `MessagePack` | Implemented for binary integer-keyed fields |
+| Sideband Telemeter timestamp, location and battery sensors | `SidebandTelemetry` | Implemented, byte-for-byte Python fixture tested |
+| Explicit native location and battery capture | `TelemetryCapture` | Implemented with when-in-use permission and on-demand sharing |
+| Inline telemetry details and location history map | `TelemetryMessageCard`, `ConversationTelemetryMapView` | Implemented with MapKit |
 | LXMF link identification and propagation list request | `LXMFPropagation` | Implemented, Python-vector tested |
 | MessagePack response decoding | `MessagePackDecoder` | Implemented for LXMF response types |
 | Recipient identity encryption for propagated LXMF | `ReticulumIdentity.encrypt` | Implemented, Python-vector tested |
@@ -49,14 +53,15 @@
 | Reticulum routing/announces/link | Native Swift transport engine | Implemented for current TCP and AutoInterface scope |
 | `LXMF.LXMRouter` | Native Swift LXMF router | Direct, opportunistic, propagation and attachment Resource delivery implemented |
 | Identity and cryptography | CryptoKit-backed identity primitives | Implemented for current transport scope |
-| Telemetry, maps, audio, voice | Platform services behind shared protocols | Planned |
+| Additional telemetry sensors and collectors | Native sensor adapters and telemetry policy | Planned |
+| Audio, voice, LXST streams | Platform services behind shared protocols | Planned |
 
 ## Next priorities
 
-1. Complete live attachment and large-Resource interoperability testing against upstream Sideband and Reticulum.
-2. Add migration/import support for existing Sideband SQLite data.
-3. Harden iOS background delivery, power use, and network-transition behavior on physical devices.
-4. Add camera-based QR scanning and transport configuration import/export.
-5. Port telemetry/maps, audio, LXST, hardware interfaces, and plugins incrementally.
+1. Complete live attachment, telemetry and large-Resource interoperability testing against upstream Sideband and Reticulum.
+2. Add per-contact telemetry policies, requests, collectors, and additional Sideband sensor types.
+3. Add migration/import support for existing Sideband SQLite data.
+4. Harden iOS background delivery, power use, and network-transition behavior on physical devices.
+5. Add camera QR scanning, audio/voice, LXST, hardware interfaces, and plugin replacements incrementally.
 
 Avoid embedding Python in the product target: it would make the macOS prototype quick but would create a dead end for iOS sandboxing and distribution.
