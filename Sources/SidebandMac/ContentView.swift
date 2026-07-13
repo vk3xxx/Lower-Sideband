@@ -345,6 +345,7 @@ struct ContentView: View {
 private struct NetworkView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var store: SidebandStore
+    @State private var showingLocalContactQR = false
 
     var body: some View {
         ScrollView {
@@ -399,6 +400,12 @@ private struct NetworkView: View {
                         Text("Local address")
                         Text(store.localDeliveryHash).font(.body.monospaced()).textSelection(.enabled)
                         Spacer()
+                        Button { copyToSystemClipboard(store.localContactLink.url.absoluteString) } label: { Image(systemName: "doc.on.doc") }
+                            .help("Copy local contact link")
+                        ShareLink(item: store.localContactLink.url) { Image(systemName: "square.and.arrow.up") }
+                            .help("Share local contact link")
+                        Button { showingLocalContactQR = true } label: { Image(systemName: "qrcode") }
+                            .help("Show local contact QR code")
                     }
                     HStack {
                         TextField("Propagation-node destination", text: Binding(get: { store.propagationNodeHash }, set: { store.setPropagationNode($0) }))
@@ -527,7 +534,11 @@ private struct NetworkView: View {
                 }
             }
         }.padding(24)
-        }.frame(width: 620, height: 760)
+        }
+        .frame(width: 620, height: 760)
+        .sheet(isPresented: $showingLocalContactQR) {
+            ContactQRCodeView(name: store.localDisplayName, link: store.localContactLink.url)
+        }
     }
 
     private func metric(_ title: String, _ value: Int) -> some View {
