@@ -134,6 +134,7 @@ struct ContentView: View {
             await store.startTransport()
             if store.autoConnectEnabled { await store.startAutomaticConnection() }
             if store.autoInterfaceEnabled { store.startAutoInterfaceDiscovery() }
+            if store.iCloudSyncEnabled { await store.syncICloudNow() }
         }
         .onOpenURL { url in
             _ = store.openContactLink(url)
@@ -479,6 +480,25 @@ private struct NetworkView: View {
                     }
                 }.padding(6)
             }
+            GroupBox("iCloud device sync") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Sync identity, conversations and messages", isOn: Binding(
+                        get: { store.iCloudSyncEnabled },
+                        set: { enabled in Task { await store.setICloudSyncEnabled(enabled) } }
+                    ))
+                    Text("Uses your private iCloud database. Reticulum gateways and live routing remain specific to each device.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Label(store.iCloudSyncStatus.description, systemImage: iCloudStatusIcon)
+                            .font(.caption)
+                            .foregroundStyle(iCloudStatusColor)
+                        Spacer()
+                        Button("Sync now") { Task { await store.syncICloudNow() } }
+                            .disabled(!store.iCloudSyncEnabled || store.iCloudSyncStatus == .syncing)
+                    }
+                }.padding(6)
+            }
             GroupBox("Notifications") {
                 HStack {
                     Toggle("Notify for verified incoming messages", isOn: Binding(
@@ -614,6 +634,22 @@ private struct NetworkView: View {
         if store.propagationNodeHasPath { return "checkmark.circle.fill" }
         if store.propagationNodePathPending { return "clock" }
         return "questionmark.circle"
+    }
+    private var iCloudStatusIcon: String {
+        switch store.iCloudSyncStatus {
+        case .disabled: "icloud.slash"
+        case .checkingAccount, .syncing: "arrow.triangle.2.circlepath.icloud"
+        case .ready: "icloud"
+        case .synced: "checkmark.icloud.fill"
+        case .unavailable, .failed: "exclamationmark.icloud"
+        }
+    }
+    private var iCloudStatusColor: Color {
+        switch store.iCloudSyncStatus {
+        case .synced: .green
+        case .unavailable, .failed: .orange
+        default: .secondary
+        }
     }
 
     private var isConnectedOrConnecting: Bool {

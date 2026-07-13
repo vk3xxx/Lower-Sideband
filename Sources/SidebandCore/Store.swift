@@ -34,6 +34,9 @@ public final class SidebandStore {
     public private(set) var incomingResourceProgress: [String: Double] = [:]
     public private(set) var isApplicationActive = true
     public private(set) var visibleConversationID: UUID?
+    public private(set) var iCloudSyncEnabled = false
+    public private(set) var iCloudSyncStatus: ICloudSyncStatus = .disabled
+    public private(set) var lastICloudSync: Date?
     public var networkHost: String
     public var networkIPv6Host: String
     public var networkInternetHost: String
@@ -60,6 +63,11 @@ public final class SidebandStore {
 
     private let transport: any MessageTransport
     private let persistenceURL: URL
+    private let cloudSync: any CloudSnapshotSyncing
+    private let syncDeviceID: String
+    private var iCloudSyncTask: Task<Void, Never>?
+    private var iCloudSyncInProgress = false
+    private var isApplyingCloudSnapshot = false
     private var networkInterface: ReticulumTCPInterface?
     private var networkConnectionGeneration = UUID()
     private let pathTable = ReticulumPathTable()
@@ -104,9 +112,17 @@ public final class SidebandStore {
     private let tcpInterfaceHash: Data
     private let messagingIdentity: ReticulumIdentity
 
-    public init(transport: any MessageTransport = QueuedTransport(), persistenceURL: URL? = nil) {
+    public init(transport: any MessageTransport = QueuedTransport(), persistenceURL: URL? = nil, cloudSync: (any CloudSnapshotSyncing)? = nil) {
         self.transport = transport
         self.persistenceURL = persistenceURL ?? Self.defaultPersistenceURL()
+        self.cloudSync = cloudSync ?? CloudKitSnapshotSync()
+        let existingDeviceID = UserDefaults.standard.string(forKey: "iCloudSyncDeviceID")
+        syncDeviceID = existingDeviceID ?? UUID().uuidString
+        UserDefaults.standard.set(syncDeviceID, forKey: "iCloudSyncDeviceID")
+        let cloudEnabled = UserDefaults.standard.bool(forKey: "iCloudSyncEnabled")
+        iCloudSyncEnabled = cloudEnabled
+        iCloudSyncStatus = cloudEnabled ? .ready : .disabled
+        lastICloudSync = UserDefaults.standard.object(forKey: "iCloudLastSuccessfulSync") as? Date
         attachmentStore = AttachmentStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "Attachments", directoryHint: .isDirectory))
         resourceStagingStore = ReticulumResourceStagingStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "ResourceStaging", directoryHint: .isDirectory))
         let identityMaterial = SecureIdentityStore.loadOrCreate(account: "reticulum.transport", legacyDefaultsKey: "reticulumTransportIdentity")
@@ -535,6 +551,7 @@ public final class SidebandStore {
         if autoInterfaceEnabled, !autoInterfaceDiscovery.isListening { autoInterfaceDiscovery.start() }
         startPeriodicPropagationSync()
         await syncPropagationNow()
+        if iCloudSyncEnabled { await syncICloudNow() }
     }
 
     public func applicationDidBecomeInactive() {
@@ -550,6 +567,59 @@ public final class SidebandStore {
     private func performBackgroundRefresh() async {
         if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
         await syncPropagationNow()
+        if iCloudSyncEnabled { await syncICloudNow() }
+    }
+
+    public func setICloudSyncEnabled(_ enabled: Bool) async {
+        iCloudSyncEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "iCloudSyncEnabled")
+        if enabled {
+            iCloudSyncStatus = .checkingAccount
+            await syncICloudNow()
+        } else {
+            iCloudSyncTask?.cancel()
+            iCloudSyncTask = nil
+            iCloudSyncStatus = .disabled
+        }
+    }
+
+    public func syncICloudNow() async {
+        guard iCloudSyncEnabled, !iCloudSyncInProgress else { return }
+        iCloudSyncInProgress = true
+        iCloudSyncStatus = .checkingAccount
+        defer { iCloudSyncInProgress = false }
+        guard await cloudSync.accountAvailable() else {
+            iCloudSyncStatus = .unavailable("Sign in to iCloud to sync devices")
+            return
+        }
+        iCloudSyncStatus = .syncing
+        do {
+            let local = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts)
+            let localData = try JSONEncoder.sideband.encode(local)
+            let merged: AppSnapshot
+            if let payload = try await cloudSync.fetchSnapshot() {
+                let remote = try validatedSnapshot(from: payload.data)
+                merged = local.mergingCloudSnapshot(remote)
+            } else {
+                merged = local
+            }
+            let mergedData = try JSONEncoder.sideband.encode(merged)
+            if mergedData != localData {
+                isApplyingCloudSnapshot = true
+                applyCloudSnapshot(merged)
+                save()
+                isApplyingCloudSnapshot = false
+                syncUnreadBadge()
+            }
+            let now = Date()
+            try await cloudSync.saveSnapshot(CloudSnapshotPayload(data: mergedData, modifiedAt: now, deviceID: syncDeviceID))
+            lastICloudSync = now
+            UserDefaults.standard.set(now, forKey: "iCloudLastSuccessfulSync")
+            iCloudSyncStatus = .synced(now)
+        } catch {
+            isApplyingCloudSnapshot = false
+            iCloudSyncStatus = .failed(error.localizedDescription)
+        }
     }
 
     public func syncPropagationNow() async {
@@ -1794,6 +1864,19 @@ public final class SidebandStore {
         selectedConversationID = conversations.first?.id
     }
 
+    private func applyCloudSnapshot(_ snapshot: AppSnapshot) {
+        let selectedDestination = selectedConversation?.destinationHash
+        conversations = snapshot.conversations
+        sortConversations()
+        messages = snapshot.messages
+        discoveries = snapshot.discoveries
+        let conversationIDs = Set(conversations.map(\.id))
+        drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }
+        selectedConversationID = selectedDestination.flatMap { destination in
+            conversations.first(where: { $0.destinationHash == destination })?.id
+        } ?? conversations.first?.id
+    }
+
     private func quarantineInvalidPersistence() {
         let quarantineURL = persistenceURL.deletingPathExtension()
             .appendingPathExtension("corrupt-\(UUID().uuidString).json")
@@ -1814,7 +1897,17 @@ public final class SidebandStore {
             }
             let data = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts))
             try data.write(to: persistenceURL, options: .atomic)
+            if iCloudSyncEnabled, !isApplyingCloudSnapshot { scheduleICloudSync() }
         } catch { lastError = "Could not save local data: \(error.localizedDescription)" }
+    }
+
+    private func scheduleICloudSync() {
+        iCloudSyncTask?.cancel()
+        iCloudSyncTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await self?.syncICloudNow()
+        }
     }
 
     private static func defaultPersistenceURL() -> URL {

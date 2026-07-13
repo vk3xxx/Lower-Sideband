@@ -1144,6 +1144,43 @@ import Testing
     #expect(messages.isEmpty)
 }
 
+@Test func cloudSnapshotMergeRemapsConversationsAndAdvancesDeliveryState() {
+    let destination = "00112233445566778899aabbccddeeff"
+    let localConversation = Conversation(destinationHash: destination, displayName: "Local", updatedAt: Date(timeIntervalSince1970: 20))
+    let remoteConversation = Conversation(destinationHash: destination, displayName: "Remote", updatedAt: Date(timeIntervalSince1970: 10))
+    let messageID = UUID()
+    let localMessage = Message(
+        id: messageID, conversationID: localConversation.id, body: "hello", timestamp: Date(timeIntervalSince1970: 20),
+        direction: .outgoing, state: .queued
+    )
+    let remoteMessage = Message(
+        id: messageID, conversationID: remoteConversation.id, body: "hello", timestamp: Date(timeIntervalSince1970: 20),
+        direction: .outgoing, state: .delivered
+    )
+    let merged = AppSnapshot(
+        conversations: [localConversation], messages: [localMessage], drafts: [localConversation.id: "local draft"]
+    ).mergingCloudSnapshot(AppSnapshot(
+        conversations: [remoteConversation], messages: [remoteMessage], drafts: [remoteConversation.id: "remote draft"]
+    ))
+
+    #expect(merged.conversations.count == 1)
+    #expect(merged.conversations[0].id == remoteConversation.id)
+    #expect(merged.conversations[0].displayName == "Local")
+    #expect(merged.messages.count == 1)
+    #expect(merged.messages[0].conversationID == remoteConversation.id)
+    #expect(merged.messages[0].state == .delivered)
+    #expect(merged.drafts[remoteConversation.id] == "local draft")
+}
+
+@Test func cloudSnapshotMergeKeepsRoutingDiscoveriesDeviceLocal() {
+    let localDiscovery = DiscoveredDestination(destinationHash: "00112233445566778899aabbccddeeff", hops: 1)
+    let remoteDiscovery = DiscoveredDestination(destinationHash: "ffeeddccbbaa99887766554433221100", hops: 2)
+    let merged = AppSnapshot(discoveries: [localDiscovery])
+        .mergingCloudSnapshot(AppSnapshot(discoveries: [remoteDiscovery]))
+
+    #expect(merged.discoveries == [localDiscovery])
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
     init(hex: String) {
