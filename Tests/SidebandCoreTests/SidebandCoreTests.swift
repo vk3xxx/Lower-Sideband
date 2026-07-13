@@ -195,6 +195,17 @@ import Testing
     #expect(store.messages.first(where: { $0.id == delivered.id })?.state == .delivered)
 }
 
+@MainActor @Test func duplicateAttachmentsAreRejectedByContentHash() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    let hash = Data(repeating: 7, count: 32)
+    let first = Attachment(filename: "first.jpg", byteCount: 10, relativePath: "first", state: .local, contentHash: hash)
+    let duplicate = Attachment(filename: "copy.jpg", byteCount: 10, relativePath: "copy", state: .local, contentHash: hash)
+
+    #expect(!store.validateAttachmentIsUnique(duplicate, among: [first]))
+    #expect(store.lastError?.contains("already attached") == true)
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

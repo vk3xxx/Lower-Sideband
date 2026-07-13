@@ -323,6 +323,20 @@ public final class SidebandStore {
         return true
     }
 
+    public func validateAttachmentIsUnique(_ candidate: Attachment, among existing: [Attachment]) -> Bool {
+        let isDuplicate = existing.contains { attachment in
+            if let candidateHash = candidate.contentHash, let existingHash = attachment.contentHash {
+                return candidateHash == existingHash
+            }
+            return candidate.filename == attachment.filename && candidate.byteCount == attachment.byteCount
+        }
+        guard !isDuplicate else {
+            lastError = "\(candidate.filename) is already attached."
+            return false
+        }
+        return true
+    }
+
     public func retryAttachment(messageID: UUID, attachmentID: UUID) async {
         guard let messageIndex = messages.firstIndex(where: { $0.id == messageID }),
               let attachmentIndex = messages[messageIndex].attachments.firstIndex(where: { $0.id == attachmentID }) else { return }
