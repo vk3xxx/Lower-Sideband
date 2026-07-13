@@ -91,6 +91,20 @@ import Testing
     #expect(store.selectedConversationID == selectedID)
 }
 
+@MainActor @Test func selectedConversationRemainsUnreadUntilApplicationIsActive() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Selected"))
+    let selectedID = try #require(store.selectedConversationID)
+
+    store.applicationDidBecomeInactive()
+    store.noteIncomingActivity(in: selectedID)
+    #expect(store.conversations.first?.unreadCount == 1)
+
+    await store.applicationDidBecomeActive()
+    #expect(store.conversations.first?.unreadCount == 0)
+}
+
 @Test func attachmentStoreImportsFilesAndReturnsDurableMetadata() async throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

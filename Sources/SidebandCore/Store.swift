@@ -29,6 +29,7 @@ public final class SidebandStore {
     public private(set) var reconnectDelaySeconds: Int?
     public private(set) var recoveredOutboundCount = 0
     public private(set) var incomingResourceProgress: [String: Double] = [:]
+    public private(set) var isApplicationActive = true
     public var networkHost: String
     public var networkIPv6Host: String
     public var networkPort: Int
@@ -238,13 +239,20 @@ public final class SidebandStore {
     }
 
     public func applicationDidBecomeActive() async {
+        isApplicationActive = true
+        if let selectedConversationID { markConversationRead(selectedConversationID) }
         if autoConnectEnabled, networkState != .ready { await connectNetwork() }
         if autoInterfaceEnabled, !autoInterfaceDiscovery.isListening { autoInterfaceDiscovery.start() }
         startPeriodicPropagationSync()
         await syncPropagationNow()
     }
 
+    public func applicationDidBecomeInactive() {
+        isApplicationActive = false
+    }
+
     public func applicationDidEnterBackground() {
+        isApplicationActive = false
         stopPeriodicPropagationSync()
         backgroundRefresh.schedule()
     }
@@ -1067,9 +1075,9 @@ public final class SidebandStore {
         conversations.sort { $0.updatedAt > $1.updatedAt }
     }
 
-    private func noteIncomingActivity(in conversationID: UUID) {
+    func noteIncomingActivity(in conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
-        if selectedConversationID != conversationID {
+        if !isApplicationActive || selectedConversationID != conversationID {
             conversations[index].unreadCount += 1
         }
         touch(conversationID)

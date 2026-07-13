@@ -78,7 +78,7 @@ struct ContentView: View {
             switch phase {
             case .active: Task { await store.applicationDidBecomeActive() }
             case .background: store.applicationDidEnterBackground()
-            case .inactive: break
+            case .inactive: store.applicationDidBecomeInactive()
             @unknown default: break
             }
         }
