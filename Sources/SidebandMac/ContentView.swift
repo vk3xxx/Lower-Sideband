@@ -436,6 +436,9 @@ private struct ConversationView: View {
                                     if message.direction == .outgoing && (message.state == .failed || message.state == .queued) {
                                         Button { Task { await store.retryMessage(message.id) } } label: { Label("Retry Now", systemImage: "arrow.clockwise") }
                                     }
+                                    if message.direction == .outgoing && message.state == .failed {
+                                        Button(role: .destructive) { Task { await store.removeFailedMessage(message.id) } } label: { Label("Remove Failed Message", systemImage: "trash") }
+                                    }
                                 }
                                 if message.direction == .incoming { Spacer(minLength: 80) }
                             }

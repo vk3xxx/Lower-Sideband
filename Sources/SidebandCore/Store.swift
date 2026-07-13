@@ -194,6 +194,17 @@ public final class SidebandStore {
         await attemptDelivery(for: conversationID)
     }
 
+    public func removeFailedMessage(_ messageID: UUID) async {
+        guard let index = messages.firstIndex(where: { $0.id == messageID && $0.direction == .outgoing && $0.state == .failed }) else { return }
+        let message = messages[index]
+        for attachment in message.attachments {
+            await cancelActiveResources(messageID: messageID, attachmentID: attachment.id)
+            try? await attachmentStore.remove(attachment)
+        }
+        messages.remove(at: index)
+        save()
+    }
+
     public func cancelAttachment(messageID: UUID, attachmentID: UUID) async {
         await cancelActiveResources(messageID: messageID, attachmentID: attachmentID)
         updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .failed, progress: 0)

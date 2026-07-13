@@ -79,6 +79,22 @@ import Testing
     #expect(store.messages[0].attachments[0].state == .queued)
 }
 
+@MainActor @Test func removeFailedMessageKeepsDeliveredHistory() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let failed = Message(conversationID: conversation.id, body: "failed", direction: .outgoing, state: .failed)
+    let delivered = Message(conversationID: conversation.id, body: "delivered", direction: .outgoing, state: .delivered)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [failed, delivered])).write(to: url)
+
+    let store = SidebandStore(persistenceURL: url)
+    await store.removeFailedMessage(failed.id)
+    await store.removeFailedMessage(delivered.id)
+    #expect(store.messages.map(\.id) == [delivered.id])
+}
+
 @MainActor @Test func recoversUnprovedSentOutboxAcrossRelaunch() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
