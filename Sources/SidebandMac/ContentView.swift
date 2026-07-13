@@ -45,6 +45,12 @@ struct ContentView: View {
                                 }
                                 Spacer()
                                 if let message = store.latestMessage(for: conversation.id) {
+                                    if message.direction == .outgoing {
+                                        Image(systemName: deliveryStateIcon(message.state))
+                                            .font(.caption2)
+                                            .foregroundStyle(message.state == .failed ? .red : .secondary)
+                                            .accessibilityLabel("Latest message \(message.state.rawValue)")
+                                    }
                                     Text(message.timestamp, style: .relative)
                                         .font(.caption2)
                                         .foregroundStyle(.tertiary)
@@ -193,6 +199,15 @@ struct ContentView: View {
         if !message.body.isEmpty { return message.body }
         if message.attachments.count == 1, let attachment = message.attachments.first { return "Attachment: \(attachment.filename)" }
         return "\(message.attachments.count) attachments"
+    }
+
+    private func deliveryStateIcon(_ state: Message.DeliveryState) -> String {
+        switch state {
+        case .queued: "clock"
+        case .sent: "checkmark"
+        case .delivered: "checkmark.circle.fill"
+        case .failed: "exclamationmark.circle.fill"
+        }
     }
     private var networkToolbarIcon: String {
         switch store.networkState {
