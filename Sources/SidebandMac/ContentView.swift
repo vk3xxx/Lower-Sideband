@@ -37,6 +37,9 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(conversation.displayName).font(.headline)
+                                if conversation.isTrusted {
+                                    Image(systemName: "checkmark.shield.fill").foregroundStyle(.green).accessibilityLabel("Trusted contact")
+                                }
                                 Spacer()
                                 if let message = store.latestMessage(for: conversation.id) {
                                     Text(message.timestamp, style: .relative)
@@ -71,6 +74,11 @@ struct ContentView: View {
                             renameDraft = conversation.displayName
                             renamingConversation = conversation
                         } label: { Label("Rename", systemImage: "pencil") }
+                        Button {
+                            store.setConversationTrusted(!conversation.isTrusted, conversationID: conversation.id)
+                        } label: {
+                            Label(conversation.isTrusted ? "Remove Trust" : "Mark as Trusted", systemImage: conversation.isTrusted ? "shield.slash" : "checkmark.shield")
+                        }
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }
                 } }
@@ -405,6 +413,7 @@ private struct ConversationView: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text(conversation.displayName).font(.title2.bold())
+                    if conversation.isTrusted { Label("Trusted", systemImage: "checkmark.shield.fill").font(.caption).foregroundStyle(.green) }
                     Text(conversation.destinationHash)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)

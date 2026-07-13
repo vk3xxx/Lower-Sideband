@@ -173,6 +173,12 @@ public final class SidebandStore {
         save()
     }
 
+    public func setConversationTrusted(_ trusted: Bool, conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].isTrusted = trusted
+        save()
+    }
+
     public func conversationDidAppear(_ conversationID: UUID) {
         visibleConversationID = conversationID
         if isApplicationActive { markConversationRead(conversationID) }

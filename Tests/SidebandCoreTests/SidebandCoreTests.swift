@@ -166,6 +166,15 @@ import Testing
     #expect(store.messages.map(\.id) == [secondMessage.id])
 }
 
+@MainActor @Test func trustedConversationStatePersists() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let id = store.conversations[0].id
+    store.setConversationTrusted(true, conversationID: id)
+    #expect(SidebandStore(persistenceURL: url).conversations[0].isTrusted)
+}
+
 @MainActor @Test func selectedConversationRemainsUnreadUntilApplicationIsActive() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
