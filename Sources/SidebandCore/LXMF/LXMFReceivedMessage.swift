@@ -9,6 +9,7 @@ public struct LXMFReceivedMessage: Sendable {
     public let timestamp: Double
     public let title: Data
     public let content: Data
+    public let fields: [UInt64: MessagePackValue]
 
     public init(packed: Data) throws {
         guard packed.count >= 96 else { throw ParseError.truncated }
@@ -18,13 +19,24 @@ public struct LXMFReceivedMessage: Sendable {
         payload = Data(packed.dropFirst(96))
         messageID = ReticulumIdentity.fullHash(destinationHash + sourceHash + payload)
         guard case let .array(parts) = try MessagePackDecoder.decode(payload), parts.count >= 4,
-              case let .double(ts) = parts[0], case let .binary(title) = parts[1], case let .binary(content) = parts[2] else { throw ParseError.invalidPayload }
+              case let .double(ts) = parts[0], case let .binary(title) = parts[1], case let .binary(content) = parts[2],
+              case let .map(fieldEntries) = parts[3] else { throw ParseError.invalidPayload }
         timestamp = ts; self.title = title; self.content = content
+        var decodedFields: [UInt64: MessagePackValue] = [:]
+        for (key, value) in fieldEntries {
+            guard case let .unsigned(fieldID) = key, decodedFields[fieldID] == nil else { continue }
+            decodedFields[fieldID] = value
+        }
+        fields = decodedFields
     }
 
     public func validate(with identity: ReticulumIdentity) -> Bool {
         let hashed = destinationHash + sourceHash + payload
         return identity.validate(signature: signature, message: hashed + messageID)
+    }
+    public func binaryField(_ fieldID: UInt64) -> Data? {
+        guard case let .binary(data) = fields[fieldID] else { return nil }
+        return data
     }
     public enum ParseError: Error { case truncated, invalidPayload }
 }

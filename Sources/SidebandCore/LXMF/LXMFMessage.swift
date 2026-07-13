@@ -6,19 +6,21 @@ public struct LXMFMessage: Sendable {
     public let timestamp: Double
     public let title: Data
     public let content: Data
+    public let fields: [UInt64: Data]
     public let payload: Data
     public let messageID: Data
     public let signature: Data
     public let packed: Data
 
-    public init(destinationHash: Data, sourceHash: Data, sourceIdentity: ReticulumIdentity, timestamp: Double = Date().timeIntervalSince1970, title: Data = Data(), content: Data) throws {
+    public init(destinationHash: Data, sourceHash: Data, sourceIdentity: ReticulumIdentity, timestamp: Double = Date().timeIntervalSince1970, title: Data = Data(), content: Data, fields: [UInt64: Data] = [:]) throws {
         guard destinationHash.count == 16, sourceHash.count == 16 else { throw MessageError.invalidDestination }
         self.destinationHash = destinationHash
         self.sourceHash = sourceHash
         self.timestamp = timestamp
         self.title = title
         self.content = content
-        payload = MessagePack.lxmfPayload(timestamp: timestamp, title: title, content: content)
+        self.fields = fields
+        payload = MessagePack.lxmfPayload(timestamp: timestamp, title: title, content: content, fields: fields)
         let hashedPart = destinationHash + sourceHash + payload
         messageID = ReticulumIdentity.fullHash(hashedPart)
         signature = try sourceIdentity.sign(hashedPart + messageID)

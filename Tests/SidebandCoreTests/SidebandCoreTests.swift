@@ -991,6 +991,23 @@ import Testing
     #expect(incoming.validate(with: identity))
 }
 
+@Test func lxmfTelemetryFieldRoundTripsAndRemainsSigned() throws {
+    let identity = try ReticulumIdentity(privateKey: Data(0..<64))
+    let telemetry = SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_000), location: .init(latitude: -37.8136, longitude: 144.9631, updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
+    let outgoing = try LXMFMessage(
+        destinationHash: Data(hex: "cf0b2a4a8d2a0b6978b71290da7cc80e"),
+        sourceHash: Data(hex: "fae321c442e3c9bdcd7a3e79d850e03c"),
+        sourceIdentity: identity,
+        timestamp: 1_700_000_000,
+        content: Data("position".utf8),
+        fields: [0x02: telemetry.packed()]
+    )
+    let incoming = try LXMFReceivedMessage(packed: outgoing.packed)
+    #expect(incoming.validate(with: identity))
+    #expect(incoming.binaryField(0x02) == telemetry.packed())
+    #expect(try SidebandTelemetry(packed: incoming.binaryField(0x02)!) == telemetry)
+}
+
 @Test func propagationDownloadAndAckHaveExpectedShape() throws {
     let id = Data(0..<32)
     let download = LXMFPropagation.messageDownloadRequest([id], timestamp: 1_700_000_000.25)
