@@ -175,6 +175,18 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: url.path))
 }
 
+@Test func attachmentStoreRemovesOnlyUnreferencedRegularFiles() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let store = AttachmentStore(directory: directory)
+    let kept = try await store.save(data: Data("keep".utf8), filename: "keep.txt", mimeType: "text/plain")
+    let orphan = try await store.save(data: Data("remove".utf8), filename: "orphan.txt", mimeType: "text/plain")
+
+    let removed = try await store.removeOrphans(referencedRelativePaths: [kept.relativePath])
+    #expect(removed == 1)
+    #expect(FileManager.default.fileExists(atPath: await store.url(for: kept).path))
+    #expect(!FileManager.default.fileExists(atPath: await store.url(for: orphan).path))
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

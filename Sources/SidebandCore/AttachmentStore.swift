@@ -39,6 +39,24 @@ public actor AttachmentStore {
         return data
     }
     public func remove(_ attachment: Attachment) throws { try FileManager.default.removeItem(at: url(for: attachment)) }
+
+    public func removeOrphans(referencedRelativePaths: Set<String>) throws -> Int {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return 0 }
+        let referencedNames = Set(referencedRelativePaths.map { URL(fileURLWithPath: $0).lastPathComponent })
+        let files = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )
+        var removedCount = 0
+        for file in files where !referencedNames.contains(file.lastPathComponent) {
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else { continue }
+            try FileManager.default.removeItem(at: file)
+            removedCount += 1
+        }
+        return removedCount
+    }
 }
 
 public enum AttachmentStoreError: LocalizedError {

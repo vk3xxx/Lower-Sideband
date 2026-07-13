@@ -116,6 +116,7 @@ public final class SidebandStore {
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
         backgroundRefresh.register { [weak self] in await self?.performBackgroundRefresh() }
         Task { try? await resourceStagingStore.removeStale(olderThan: Date(timeIntervalSinceNow: -86_400)) }
+        Task { [weak self] in _ = await self?.cleanOrphanedAttachments() }
         syncUnreadBadge()
     }
 
@@ -603,6 +604,11 @@ public final class SidebandStore {
             "Propagation node: \(propagationNodeHash.isEmpty ? "not configured" : propagationNodeHash)",
             "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")"
         ].joined(separator: "\n")
+    }
+
+    public func cleanOrphanedAttachments() async -> Int {
+        let referencedPaths = Set(messages.flatMap(\.attachments).map(\.relativePath))
+        return (try? await attachmentStore.removeOrphans(referencedRelativePaths: referencedPaths)) ?? 0
     }
 
     public func exportSnapshotData() throws -> Data {
