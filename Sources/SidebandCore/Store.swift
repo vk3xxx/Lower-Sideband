@@ -64,6 +64,7 @@ public final class SidebandStore {
     private var networkConnectionGeneration = UUID()
     private let pathTable = ReticulumPathTable()
     private var pendingLinks: [String: ReticulumLinkRequest] = [:]
+    private var pendingLinkTimeoutTokens: [String: UUID] = [:]
     private var activeLinks: [String: ReticulumLinkSession] = [:]
     private enum ReceiptKind { case direct, opportunistic, propagation }
     private struct PendingReceipt { let messageID: UUID; let kind: ReceiptKind; let destinationHash: String }
@@ -510,6 +511,7 @@ public final class SidebandStore {
         reconnectTask = nil
         automaticConnectionDescription = "Disconnected"
         stopPeriodicPropagationSync()
+        resetLinkState()
         await networkInterface?.stop()
         networkInterface = nil
         networkState = .stopped
@@ -566,6 +568,7 @@ public final class SidebandStore {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 guard !Task.isCancelled else { return }
+                await self?.announceLocalDeliveryDestination()
                 await self?.syncPropagationNow()
             }
         }
@@ -770,18 +773,66 @@ public final class SidebandStore {
     public var activeLinkCount: Int { activeLinkHashes.count }
 
     public func requestLink(to destinationHash: String) async {
-        guard hasPath(to: destinationHash), let target = Data(hexadecimal: destinationHash) else {
+        let normalized = destinationHash.lowercased()
+        guard hasPath(to: normalized), let target = Data(hexadecimal: normalized) else {
             lastError = "A validated path is required before establishing a link."
             return
         }
         do {
+            clearPendingLinks(to: normalized)
             let request = try ReticulumLinkRequest(destinationHash: target)
             if let networkInterface, networkState == .ready { try await networkInterface.send(rawPacket: request.rawPacket) }
             for peer in autoInterfaceDiscovery.peers { autoInterfaceDiscovery.send(rawPacket: request.rawPacket, to: peer) }
-            pendingLinks[request.linkID.hex] = request
-            pendingLinkHashes.insert(destinationHash.lowercased())
-            UserDefaults.standard.set(request.linkID.hex, forKey: "reticulumLastPendingLink")
+            let linkID = request.linkID.hex
+            let timeoutToken = UUID()
+            pendingLinks[linkID] = request
+            pendingLinkTimeoutTokens[linkID] = timeoutToken
+            pendingLinkHashes.insert(normalized)
+            UserDefaults.standard.set(linkID, forKey: "reticulumLastPendingLink")
+            scheduleLinkTimeout(linkID: linkID, destinationHash: normalized, token: timeoutToken)
         } catch { lastError = "Link request failed: \(error.localizedDescription)" }
+    }
+
+    private func scheduleLinkTimeout(linkID: String, destinationHash: String, token: UUID) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled else { return }
+            await self?.expireLinkRequest(linkID: linkID, destinationHash: destinationHash, token: token)
+        }
+    }
+
+    private func expireLinkRequest(linkID: String, destinationHash: String, token: UUID) async {
+        guard pendingLinkTimeoutTokens[linkID] == token, pendingLinks.removeValue(forKey: linkID) != nil else { return }
+        pendingLinkTimeoutTokens.removeValue(forKey: linkID)
+        pendingLinkHashes.remove(destinationHash)
+        if UserDefaults.standard.string(forKey: "reticulumLastPendingLink") == linkID {
+            UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
+        }
+        guard networkState == .ready else { return }
+        await requestPath(to: destinationHash)
+        if hasPath(to: destinationHash) { await requestLink(to: destinationHash) }
+    }
+
+    private func clearPendingLinks(to destinationHash: String) {
+        let linkIDs = pendingLinks.compactMap { $0.value.destinationHash.hex == destinationHash ? $0.key : nil }
+        for linkID in linkIDs {
+            pendingLinks.removeValue(forKey: linkID)
+            pendingLinkTimeoutTokens.removeValue(forKey: linkID)
+        }
+        pendingLinkHashes.remove(destinationHash)
+    }
+
+    private func resetLinkState() {
+        pendingLinks.removeAll()
+        pendingLinkTimeoutTokens.removeAll()
+        activeLinks.removeAll()
+        pendingLinkHashes.removeAll()
+        activeLinkHashes.removeAll()
+        inboundLinkIDs.removeAll()
+        inboundRemoteIdentities.removeAll()
+        pendingPropagationRequests.removeAll()
+        UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
+        UserDefaults.standard.removeObject(forKey: "reticulumLastActiveLink")
     }
 
     private func setNetworkState(_ state: ReticulumTCPInterface.State, generation: UUID) {
@@ -820,6 +871,7 @@ public final class SidebandStore {
         switch state {
         case .failed:
             stopPeriodicPropagationSync()
+            resetLinkState()
             if activeGatewayID != nil, autoConnectEnabled, !intentionallyDisconnected {
                 Task { await tryNextAutomaticConnection() }
             } else if activeNetworkHost == networkIPv6Host, networkHost != networkIPv6Host {
@@ -830,7 +882,9 @@ public final class SidebandStore {
             } else {
                 scheduleReconnect()
             }
-        case .stopped: stopPeriodicPropagationSync()
+        case .stopped:
+            stopPeriodicPropagationSync()
+            resetLinkState()
         case .connecting, .ready: break
         }
     }
@@ -1016,6 +1070,7 @@ public final class SidebandStore {
               let session = try? request.validateProof(packet, destinationPublicKey: publicKey) else { return }
         activeLinks[linkID] = session
         pendingLinks.removeValue(forKey: linkID)
+        pendingLinkTimeoutTokens.removeValue(forKey: linkID)
         let destination = request.destinationHash.hex
         pendingLinkHashes.remove(destination)
         activeLinkHashes.insert(destination)
