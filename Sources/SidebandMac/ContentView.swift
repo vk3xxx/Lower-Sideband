@@ -38,6 +38,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(conversation.displayName).font(.headline)
+                                if conversation.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Pinned") }
                                 if conversation.isTrusted {
                                     Image(systemName: "checkmark.shield.fill").foregroundStyle(.green).accessibilityLabel("Trusted contact")
                                 }
@@ -79,6 +80,11 @@ struct ContentView: View {
                             store.setConversationTrusted(!conversation.isTrusted, conversationID: conversation.id)
                         } label: {
                             Label(conversation.isTrusted ? "Remove Trust" : "Mark as Trusted", systemImage: conversation.isTrusted ? "shield.slash" : "checkmark.shield")
+                        }
+                        Button {
+                            store.setConversationPinned(!conversation.isPinned, conversationID: conversation.id)
+                        } label: {
+                            Label(conversation.isPinned ? "Unpin" : "Pin", systemImage: conversation.isPinned ? "pin.slash" : "pin")
                         }
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }

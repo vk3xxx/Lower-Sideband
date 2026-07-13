@@ -192,6 +192,19 @@ import Testing
     #expect(SidebandStore(persistenceURL: url).conversations[0].isTrusted)
 }
 
+@MainActor @Test func pinnedConversationsSortFirstAndPersist() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "First"))
+    #expect(store.addConversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Second"))
+    let firstID = store.conversations.first(where: { $0.displayName == "First" })!.id
+    store.setConversationPinned(true, conversationID: firstID)
+    #expect(store.conversations.first?.id == firstID)
+    let reloaded = SidebandStore(persistenceURL: url)
+    #expect(reloaded.conversations.first?.id == firstID)
+    #expect(reloaded.conversations.first?.isPinned == true)
+}
+
 @MainActor @Test func conversationDraftPersistsAndClears() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

@@ -205,6 +205,13 @@ public final class SidebandStore {
         save()
     }
 
+    public func setConversationPinned(_ pinned: Bool, conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].isPinned = pinned
+        sortConversations()
+        save()
+    }
+
     public func conversationDidAppear(_ conversationID: UUID) {
         visibleConversationID = conversationID
         if isApplicationActive { markConversationRead(conversationID) }
@@ -1161,7 +1168,14 @@ public final class SidebandStore {
     private func touch(_ id: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].updatedAt = .now
-        conversations.sort { $0.updatedAt > $1.updatedAt }
+        sortConversations()
+    }
+
+    private func sortConversations() {
+        conversations.sort {
+            if $0.isPinned != $1.isPinned { return $0.isPinned && !$1.isPinned }
+            return $0.updatedAt > $1.updatedAt
+        }
     }
 
     func noteIncomingActivity(in conversationID: UUID) {
@@ -1190,6 +1204,7 @@ public final class SidebandStore {
         guard let data = try? Data(contentsOf: persistenceURL),
               let snapshot = try? JSONDecoder.sideband.decode(AppSnapshot.self, from: data) else { return }
         conversations = snapshot.conversations
+        sortConversations()
         messages = snapshot.messages
         for index in messages.indices where messages[index].direction == .outgoing && messages[index].state == .sent {
             messages[index].state = .queued
