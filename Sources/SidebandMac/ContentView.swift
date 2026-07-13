@@ -3,6 +3,8 @@ import SidebandCore
 import UniformTypeIdentifiers
 import ImageIO
 import QuickLook
+import CoreImage
+import CoreImage.CIFilterBuiltins
 #if os(macOS)
 import AppKit
 private typealias PlatformImage = NSImage
@@ -512,6 +514,7 @@ private struct ConversationView: View {
     @State private var showingFileImporter = false
     @State private var messageSearch = ""
     @State private var previewAttachmentURL: URL?
+    @State private var showingContactQR = false
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -543,6 +546,10 @@ private struct ConversationView: View {
                         .foregroundStyle(.secondary)
                         .help("Clear message search")
                         .accessibilityLabel("Clear message search")
+                }
+                if SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) != nil {
+                    Button { showingContactQR = true } label: { Image(systemName: "qrcode") }
+                        .help("Show contact QR code")
                 }
                 if let transcript = store.conversationTranscript(conversation.id) {
                     ShareLink(item: transcript, subject: Text("Sideband conversation with \(conversation.displayName)")) {
@@ -680,6 +687,11 @@ private struct ConversationView: View {
             }
         }
         .quickLookPreview($previewAttachmentURL)
+        .sheet(isPresented: $showingContactQR) {
+            if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+                ContactQRCodeView(name: conversation.displayName, link: contactLink.url)
+            }
+        }
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
@@ -772,6 +784,48 @@ private struct ConversationView: View {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
         if store.networkState == .ready { return "network" }
         return "arrow.triangle.2.circlepath"
+    }
+}
+
+private struct ContactQRCodeView: View {
+    @Environment(\.dismiss) private var dismiss
+    let name: String
+    let link: URL
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack { Text(name).font(.title2.bold()); Spacer(); Button("Close") { dismiss() } }
+            if let image = qrImage {
+                platformImage(image).resizable().interpolation(.none).scaledToFit()
+                    .accessibilityLabel("Contact QR code for \(name)")
+            } else {
+                ContentUnavailableView("QR Code Unavailable", systemImage: "qrcode")
+            }
+            Text(link.absoluteString).font(.caption.monospaced()).textSelection(.enabled)
+        }
+        .padding(24)
+        .frame(minWidth: 360, minHeight: 430)
+    }
+
+    private var qrImage: PlatformImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(link.absoluteString.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)),
+              let cgImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
+#if os(macOS)
+        return NSImage(cgImage: cgImage, size: .zero)
+#else
+        return UIImage(cgImage: cgImage)
+#endif
+    }
+
+    private func platformImage(_ image: PlatformImage) -> Image {
+#if os(macOS)
+        Image(nsImage: image)
+#else
+        Image(uiImage: image)
+#endif
     }
 }
 
