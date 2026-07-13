@@ -40,6 +40,9 @@
 | LXMF announce display names | `LXMFAnnounceInfo` | Implemented, tested |
 | Verified incoming local notifications | `LocalNotificationManager` | Implemented, opt-in |
 | iOS background propagation refresh | `BackgroundRefreshCoordinator` | Implemented |
+| Installable iPhone/iPad application target | `MacSideband.xcodeproj`, `SidebandIOS` | Implemented and simulator launched |
+| App Store privacy required-reason declarations | `Support/PrivacyInfo.xcprivacy` | Implemented for the app and embedded framework |
+| TestFlight archive and upload configuration | `Support/ExportOptions-TestFlight.plist` | Implemented for the Individual team |
 | Attachment metadata and durable local storage | `Attachment`, `AttachmentStore` | Implemented |
 | Orphaned attachment cleanup | `AttachmentStore.removeOrphans` | Implemented conservatively for unreferenced regular files |
 | Reticulum Resource advertisements, requests, parts, proofs and cancellation | `ReticulumResource*` | Implemented, Python-fixture tested |
@@ -61,7 +64,7 @@
 1. Complete live attachment, telemetry and large-Resource interoperability testing against upstream Sideband and Reticulum.
 2. Add per-contact telemetry policies, requests, collectors, and additional Sideband sensor types.
 3. Add migration/import support for existing Sideband SQLite data.
-4. Harden iOS background delivery, power use, and network-transition behavior on physical devices.
+4. Harden iOS background delivery, power use, and network-transition behavior through TestFlight testing on physical devices.
 5. Add camera QR scanning, audio/voice, LXST, hardware interfaces, and plugin replacements incrementally.
 
 Avoid embedding Python in the product target: it would make the macOS prototype quick but would create a dead end for iOS sandboxing and distribution.
