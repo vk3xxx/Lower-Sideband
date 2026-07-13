@@ -512,6 +512,16 @@ private struct ConversationView: View {
                 TextField("Search messages", text: $messageSearch)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 220)
+                if !messageSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("\(conversationMessages.count) \(conversationMessages.count == 1 ? "result" : "results")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button { messageSearch = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Clear message search")
+                        .accessibilityLabel("Clear message search")
+                }
                 if let transcript = store.conversationTranscript(conversation.id) {
                     ShareLink(item: transcript, subject: Text("Sideband conversation with \(conversation.displayName)")) {
                         Image(systemName: "square.and.arrow.up")
