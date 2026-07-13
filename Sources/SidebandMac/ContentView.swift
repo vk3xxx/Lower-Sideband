@@ -40,44 +40,47 @@ struct ContentView: View {
     @State private var pendingRestoreData: Data?
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $store.selectedConversationID) {
-                Section("Conversations") { ForEach(filteredConversations) { conversation in
-                    conversationRow(conversation)
-                    .padding(.vertical, 4)
-                    .tag(conversation.id)
-                    .contextMenu { conversationMenu(conversation) }
-                } }
-                if !filteredDiscoveries.isEmpty {
-                    Section("Discovered") {
-                        ForEach(filteredDiscoveries) { discovery in
-                            discoveryRow(discovery)
+        VStack(spacing: 0) {
+            localIdentityBar
+            NavigationSplitView {
+                List(selection: $store.selectedConversationID) {
+                    Section("Conversations") { ForEach(filteredConversations) { conversation in
+                        conversationRow(conversation)
+                        .padding(.vertical, 4)
+                        .tag(conversation.id)
+                        .contextMenu { conversationMenu(conversation) }
+                    } }
+                    if !filteredDiscoveries.isEmpty {
+                        Section("Discovered") {
+                            ForEach(filteredDiscoveries) { discovery in
+                                discoveryRow(discovery)
+                            }
                         }
                     }
                 }
-            }
-            .searchable(text: $conversationSearch, prompt: "Search conversations")
-            .navigationTitle("Sideband")
-            .toolbar {
-                Button(action: { showingNetwork = true }) {
-                    Label(networkToolbarLabel, systemImage: networkToolbarIcon)
-                }.help("Reticulum network status")
-                Button { showingArchived.toggle() } label: {
-                    Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
+                .searchable(text: $conversationSearch, prompt: "Search conversations")
+                .navigationTitle("Sideband")
+                .toolbar {
+                    Button(action: { showingNetwork = true }) {
+                        Label(networkToolbarLabel, systemImage: networkToolbarIcon)
+                    }.help("Reticulum network status")
+                    Button { showingArchived.toggle() } label: {
+                        Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
+                    }
+                    .help(showingArchived ? "Hide archived conversations" : "Show archived conversations")
+                    Button(action: exportBackup) { Label("Export backup", systemImage: "externaldrive.badge.plus") }
+                        .help("Export Sideband backup")
+                    Button { showingBackupImporter = true } label: { Label("Restore backup", systemImage: "externaldrive.badge.timemachine") }
+                        .help("Restore Sideband backup")
+                    Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
                 }
-                .help(showingArchived ? "Hide archived conversations" : "Show archived conversations")
-                Button(action: exportBackup) { Label("Export backup", systemImage: "externaldrive.badge.plus") }
-                    .help("Export Sideband backup")
-                Button { showingBackupImporter = true } label: { Label("Restore backup", systemImage: "externaldrive.badge.timemachine") }
-                    .help("Restore Sideband backup")
-                Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
-            }
-        } detail: {
-            if let conversation = store.selectedConversation {
-                ConversationView(store: store, conversation: conversation)
-                    .id(conversation.id)
-            } else {
-                ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a conversation using an LXMF destination."))
+            } detail: {
+                if let conversation = store.selectedConversation {
+                    ConversationView(store: store, conversation: conversation)
+                        .id(conversation.id)
+                } else {
+                    ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a conversation using an LXMF destination."))
+                }
             }
         }
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
@@ -156,6 +159,39 @@ struct ContentView: View {
         case .failed: "Network error"
         case .stopped: "Offline"
         }
+    }
+
+    private var localIdentityBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.text.rectangle")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("My LXMF ID")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(store.localDeliveryHash)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .textSelection(.enabled)
+                    .accessibilityLabel("Current LXMF ID \\(store.localDeliveryHash)")
+            }
+            Spacer(minLength: 4)
+            Button {
+                copyToSystemClipboard(store.localDeliveryHash)
+            } label: {
+                Label("Copy ID", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Copy current LXMF ID")
+            .accessibilityLabel("Copy current LXMF ID")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func exportBackup() {
