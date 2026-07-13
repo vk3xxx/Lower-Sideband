@@ -33,6 +33,8 @@ struct ContentView: View {
     @State private var renameDraft = ""
     @State private var deletingConversation: Conversation?
     @State private var clearingConversation: Conversation?
+    @State private var backupDocument = SnapshotBackupDocument(data: Data())
+    @State private var showingBackupExporter = false
 
     var body: some View {
         NavigationSplitView {
@@ -212,6 +214,8 @@ struct ContentView: View {
                     Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
                 }
                 .help(showingArchived ? "Hide archived conversations" : "Show archived conversations")
+                Button(action: exportBackup) { Label("Export backup", systemImage: "externaldrive.badge.plus") }
+                    .help("Export Sideband backup")
                 Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
             }
         } detail: {
@@ -224,6 +228,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
         .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
+        .fileExporter(isPresented: $showingBackupExporter, document: backupDocument, contentType: .json, defaultFilename: "Sideband-Backup") { result in
+            if case let .failure(error) = result { store.lastError = "Could not export backup: \(error.localizedDescription)" }
+        }
         .alert("Sideband", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.clearError() } })) {
             Button("OK") { store.clearError() }
         } message: { Text(store.lastError ?? "") }
@@ -277,6 +284,15 @@ struct ContentView: View {
         case .connecting: "Connecting"
         case .failed: "Network error"
         case .stopped: "Offline"
+        }
+    }
+
+    private func exportBackup() {
+        do {
+            backupDocument = SnapshotBackupDocument(data: try store.exportSnapshotData())
+            showingBackupExporter = true
+        } catch {
+            store.lastError = "Could not prepare backup: \(error.localizedDescription)"
         }
     }
 
@@ -340,6 +356,18 @@ struct ContentView: View {
         case .stopped: "network.slash"
         }
     }
+}
+
+private struct SnapshotBackupDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var data: Data
+
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
+        self.data = data
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
 }
 
 private struct NetworkView: View {
