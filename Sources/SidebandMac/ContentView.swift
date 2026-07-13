@@ -523,6 +523,9 @@ private struct NetworkView: View {
             }
             HStack {
                 Button("Close") { dismiss() }
+                Button { copyToSystemClipboard(store.networkDiagnosticsReport) } label: {
+                    Label("Copy Diagnostics", systemImage: "stethoscope")
+                }
                 Spacer()
                 if isConnectedOrConnecting {
                     if store.networkState == .ready {
