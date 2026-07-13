@@ -11,22 +11,24 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var displayName: String
     public var isTrusted: Bool
     public var isPinned: Bool
+    public var isArchived: Bool
     public var notificationsMuted: Bool
     public var unreadCount: Int
     public var updatedAt: Date
 
-    public init(id: UUID = UUID(), destinationHash: String, displayName: String, isTrusted: Bool = false, isPinned: Bool = false, notificationsMuted: Bool = false, unreadCount: Int = 0, updatedAt: Date = .now) {
+    public init(id: UUID = UUID(), destinationHash: String, displayName: String, isTrusted: Bool = false, isPinned: Bool = false, isArchived: Bool = false, notificationsMuted: Bool = false, unreadCount: Int = 0, updatedAt: Date = .now) {
         self.id = id
         self.destinationHash = destinationHash.lowercased()
         self.displayName = displayName
         self.isTrusted = isTrusted
         self.isPinned = isPinned
+        self.isArchived = isArchived
         self.notificationsMuted = notificationsMuted
         self.unreadCount = unreadCount
         self.updatedAt = updatedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, destinationHash, displayName, isTrusted, isPinned, notificationsMuted, unreadCount, updatedAt }
+    private enum CodingKeys: String, CodingKey { case id, destinationHash, displayName, isTrusted, isPinned, isArchived, notificationsMuted, unreadCount, updatedAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -34,6 +36,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         displayName = try values.decode(String.self, forKey: .displayName)
         isTrusted = try values.decodeIfPresent(Bool.self, forKey: .isTrusted) ?? false
         isPinned = try values.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        isArchived = try values.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
         notificationsMuted = try values.decodeIfPresent(Bool.self, forKey: .notificationsMuted) ?? false
         unreadCount = try values.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast

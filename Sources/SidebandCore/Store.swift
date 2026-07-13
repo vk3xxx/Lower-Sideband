@@ -235,6 +235,13 @@ public final class SidebandStore {
         save()
     }
 
+    public func setConversationArchived(_ archived: Bool, conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].isArchived = archived
+        if archived { conversations[index].isPinned = false }
+        save()
+    }
+
     public func setConversationNotificationsMuted(_ muted: Bool, conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].notificationsMuted = muted

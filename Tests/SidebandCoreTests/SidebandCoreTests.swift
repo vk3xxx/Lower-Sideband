@@ -125,6 +125,19 @@ import Testing
     #expect(card.contains("sideband://contact/\(conversation.destinationHash)?name=Peer"))
 }
 
+@MainActor @Test func archivedConversationStatePersistsAndUnpins() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let id = store.conversations[0].id
+    store.setConversationPinned(true, conversationID: id)
+    store.setConversationArchived(true, conversationID: id)
+
+    let reloaded = SidebandStore(persistenceURL: url)
+    #expect(reloaded.conversations[0].isArchived)
+    #expect(!reloaded.conversations[0].isPinned)
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
