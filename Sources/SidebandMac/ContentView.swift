@@ -474,7 +474,11 @@ private struct ConversationView: View {
                                         }
                                     }
                                     HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
-                                        .font(.caption2).foregroundStyle(.secondary)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .accessibilityElement(children: .ignore)
+                                        .accessibilityLabel("\(message.timestamp.formatted(date: .long, time: .standard)), \(message.state.rawValue)")
+                                        .help(message.timestamp.formatted(date: .long, time: .standard))
                                 }
                                 .padding(10)
                                 .background(message.direction == .outgoing ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
