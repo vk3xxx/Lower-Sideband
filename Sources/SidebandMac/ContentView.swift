@@ -51,7 +51,12 @@ struct ContentView: View {
                                 }
                             }
                             Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                            if let message = store.latestMessage(for: conversation.id) {
+                            if !store.draft(for: conversation.id).isEmpty {
+                                Text("Draft: \(store.draft(for: conversation.id))")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .lineLimit(1)
+                            } else if let message = store.latestMessage(for: conversation.id) {
                                 Text(messagePreview(message))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
