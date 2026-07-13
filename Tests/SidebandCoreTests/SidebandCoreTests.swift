@@ -58,6 +58,18 @@ import Testing
     #expect(store.lastError != nil)
 }
 
+@MainActor @Test func rejectsTooManyMessageAttachments() async {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let attachments = (0...SidebandMessageLimits.maximumAttachments).map {
+        Attachment(filename: "\($0).bin", byteCount: 0, relativePath: "\($0).bin", state: .local)
+    }
+    await store.send("too many", attachments: attachments)
+    #expect(store.messages.isEmpty)
+    #expect(store.lastError != nil)
+}
+
 @MainActor @Test func latestMessageUsesTimestampOrder() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

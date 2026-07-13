@@ -251,11 +251,23 @@ public final class SidebandStore {
             lastError = "Messages are limited to \(SidebandMessageLimits.maximumTextCharacters.formatted()) characters."
             return
         }
+        guard attachments.count <= SidebandMessageLimits.maximumAttachments else {
+            lastError = "Messages are limited to \(SidebandMessageLimits.maximumAttachments) attachments."
+            return
+        }
         let message = Message(conversationID: conversation.id, body: body, direction: .outgoing, state: .queued, attachments: attachments)
         messages.append(message)
         touch(conversation.id)
         save()
         await attemptDelivery(for: conversation.id)
+    }
+
+    public func validateAttachmentSelection(currentCount: Int, adding newCount: Int) -> Bool {
+        guard currentCount + newCount <= SidebandMessageLimits.maximumAttachments else {
+            lastError = "Messages are limited to \(SidebandMessageLimits.maximumAttachments) attachments."
+            return false
+        }
+        return true
     }
 
     public func retryAttachment(messageID: UUID, attachmentID: UUID) async {

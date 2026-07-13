@@ -610,7 +610,9 @@ private struct ConversationView: View {
                     }
                 }
                 HStack {
-                    Button { showingFileImporter = true } label: { Image(systemName: "paperclip") }.help("Attach files")
+                    Button { showingFileImporter = true } label: { Image(systemName: "paperclip") }
+                        .help("Attach files")
+                        .disabled(pendingAttachments.count >= SidebandMessageLimits.maximumAttachments)
                     TextField("Message", text: $draft, axis: .vertical).textFieldStyle(.roundedBorder).onSubmit(send)
                     Button(action: send) { Image(systemName: "paperplane.fill") }.buttonStyle(.borderedProminent).disabled(!canSend)
                 }
@@ -670,6 +672,7 @@ private struct ConversationView: View {
     private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty }
 
     private func importAttachments(_ urls: [URL]) async {
+        guard store.validateAttachmentSelection(currentCount: pendingAttachments.count, adding: urls.count) else { return }
         for url in urls {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
