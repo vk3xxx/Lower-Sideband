@@ -4,30 +4,39 @@ import CryptoKit
 
 public actor AttachmentStore {
     public let directory: URL
+    private let localDataCipher = LocalDataCipher()
+    private let materializedDirectory: URL
 
-    public init(directory: URL) { self.directory = directory }
+    public init(directory: URL) {
+        self.directory = directory
+        materializedDirectory = FileManager.default.temporaryDirectory
+            .appending(path: "SidebandAttachmentPreviews", directoryHint: .isDirectory)
+            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    }
 
     public func importFile(from source: URL, preferredName: String? = nil) throws -> Attachment {
-        let sourceValues = try source.resourceValues(forKeys: [.fileSizeKey])
+        let sourceValues = try source.resourceValues(forKeys: [.fileSizeKey, .typeIdentifierKey])
         guard (sourceValues.fileSize ?? 0) <= ReticulumResourceLimits.maximumAttachmentBytes else { throw AttachmentStoreError.tooLarge }
+        let data = try Data(contentsOf: source)
+        guard data.count <= ReticulumResourceLimits.maximumAttachmentBytes else { throw AttachmentStoreError.tooLarge }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let id = UUID()
         let originalName = preferredName ?? source.lastPathComponent
-        let storedName = "\(id.uuidString)-\(originalName)"
+        let safeName = URL(fileURLWithPath: originalName).lastPathComponent
+        let storedName = "\(id.uuidString)-\(safeName)"
         let destination = directory.appending(path: storedName)
-        try FileManager.default.copyItem(at: source, to: destination)
-        let values = try destination.resourceValues(forKeys: [.fileSizeKey, .typeIdentifierKey])
-        let mimeType = values.typeIdentifier.flatMap { UTType($0)?.preferredMIMEType }
-        let data = try Data(contentsOf: destination)
-        return Attachment(id: id, filename: originalName, mimeType: mimeType, byteCount: values.fileSize ?? 0, relativePath: storedName, state: .local, contentHash: Data(SHA256.hash(data: data)))
+        try encrypted(data, for: id).write(to: destination, options: .atomic)
+        let mimeType = sourceValues.typeIdentifier.flatMap { UTType($0)?.preferredMIMEType }
+        return Attachment(id: id, filename: safeName, mimeType: mimeType, byteCount: data.count, relativePath: storedName, state: .local, contentHash: Data(SHA256.hash(data: data)))
     }
 
     public func save(data: Data, filename: String, mimeType: String?) throws -> Attachment {
+        guard data.count <= ReticulumResourceLimits.maximumAttachmentBytes else { throw AttachmentStoreError.tooLarge }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let id = UUID()
         let safeName = URL(fileURLWithPath: filename).lastPathComponent
         let storedName = "\(id.uuidString)-\(safeName)"
-        try data.write(to: directory.appending(path: storedName), options: .atomic)
+        try encrypted(data, for: id).write(to: directory.appending(path: storedName), options: .atomic)
         return Attachment(id: id, filename: safeName, mimeType: mimeType, byteCount: data.count, relativePath: storedName, state: .available, progress: 1, contentHash: Data(SHA256.hash(data: data)))
     }
 
@@ -37,7 +46,7 @@ public actor AttachmentStore {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let safeName = URL(fileURLWithPath: payload.filename).lastPathComponent
         let storedName = "\(payload.id.uuidString)-\(safeName)"
-        try payload.data.write(to: directory.appending(path: storedName), options: .atomic)
+        try encrypted(payload.data, for: payload.id).write(to: directory.appending(path: storedName), options: .atomic)
         return Attachment(
             id: payload.id, filename: safeName, mimeType: payload.mimeType, byteCount: payload.data.count,
             relativePath: storedName, state: .available, progress: 1, contentHash: payload.contentHash
@@ -46,12 +55,47 @@ public actor AttachmentStore {
 
     public func url(for attachment: Attachment) -> URL { directory.appending(path: attachment.relativePath) }
     public func read(_ attachment: Attachment) throws -> Data {
-        let data = try Data(contentsOf: url(for: attachment))
+        let storedURL = url(for: attachment)
+        let storedData = try Data(contentsOf: storedURL)
+        let wasEncrypted = localDataCipher.isEncrypted(storedData)
+        let data: Data
+        do {
+            data = try localDataCipher.open(storedData, context: encryptionContext(for: attachment.id))
+        } catch {
+            throw AttachmentStoreError.integrityMismatch
+        }
         guard data.count == attachment.byteCount else { throw AttachmentStoreError.integrityMismatch }
         if let expected = attachment.contentHash, Data(SHA256.hash(data: data)) != expected { throw AttachmentStoreError.integrityMismatch }
+        if !wasEncrypted {
+            try encrypted(data, for: attachment.id).write(to: storedURL, options: .atomic)
+        }
         return data
     }
-    public func remove(_ attachment: Attachment) throws { try FileManager.default.removeItem(at: url(for: attachment)) }
+
+    public func materializedURL(for attachment: Attachment) throws -> URL {
+        let data = try read(attachment)
+        try FileManager.default.createDirectory(at: materializedDirectory, withIntermediateDirectories: true)
+        let result = materializedDirectory.appending(path: materializedName(for: attachment))
+#if os(iOS)
+        try data.write(to: result, options: [.atomic, .completeFileProtection])
+#else
+        try data.write(to: result, options: .atomic)
+#endif
+        return result
+    }
+
+    public func removeMaterializedFile(for attachment: Attachment) {
+        try? FileManager.default.removeItem(at: materializedDirectory.appending(path: materializedName(for: attachment)))
+    }
+
+    public func removeAllMaterializedFiles() {
+        try? FileManager.default.removeItem(at: materializedDirectory)
+    }
+
+    public func remove(_ attachment: Attachment) throws {
+        removeMaterializedFile(for: attachment)
+        try FileManager.default.removeItem(at: url(for: attachment))
+    }
 
     public func removeOrphans(referencedRelativePaths: Set<String>) throws -> Int {
         guard FileManager.default.fileExists(atPath: directory.path) else { return 0 }
@@ -69,6 +113,18 @@ public actor AttachmentStore {
             removedCount += 1
         }
         return removedCount
+    }
+
+    private func encrypted(_ data: Data, for id: UUID) throws -> Data {
+        try localDataCipher.seal(data, context: encryptionContext(for: id))
+    }
+
+    private func encryptionContext(for id: UUID) -> String {
+        "attachment-v1:\(id.uuidString.lowercased())"
+    }
+
+    private func materializedName(for attachment: Attachment) -> String {
+        "\(attachment.id.uuidString)-\(URL(fileURLWithPath: attachment.filename).lastPathComponent)"
     }
 }
 

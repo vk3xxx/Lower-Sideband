@@ -615,6 +615,43 @@ import Testing
     #expect(attachment.byteCount == 10)
     #expect(FileManager.default.fileExists(atPath: storedURL.path))
     #expect(attachment.contentHash != nil)
+    let storedData = try Data(contentsOf: storedURL)
+    #expect(LocalDataCipher().isEncrypted(storedData))
+    #expect(!storedData.contains(Data("attachment".utf8)))
+    #expect(try await store.read(attachment) == Data("attachment".utf8))
+}
+
+@Test func attachmentStoreMigratesLegacyPlaintextFiles() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let data = Data("legacy attachment".utf8)
+    let id = UUID()
+    let relativePath = "\(id.uuidString)-legacy.txt"
+    let attachment = Attachment(
+        id: id, filename: "legacy.txt", mimeType: "text/plain", byteCount: data.count,
+        relativePath: relativePath, state: .available, progress: 1,
+        contentHash: ReticulumIdentity.fullHash(data)
+    )
+    let storedURL = root.appending(path: relativePath)
+    try data.write(to: storedURL)
+    let store = AttachmentStore(directory: root)
+
+    #expect(try await store.read(attachment) == data)
+    #expect(LocalDataCipher().isEncrypted(try Data(contentsOf: storedURL)))
+}
+
+@Test func attachmentStoreMaterializesAndRemovesTemporaryPlaintext() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AttachmentStore(directory: root)
+    let data = Data("preview only".utf8)
+    let attachment = try await store.save(data: data, filename: "preview.txt", mimeType: "text/plain")
+
+    let previewURL = try await store.materializedURL(for: attachment)
+    #expect(try Data(contentsOf: previewURL) == data)
+    await store.removeMaterializedFile(for: attachment)
+    #expect(!FileManager.default.fileExists(atPath: previewURL.path))
 }
 
 @Test func attachmentStoreRecognizesVoiceMessageAudio() async throws {

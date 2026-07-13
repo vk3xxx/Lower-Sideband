@@ -686,6 +686,7 @@ private struct ConversationView: View {
     @State private var showingFileImporter = false
     @State private var messageSearch = ""
     @State private var previewAttachmentURL: URL?
+    @State private var previewAttachment: Attachment?
     @State private var showingContactQR = false
     @State private var telemetryCapture = TelemetryCapture()
     @State private var voiceRecorder = VoiceMessageRecorder()
@@ -903,6 +904,9 @@ private struct ConversationView: View {
         .onDisappear {
             voiceRecorder.cancel()
             store.conversationDidDisappear(conversation.id)
+            if let previewAttachment {
+                Task { await store.attachmentStore.removeMaterializedFile(for: previewAttachment) }
+            }
         }
         .onChange(of: draft) { _, value in
             if value.count > SidebandMessageLimits.maximumTextCharacters {
@@ -912,6 +916,11 @@ private struct ConversationView: View {
             }
         }
         .quickLookPreview($previewAttachmentURL)
+        .onChange(of: previewAttachmentURL) { _, newValue in
+            guard newValue == nil, let attachment = previewAttachment else { return }
+            previewAttachment = nil
+            Task { await store.attachmentStore.removeMaterializedFile(for: attachment) }
+        }
         .sheet(isPresented: $showingContactQR) {
             if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
                 ContactQRCodeView(name: conversation.displayName, link: contactLink.url)
@@ -1097,7 +1106,18 @@ private struct ConversationView: View {
     private func retry(_ message: Message, _ attachment: Attachment) { Task { await store.retryAttachment(messageID: message.id, attachmentID: attachment.id) } }
     private func cancel(_ message: Message, _ attachment: Attachment) { Task { await store.cancelAttachment(messageID: message.id, attachmentID: attachment.id) } }
     private func preview(_ attachment: Attachment) {
-        Task { previewAttachmentURL = await store.attachmentStore.url(for: attachment) }
+        Task {
+            if let previous = previewAttachment {
+                await store.attachmentStore.removeMaterializedFile(for: previous)
+            }
+            do {
+                previewAttachment = attachment
+                previewAttachmentURL = try await store.attachmentStore.materializedURL(for: attachment)
+            } catch {
+                previewAttachment = nil
+                previewAttachmentURL = nil
+            }
+        }
     }
 
     private var routingStatus: String {
@@ -1168,8 +1188,11 @@ private struct AttachmentShareButton: View {
             }
         }
         .task(id: attachment.relativePath) {
-            let candidate = await store.url(for: attachment)
-            url = FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+            url = try? await store.materializedURL(for: attachment)
+        }
+        .onDisappear {
+            url = nil
+            Task { await store.removeMaterializedFile(for: attachment) }
         }
     }
 }
@@ -1181,6 +1204,7 @@ private struct InlineAudioAttachmentView: View {
     let onRetry: () -> Void
     let onCancel: () -> Void
     @State private var player = AudioAttachmentPlayer()
+    @State private var materializedURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1211,11 +1235,15 @@ private struct InlineAudioAttachmentView: View {
         .frame(maxWidth: 340)
         .task(id: attachment.id) {
             guard attachment.state == .available || attachment.state == .local else { return }
-            let url = await store.url(for: attachment)
-            guard FileManager.default.fileExists(atPath: url.path) else { return }
+            guard let url = try? await store.materializedURL(for: attachment) else { return }
+            materializedURL = url
             player.load(url)
         }
-        .onDisappear { player.stop() }
+        .onDisappear {
+            player.stop()
+            materializedURL = nil
+            Task { await store.removeMaterializedFile(for: attachment) }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Audio attachment \(attachment.filename)")
     }
