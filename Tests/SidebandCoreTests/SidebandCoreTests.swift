@@ -900,6 +900,24 @@ import Testing
     #expect(AutoInterfaceProtocol.dataPort == 42_671)
 }
 
+@Test func automaticGatewaySelectionPrefersLastSuccessfulReticulumService() {
+    let first = LANGateway(
+        name: "Alpha",
+        type: "_reticulum._tcp.",
+        domain: "local.",
+        endpoint: .service(name: "Alpha", type: "_reticulum._tcp", domain: "local", interface: nil)
+    )
+    let preferred = LANGateway(
+        name: "Zulu",
+        type: "_sideband._tcp.",
+        domain: "local.",
+        endpoint: .service(name: "Zulu", type: "_sideband._tcp", domain: "local", interface: nil)
+    )
+    let ordered = AutomaticGatewaySelector.ordered([first, preferred], preferredID: preferred.id)
+    #expect(ordered.map(\.id) == [preferred.id, first.id])
+    #expect(AutomaticGatewaySelector.ordered([first, preferred], preferredID: preferred.id, excluding: [preferred.id]).map(\.id) == [first.id])
+}
+
 @Test func autoInterfaceAuthenticatesAndExpiresPeers() async {
     let address = "fe80::1234"
     let token = AutoInterfaceProtocol.discoveryToken(forIPv6Address: address)

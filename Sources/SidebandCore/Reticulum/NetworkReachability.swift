@@ -15,6 +15,7 @@ public final class NetworkReachability {
 
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "sideband.network.path")
+    private var statusHandler: (@MainActor (Status) -> Void)?
 
     public init() {
         monitor.pathUpdateHandler = { [weak self] path in
@@ -23,7 +24,12 @@ public final class NetworkReachability {
         monitor.start(queue: queue)
     }
 
+    public func setStatusHandler(_ handler: @escaping @MainActor (Status) -> Void) {
+        statusHandler = handler
+    }
+
     private func update(_ path: NWPath) {
+        let previousStatus = status
         status = path.status == .satisfied ? .available : .unavailable
         supportsIPv4 = path.supportsIPv4
         supportsIPv6 = path.supportsIPv6
@@ -32,5 +38,6 @@ public final class NetworkReachability {
         let kinds: [(NWInterface.InterfaceType, String)] = [(.wifi, "Wi-Fi"), (.wiredEthernet, "Ethernet"), (.cellular, "Cellular"), (.loopback, "Loopback"), (.other, "Other")]
         let active = kinds.compactMap { path.usesInterfaceType($0.0) ? $0.1 : nil }
         interfaceSummary = active.isEmpty ? (status == .available ? "Network available" : "No network") : active.joined(separator: ", ")
+        if status != previousStatus { statusHandler?(status) }
     }
 }

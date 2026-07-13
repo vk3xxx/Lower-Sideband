@@ -16,9 +16,15 @@ public final class LANGatewayDiscovery {
     public private(set) var isSearching = false
     public private(set) var error: String?
     private var browsers: [NWBrowser] = []
+    private var resultsByServiceType: [String: [String: LANGateway]] = [:]
+    private var updateHandler: (@MainActor ([LANGateway]) -> Void)?
     private let serviceTypes = ["_reticulum._tcp", "_rns._tcp", "_sideband._tcp"]
 
     public init() {}
+
+    public func setUpdateHandler(_ handler: @escaping @MainActor ([LANGateway]) -> Void) {
+        updateHandler = handler
+    }
 
     public func start() {
         guard browsers.isEmpty else { return }
@@ -33,7 +39,7 @@ public final class LANGatewayDiscovery {
                 }
             }
             browser.browseResultsChangedHandler = { [weak self] results, _ in
-                Task { @MainActor in self?.merge(results) }
+                Task { @MainActor in self?.merge(results, serviceType: type) }
             }
             browsers.append(browser)
             browser.start(queue: DispatchQueue(label: "sideband.lan-discovery.\(type)"))
@@ -43,16 +49,48 @@ public final class LANGatewayDiscovery {
     public func stop() {
         browsers.forEach { $0.cancel() }
         browsers.removeAll()
+        resultsByServiceType.removeAll()
+        gateways.removeAll()
         isSearching = false
     }
 
-    private func merge(_ results: Set<NWBrowser.Result>) {
-        for result in results {
-            guard case let .service(name, type, domain, _) = result.endpoint else { continue }
+    private func merge(_ results: Set<NWBrowser.Result>, serviceType: String) {
+        resultsByServiceType[serviceType] = Dictionary(uniqueKeysWithValues: results.compactMap { result in
+            guard case let .service(name, type, domain, _) = result.endpoint else { return nil }
             let gateway = LANGateway(name: name, type: type, domain: domain, endpoint: result.endpoint)
-            if let index = gateways.firstIndex(where: { $0.id == gateway.id }) { gateways[index] = gateway }
-            else { gateways.append(gateway) }
+            return (gateway.id, gateway)
+        })
+        gateways = resultsByServiceType.values
+            .flatMap(\.values)
+            .sorted { lhs, rhs in
+                let nameOrder = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+                return nameOrder == .orderedSame ? lhs.id < rhs.id : nameOrder == .orderedAscending
+            }
+        updateHandler?(gateways)
+    }
+}
+
+public enum AutomaticGatewaySelector {
+    public static func ordered(_ gateways: [LANGateway], preferredID: String?, excluding attemptedIDs: Set<String> = []) -> [LANGateway] {
+        gateways
+            .filter { !attemptedIDs.contains($0.id) }
+            .sorted { lhs, rhs in
+                let lhsPreferred = lhs.id == preferredID
+                let rhsPreferred = rhs.id == preferredID
+                if lhsPreferred != rhsPreferred { return lhsPreferred }
+                let lhsType = servicePriority(lhs.type)
+                let rhsType = servicePriority(rhs.type)
+                if lhsType != rhsType { return lhsType < rhsType }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    private static func servicePriority(_ type: String) -> Int {
+        switch type {
+        case "_reticulum._tcp.", "_reticulum._tcp": 0
+        case "_rns._tcp.", "_rns._tcp": 1
+        case "_sideband._tcp.", "_sideband._tcp": 2
+        default: 3
         }
-        gateways.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }
