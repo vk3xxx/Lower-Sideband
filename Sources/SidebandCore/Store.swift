@@ -222,6 +222,19 @@ public final class SidebandStore {
         syncUnreadBadge()
     }
 
+    public func clearConversationHistory(_ conversationID: UUID) async {
+        let removedMessages = messages.filter { $0.conversationID == conversationID }
+        for message in removedMessages {
+            for attachment in message.attachments {
+                await cancelActiveResources(messageID: message.id, attachmentID: attachment.id)
+                try? await attachmentStore.remove(attachment)
+            }
+        }
+        messages.removeAll { $0.conversationID == conversationID }
+        markConversationRead(conversationID)
+        save()
+    }
+
     public func setConversationTrusted(_ trusted: Bool, conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].isTrusted = trusted

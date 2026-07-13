@@ -162,6 +162,22 @@ import Testing
     #expect(store.isSourceBlocked(hash.uppercased()))
 }
 
+@MainActor @Test func clearingHistoryKeepsConversationAndRemovesMessages() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer", unreadCount: 3)
+    let message = Message(conversationID: conversation.id, body: "hello", direction: .incoming, state: .delivered)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [message])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+
+    await store.clearConversationHistory(conversation.id)
+    #expect(store.conversations.count == 1)
+    #expect(store.messages.isEmpty)
+    #expect(store.conversations[0].unreadCount == 0)
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

@@ -32,6 +32,7 @@ struct ContentView: View {
     @State private var renamingConversation: Conversation?
     @State private var renameDraft = ""
     @State private var deletingConversation: Conversation?
+    @State private var clearingConversation: Conversation?
 
     var body: some View {
         NavigationSplitView {
@@ -156,6 +157,7 @@ struct ContentView: View {
                             )
                         }
                         .disabled(!store.hasPath(to: conversation.destinationHash) || store.activeLinkHashes.contains(conversation.destinationHash) || store.pendingLinkHashes.contains(conversation.destinationHash))
+                        Button(role: .destructive) { clearingConversation = conversation } label: { Label("Clear History", systemImage: "eraser") }
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }
                 } }
@@ -222,6 +224,15 @@ struct ContentView: View {
             }
         } message: {
             Text("This removes the conversation and its locally stored messages and attachments.")
+        }
+        .alert("Clear Conversation History?", isPresented: Binding(get: { clearingConversation != nil }, set: { if !$0 { clearingConversation = nil } })) {
+            Button("Cancel", role: .cancel) { clearingConversation = nil }
+            Button("Clear", role: .destructive) {
+                if let id = clearingConversation?.id { Task { await store.clearConversationHistory(id) } }
+                clearingConversation = nil
+            }
+        } message: {
+            Text("This permanently removes locally stored messages and attachments while keeping the contact.")
         }
         .task {
             await store.startTransport()
