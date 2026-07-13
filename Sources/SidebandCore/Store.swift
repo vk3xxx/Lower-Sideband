@@ -259,6 +259,10 @@ public final class SidebandStore {
         conversations.first(where: { $0.id == conversationID })?.notificationsMuted == false
     }
 
+    public func isSourceBlocked(_ destinationHash: String) -> Bool {
+        conversations.first(where: { $0.destinationHash == destinationHash.lowercased() })?.isBlocked == true
+    }
+
     public func conversationDidAppear(_ conversationID: UUID) {
         visibleConversationID = conversationID
         if isApplicationActive { markConversationRead(conversationID) }
@@ -889,6 +893,11 @@ public final class SidebandStore {
         guard message.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + sourceIdentity.hash),
               !receivedLXMFIDs.contains(message.messageID.hex) else { return false }
         let source = message.sourceHash.hex
+        if isSourceBlocked(source) {
+            receivedLXMFIDs.insert(message.messageID.hex)
+            UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
+            return true
+        }
         if !conversations.contains(where: { $0.destinationHash == source }) {
             let name = discoveries.first(where: { $0.destinationHash == source })?.announcedDisplayName ?? "Received \(source.prefix(8))"
             _ = addConversation(destinationHash: source, displayName: name, select: false)

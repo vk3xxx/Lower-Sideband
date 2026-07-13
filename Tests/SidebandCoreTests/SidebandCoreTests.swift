@@ -152,6 +152,16 @@ import Testing
     #expect(reloaded.messages.isEmpty)
 }
 
+@MainActor @Test func blockedSourceIsRejectedByInboundPolicy() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    let hash = "0123456789abcdef0123456789abcdef"
+    #expect(store.addConversation(destinationHash: hash, displayName: "Peer"))
+    #expect(!store.isSourceBlocked(hash))
+    store.setConversationBlocked(true, conversationID: store.conversations[0].id)
+    #expect(store.isSourceBlocked(hash.uppercased()))
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
