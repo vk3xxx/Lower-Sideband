@@ -10,6 +10,15 @@ import UIKit
 private typealias PlatformImage = UIImage
 #endif
 
+private func copyToSystemClipboard(_ text: String) {
+    #if os(macOS)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    #else
+    UIPasteboard.general.string = text
+    #endif
+}
+
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var store: SidebandStore
@@ -50,7 +59,12 @@ struct ContentView: View {
                                 .background(Color.accentColor, in: Capsule())
                                 .accessibilityLabel("\(conversation.unreadCount) unread messages")
                         }
-                    }.padding(.vertical, 4).tag(conversation.id)
+                    }
+                    .padding(.vertical, 4)
+                    .tag(conversation.id)
+                    .contextMenu {
+                        Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+                    }
                 } }
                 if !store.discoveries.isEmpty {
                     Section("Discovered") {
@@ -366,7 +380,12 @@ private struct ConversationView: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text(conversation.displayName).font(.title2.bold())
-                    Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    Text(conversation.destinationHash)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .contextMenu {
+                            Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+                        }
                 }
                 Spacer()
                 TextField("Search messages", text: $messageSearch)
@@ -412,7 +431,7 @@ private struct ConversationView: View {
                                 .background(message.direction == .outgoing ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                                 .contextMenu {
                                     if !message.body.isEmpty {
-                                        Button { copyToClipboard(message.body) } label: { Label("Copy Message", systemImage: "doc.on.doc") }
+                                        Button { copyToSystemClipboard(message.body) } label: { Label("Copy Message", systemImage: "doc.on.doc") }
                                     }
                                 }
                                 if message.direction == .incoming { Spacer(minLength: 80) }
@@ -471,15 +490,6 @@ private struct ConversationView: View {
             await Task.yield()
             proxy.scrollTo(bottomAnchorID, anchor: .bottom)
         }
-    }
-
-    private func copyToClipboard(_ text: String) {
-        #if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        #else
-        UIPasteboard.general.string = text
-        #endif
     }
 
     private func send() {
