@@ -182,6 +182,18 @@ public final class SidebandStore {
         await attemptDelivery(for: messages[messageIndex].conversationID)
     }
 
+    public func retryMessage(_ messageID: UUID) async {
+        guard let index = messages.firstIndex(where: { $0.id == messageID && $0.direction == .outgoing }) else { return }
+        for attachmentIndex in messages[index].attachments.indices where messages[index].attachments[attachmentIndex].state == .failed {
+            messages[index].attachments[attachmentIndex].state = .queued
+            messages[index].attachments[attachmentIndex].progress = 0
+        }
+        messages[index].state = .queued
+        let conversationID = messages[index].conversationID
+        save()
+        await attemptDelivery(for: conversationID)
+    }
+
     public func cancelAttachment(messageID: UUID, attachmentID: UUID) async {
         await cancelActiveResources(messageID: messageID, attachmentID: attachmentID)
         updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .failed, progress: 0)
@@ -1004,6 +1016,7 @@ public final class SidebandStore {
               let attachmentIndex = messages[messageIndex].attachments.firstIndex(where: { $0.id == attachmentID }) else { return }
         messages[messageIndex].attachments[attachmentIndex].state = state
         messages[messageIndex].attachments[attachmentIndex].progress = progress
+        if state == .failed { messages[messageIndex].state = .failed }
         save()
     }
 

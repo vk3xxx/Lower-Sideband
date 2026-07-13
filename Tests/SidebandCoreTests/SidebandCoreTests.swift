@@ -63,6 +63,22 @@ import Testing
     #expect(store.latestMessage(for: conversation.id)?.id == newer.id)
 }
 
+@MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let attachment = Attachment(filename: "retry.bin", byteCount: 1, relativePath: "retry.bin", state: .failed)
+    let message = Message(conversationID: conversation.id, body: "retry", direction: .outgoing, state: .failed, attachments: [attachment])
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [message])).write(to: url)
+
+    let store = SidebandStore(persistenceURL: url)
+    await store.retryMessage(message.id)
+    #expect(store.messages[0].state == .queued)
+    #expect(store.messages[0].attachments[0].state == .queued)
+}
+
 @MainActor @Test func recoversUnprovedSentOutboxAcrossRelaunch() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

@@ -433,6 +433,9 @@ private struct ConversationView: View {
                                     if !message.body.isEmpty {
                                         Button { copyToSystemClipboard(message.body) } label: { Label("Copy Message", systemImage: "doc.on.doc") }
                                     }
+                                    if message.direction == .outgoing && (message.state == .failed || message.state == .queued) {
+                                        Button { Task { await store.retryMessage(message.id) } } label: { Label("Retry Now", systemImage: "arrow.clockwise") }
+                                    }
                                 }
                                 if message.direction == .incoming { Spacer(minLength: 80) }
                             }
