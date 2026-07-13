@@ -507,7 +507,12 @@ private struct ConversationView: View {
                             ForEach(pendingAttachments) { attachment in
                                 HStack(spacing: 5) {
                                     Image(systemName: "paperclip")
-                                    Text(attachment.filename).lineLimit(1)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(attachment.filename).lineLimit(1)
+                                        Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.byteCount), countStyle: .file))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
                                     Button { pendingAttachments.removeAll { $0.id == attachment.id } } label: { Image(systemName: "xmark.circle.fill") }
                                         .buttonStyle(.plain)
                                 }.font(.caption).padding(6).background(.quaternary, in: Capsule())
