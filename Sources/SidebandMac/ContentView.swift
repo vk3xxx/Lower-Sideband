@@ -80,6 +80,13 @@ struct ContentView: View {
                             }
                         }
                         Spacer()
+                        let failedCount = store.failedMessageCount(for: conversation.id)
+                        if failedCount > 0 {
+                            Label("\(failedCount)", systemImage: "exclamationmark.circle.fill")
+                                .font(.caption.bold())
+                                .foregroundStyle(.red)
+                                .accessibilityLabel("\(failedCount) failed messages")
+                        }
                         if conversation.unreadCount > 0 {
                             Text(conversation.unreadCount, format: .number)
                                 .font(.caption.bold())
