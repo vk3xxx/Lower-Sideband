@@ -127,6 +127,17 @@ public final class SidebandStore {
         messages.lazy.filter { $0.conversationID == conversationID }.max { $0.timestamp < $1.timestamp }
     }
 
+    public func conversationTranscript(_ conversationID: UUID) -> String? {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        let formatter = ISO8601DateFormatter()
+        let lines = messages(for: conversationID).map { message in
+            let sender = message.direction == .outgoing ? "Me" : conversation.displayName
+            let attachments = message.attachments.map { "[Attachment: \($0.filename)]" }.joined(separator: " ")
+            return "[\(formatter.string(from: message.timestamp))] \(sender): \([message.body, attachments].filter { !$0.isEmpty }.joined(separator: " "))"
+        }
+        return (["Conversation with \(conversation.displayName)", "Destination: \(conversation.destinationHash)", ""] + lines).joined(separator: "\n")
+    }
+
     @discardableResult
     public func addConversation(destinationHash: String, displayName: String, select: Bool = true) -> Bool {
         let hash = destinationHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

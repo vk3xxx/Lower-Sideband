@@ -425,6 +425,12 @@ private struct ConversationView: View {
                 TextField("Search messages", text: $messageSearch)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 220)
+                if let transcript = store.conversationTranscript(conversation.id) {
+                    ShareLink(item: transcript, subject: Text("Sideband conversation with \(conversation.displayName)")) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .help("Export conversation transcript")
+                }
                 Label(routingStatus, systemImage: routingIcon)
                     .font(.caption).foregroundStyle(.secondary)
             }.padding()

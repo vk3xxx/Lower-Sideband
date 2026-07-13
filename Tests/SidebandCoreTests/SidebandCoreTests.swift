@@ -63,6 +63,21 @@ import Testing
     #expect(store.latestMessage(for: conversation.id)?.id == newer.id)
 }
 
+@MainActor @Test func conversationTranscriptIncludesMessagesAndAttachments() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let attachment = Attachment(filename: "photo.jpg", byteCount: 1, relativePath: "photo.jpg", state: .available)
+    let message = Message(conversationID: conversation.id, body: "hello", timestamp: Date(timeIntervalSince1970: 0), direction: .incoming, state: .delivered, attachments: [attachment])
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [message])).write(to: url)
+
+    let transcript = try #require(SidebandStore(persistenceURL: url).conversationTranscript(conversation.id))
+    #expect(transcript.contains("Peer: hello [Attachment: photo.jpg]"))
+    #expect(transcript.contains(conversation.destinationHash))
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
