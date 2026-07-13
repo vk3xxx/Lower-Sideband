@@ -42,6 +42,7 @@ xcodebuild \
 
 APP="$DERIVED_DATA/Build/Products/$SDK_DIRECTORY/Sideband.app"
 PLIST="$APP/Info.plist"
+CORE_PLIST="$APP/Frameworks/SidebandCore.framework/Info.plist"
 APP_PRIVACY="$APP/PrivacyInfo.xcprivacy"
 CORE_PRIVACY="$APP/Frameworks/SidebandCore.framework/PrivacyInfo.xcprivacy"
 
@@ -51,6 +52,7 @@ if [[ ! -d "$APP" ]]; then
 fi
 
 plutil -lint "$PLIST" >/dev/null
+plutil -lint "$CORE_PLIST" >/dev/null
 
 for privacy_manifest in "$APP_PRIVACY" "$CORE_PRIVACY"; do
     if [[ ! -f "$privacy_manifest" ]]; then
@@ -84,6 +86,20 @@ assert_plist_value NSBonjourServices:0 _reticulum._tcp
 assert_plist_value NSBonjourServices:1 _rns._tcp
 assert_plist_value NSBonjourServices:2 _sideband._tcp
 assert_plist_value BGTaskSchedulerPermittedIdentifiers:0 com.supes.MacSideband.refresh
+
+assert_core_plist_value() {
+    local key="$1"
+    local expected="$2"
+    local actual
+    actual="$(/usr/libexec/PlistBuddy -c "Print :$key" "$CORE_PLIST")"
+    if [[ "$actual" != "$expected" ]]; then
+        echo "SidebandCore Info.plist $key is '$actual'; expected '$expected'." >&2
+        exit 1
+    fi
+}
+
+assert_core_plist_value CFBundleShortVersionString 0.2.0
+assert_core_plist_value CFBundleVersion 2
 
 for required_key in \
     NSLocalNetworkUsageDescription \

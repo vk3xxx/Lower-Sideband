@@ -20,6 +20,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core
+        MARKETING_VERSION: 0.2.0
+        CURRENT_PROJECT_VERSION: 2
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandIOS:
