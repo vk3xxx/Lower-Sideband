@@ -221,7 +221,10 @@ import Testing
     #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
     let id = store.conversations[0].id
     store.setConversationNotificationsMuted(true, conversationID: id)
+    #expect(!store.shouldNotifyIncoming(for: id))
     #expect(SidebandStore(persistenceURL: url).conversations[0].notificationsMuted)
+    store.setConversationNotificationsMuted(false, conversationID: id)
+    #expect(store.shouldNotifyIncoming(for: id))
 }
 
 @MainActor @Test func conversationDraftPersistsAndClears() {

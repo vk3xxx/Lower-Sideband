@@ -225,6 +225,10 @@ public final class SidebandStore {
         save()
     }
 
+    public func shouldNotifyIncoming(for conversationID: UUID) -> Bool {
+        conversations.first(where: { $0.id == conversationID })?.notificationsMuted == false
+    }
+
     public func conversationDidAppear(_ conversationID: UUID) {
         visibleConversationID = conversationID
         if isApplicationActive { markConversationRead(conversationID) }
@@ -838,7 +842,9 @@ public final class SidebandStore {
         receivedLXMFIDs.insert(message.messageID.hex)
         UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
         save()
-        Task { await notifications.notifyIncoming(title: conversation.displayName, body: body) }
+        if shouldNotifyIncoming(for: conversation.id) {
+            Task { await notifications.notifyIncoming(title: conversation.displayName, body: body) }
+        }
         return true
     }
 
@@ -1063,7 +1069,9 @@ public final class SidebandStore {
         }
         incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
         save()
-        await notifications.notifyIncoming(title: conversation.displayName, body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody)
+        if shouldNotifyIncoming(for: conversation.id) {
+            await notifications.notifyIncoming(title: conversation.displayName, body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody)
+        }
     }
 
     private func identityForIncomingResource(envelope: LXMFResourceEnvelope, session: ReticulumLinkSession) -> ReticulumIdentity? {
