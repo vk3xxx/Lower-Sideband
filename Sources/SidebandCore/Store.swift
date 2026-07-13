@@ -130,6 +130,10 @@ public final class SidebandStore {
         messages.lazy.filter { $0.conversationID == conversationID }.max { $0.timestamp < $1.timestamp }
     }
 
+    public func failedMessageCount(for conversationID: UUID) -> Int {
+        messages.count { $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .failed }
+    }
+
     public func conversationTranscript(_ conversationID: UUID) -> String? {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
         let formatter = ISO8601DateFormatter()
@@ -338,6 +342,22 @@ public final class SidebandStore {
         }
         messages[index].state = .queued
         let conversationID = messages[index].conversationID
+        save()
+        await attemptDelivery(for: conversationID)
+    }
+
+    public func retryAllFailedMessages(in conversationID: UUID) async {
+        let failedIndices = messages.indices.filter {
+            messages[$0].conversationID == conversationID && messages[$0].direction == .outgoing && messages[$0].state == .failed
+        }
+        guard !failedIndices.isEmpty else { return }
+        for index in failedIndices {
+            messages[index].state = .queued
+            for attachmentIndex in messages[index].attachments.indices where messages[index].attachments[attachmentIndex].state == .failed {
+                messages[index].attachments[attachmentIndex].state = .queued
+                messages[index].attachments[attachmentIndex].progress = 0
+            }
+        }
         save()
         await attemptDelivery(for: conversationID)
     }

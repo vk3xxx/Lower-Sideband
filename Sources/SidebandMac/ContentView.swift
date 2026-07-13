@@ -157,6 +157,11 @@ struct ContentView: View {
                             )
                         }
                         .disabled(!store.hasPath(to: conversation.destinationHash) || store.activeLinkHashes.contains(conversation.destinationHash) || store.pendingLinkHashes.contains(conversation.destinationHash))
+                        if store.failedMessageCount(for: conversation.id) > 0 {
+                            Button { Task { await store.retryAllFailedMessages(in: conversation.id) } } label: {
+                                Label("Retry All Failed", systemImage: "arrow.clockwise")
+                            }
+                        }
                         Button(role: .destructive) { clearingConversation = conversation } label: { Label("Clear History", systemImage: "eraser") }
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }

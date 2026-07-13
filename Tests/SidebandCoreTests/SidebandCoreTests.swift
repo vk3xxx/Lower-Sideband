@@ -178,6 +178,23 @@ import Testing
     #expect(store.conversations[0].unreadCount == 0)
 }
 
+@MainActor @Test func retryAllFailedMessagesRequeuesConversationOutbox() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let failed = Message(conversationID: conversation.id, body: "one", direction: .outgoing, state: .failed)
+    let delivered = Message(conversationID: conversation.id, body: "two", direction: .outgoing, state: .delivered)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [failed, delivered])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.failedMessageCount(for: conversation.id) == 1)
+
+    await store.retryAllFailedMessages(in: conversation.id)
+    #expect(store.messages.first(where: { $0.id == failed.id })?.state == .queued)
+    #expect(store.messages.first(where: { $0.id == delivered.id })?.state == .delivered)
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
