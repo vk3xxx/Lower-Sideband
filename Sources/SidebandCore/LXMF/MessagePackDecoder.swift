@@ -45,8 +45,14 @@ public enum MessagePackDecoder {
         case 0xcd: return .unsigned(try readUInt(2, data, cursor: &cursor))
         case 0xce: return .unsigned(try readUInt(4, data, cursor: &cursor))
         case 0xcf: return .unsigned(try readUInt(8, data, cursor: &cursor))
+        case 0xd0: return .signed(Int64(Int8(bitPattern: UInt8(try readUInt(1, data, cursor: &cursor)))))
+        case 0xd1: return .signed(Int64(Int16(bitPattern: UInt16(try readUInt(2, data, cursor: &cursor)))))
+        case 0xd2: return .signed(Int64(Int32(bitPattern: UInt32(try readUInt(4, data, cursor: &cursor)))))
+        case 0xd3: return .signed(Int64(bitPattern: try readUInt(8, data, cursor: &cursor)))
         case 0xdc: return .array(try (0..<Int(try readUInt(2, data, cursor: &cursor))).map { _ in try parse(data, cursor: &cursor) })
         case 0xdd: return .array(try (0..<Int(try readUInt(4, data, cursor: &cursor))).map { _ in try parse(data, cursor: &cursor) })
+        case 0xde: return .map(try (0..<Int(try readUInt(2, data, cursor: &cursor))).map { _ in (try parse(data, cursor: &cursor), try parse(data, cursor: &cursor)) })
+        case 0xdf: return .map(try (0..<Int(try readUInt(4, data, cursor: &cursor))).map { _ in (try parse(data, cursor: &cursor), try parse(data, cursor: &cursor)) })
         default: throw DecodeError.unsupported(marker)
         }
     }

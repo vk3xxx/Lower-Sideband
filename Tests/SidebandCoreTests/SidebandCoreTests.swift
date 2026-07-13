@@ -40,6 +40,19 @@ import Testing
     #expect(!DestinationHash.isValid("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
 }
 
+@Test func messagePackIntegerMapsAndSignedValuesRoundTrip() throws {
+    let packed = MessagePack.map([
+        (UInt64(1), MessagePack.signed(-42)),
+        (UInt64(2), MessagePack.bool(true)),
+        (UInt64(3), MessagePack.null)
+    ])
+    #expect(try MessagePackDecoder.decode(packed) == .map([
+        (.unsigned(1), .signed(-42)),
+        (.unsigned(2), .bool(true)),
+        (.unsigned(3), .null)
+    ]))
+}
+
 @Test func sidebandContactLinksRoundTripNameAndDestination() throws {
     let hash = "0123456789abcdef0123456789abcdef"
     let contact = try #require(SidebandContactLink(destinationHash: hash, displayName: "Mesh Peer"))

@@ -14,10 +14,16 @@ public enum MessagePack {
     }
 
     public static let null = Data([0xc0])
+    public static func bool(_ value: Bool) -> Data { Data([value ? 0xc3 : 0xc2]) }
     public static func map(_ entries: [(String, Data)]) -> Data {
-        precondition(entries.count < 16)
-        var output = Data([0x80 | UInt8(entries.count)])
-        for (key, value) in entries { output.append(string(key)); output.append(value) }
+        map(entries.map { (string($0.0), $0.1) })
+    }
+    public static func map(_ entries: [(UInt64, Data)]) -> Data {
+        map(entries.map { (unsigned($0.0), $0.1) })
+    }
+    public static func map(_ entries: [(Data, Data)]) -> Data {
+        var output = collectionHeader(fixedBase: 0x80, count: entries.count, marker16: 0xde, marker32: 0xdf)
+        for (key, value) in entries { output.append(key); output.append(value) }
         return output
     }
     public static func string(_ value: String) -> Data {
@@ -32,6 +38,21 @@ public enum MessagePack {
         if value <= 0xffff_ffff { return Data([0xce, UInt8(truncatingIfNeeded: value >> 24), UInt8(truncatingIfNeeded: value >> 16), UInt8(truncatingIfNeeded: value >> 8), UInt8(truncatingIfNeeded: value)]) }
         var big = value.bigEndian
         return Data([0xcf]) + withUnsafeBytes(of: &big) { Data($0) }
+    }
+    public static func signed(_ value: Int64) -> Data {
+        if value >= 0 { return unsigned(UInt64(value)) }
+        if value >= -32 { return Data([UInt8(bitPattern: Int8(value))]) }
+        if value >= Int64(Int8.min) { return Data([0xd0, UInt8(bitPattern: Int8(value))]) }
+        if value >= Int64(Int16.min) {
+            let bits = UInt16(bitPattern: Int16(value))
+            return Data([0xd1, UInt8(bits >> 8), UInt8(truncatingIfNeeded: bits)])
+        }
+        if value >= Int64(Int32.min) {
+            let bits = UInt32(bitPattern: Int32(value))
+            return Data([0xd2, UInt8(bits >> 24), UInt8(bits >> 16), UInt8(bits >> 8), UInt8(truncatingIfNeeded: bits)])
+        }
+        var bits = UInt64(bitPattern: value).bigEndian
+        return Data([0xd3]) + withUnsafeBytes(of: &bits) { Data($0) }
     }
     public static func lxmfPayload(timestamp: Double, title: Data, content: Data) -> Data {
         var output = Data([0x94])
@@ -50,6 +71,12 @@ public enum MessagePack {
             return Data([0xc5, UInt8((data.count >> 8) & 0xff), UInt8(data.count & 0xff)]) + data
         }
         return Data([0xc6, UInt8((data.count >> 24) & 0xff), UInt8((data.count >> 16) & 0xff), UInt8((data.count >> 8) & 0xff), UInt8(data.count & 0xff)]) + data
+    }
+
+    private static func collectionHeader(fixedBase: UInt8, count: Int, marker16: UInt8, marker32: UInt8) -> Data {
+        if count < 16 { return Data([fixedBase | UInt8(count)]) }
+        if count <= 0xffff { return Data([marker16, UInt8(count >> 8), UInt8(truncatingIfNeeded: count)]) }
+        return Data([marker32, UInt8(count >> 24), UInt8(count >> 16), UInt8(count >> 8), UInt8(truncatingIfNeeded: count)])
     }
 }
 
