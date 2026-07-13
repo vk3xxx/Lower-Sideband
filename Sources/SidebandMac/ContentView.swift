@@ -119,6 +119,15 @@ struct ContentView: View {
                             Label(store.isPathPending(to: conversation.destinationHash) ? "Finding Route" : "Request Path", systemImage: "point.3.connected.trianglepath.dotted")
                         }
                         .disabled(store.networkState != .ready || store.isPathPending(to: conversation.destinationHash))
+                        Button {
+                            Task { await store.requestLink(to: conversation.destinationHash) }
+                        } label: {
+                            Label(
+                                store.activeLinkHashes.contains(conversation.destinationHash) ? "Encrypted Link Active" : (store.pendingLinkHashes.contains(conversation.destinationHash) ? "Establishing Link" : "Establish Encrypted Link"),
+                                systemImage: "lock.shield"
+                            )
+                        }
+                        .disabled(!store.hasPath(to: conversation.destinationHash) || store.activeLinkHashes.contains(conversation.destinationHash) || store.pendingLinkHashes.contains(conversation.destinationHash))
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }
                 } }
