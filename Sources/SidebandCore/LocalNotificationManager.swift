@@ -37,6 +37,11 @@ public final class LocalNotificationManager {
         } catch { }
     }
 
+    public func setBadgeCount(_ count: Int) async {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        do { try await UNUserNotificationCenter.current().setBadgeCount(max(0, count)) } catch { }
+    }
+
     private func refreshAuthorization() async {
         let status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
         authorizationDescription = switch status {

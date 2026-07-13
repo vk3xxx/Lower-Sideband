@@ -110,11 +110,14 @@ public final class SidebandStore {
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
         backgroundRefresh.register { [weak self] in await self?.performBackgroundRefresh() }
         Task { try? await resourceStagingStore.removeStale(olderThan: Date(timeIntervalSinceNow: -86_400)) }
+        syncUnreadBadge()
     }
 
     public var selectedConversation: Conversation? {
         conversations.first { $0.id == selectedConversationID }
     }
+
+    public var totalUnreadCount: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
 
     public func messages(for conversationID: UUID) -> [Message] {
         messages.filter { $0.conversationID == conversationID }.sorted { $0.timestamp < $1.timestamp }
@@ -146,6 +149,7 @@ public final class SidebandStore {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }), conversations[index].unreadCount > 0 else { return }
         conversations[index].unreadCount = 0
         save()
+        syncUnreadBadge()
     }
 
     @discardableResult
@@ -171,6 +175,7 @@ public final class SidebandStore {
         if visibleConversationID == conversationID { visibleConversationID = nil }
         if selectedConversationID == conversationID { selectedConversationID = conversations.first?.id }
         save()
+        syncUnreadBadge()
     }
 
     public func setConversationTrusted(_ trusted: Bool, conversationID: UUID) {
@@ -1144,6 +1149,12 @@ public final class SidebandStore {
             conversations[index].unreadCount += 1
         }
         touch(conversationID)
+        syncUnreadBadge()
+    }
+
+    private func syncUnreadBadge() {
+        let count = totalUnreadCount
+        Task { await notifications.setBadgeCount(count) }
     }
 
     private func updateMessage(_ id: UUID, state: Message.DeliveryState) {

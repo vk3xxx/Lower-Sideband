@@ -119,11 +119,13 @@ import Testing
     try encoder.encode(AppSnapshot(conversations: [selected, unread])).write(to: url)
 
     let store = SidebandStore(persistenceURL: url)
+    #expect(store.totalUnreadCount == 3)
     #expect(store.conversations.first(where: { $0.id == unread.id })?.unreadCount == 3)
     store.selectedConversationID = unread.id
     #expect(store.conversations.first(where: { $0.id == unread.id })?.unreadCount == 3)
     store.conversationDidAppear(unread.id)
     #expect(store.conversations.first(where: { $0.id == unread.id })?.unreadCount == 0)
+    #expect(store.totalUnreadCount == 0)
 
     let reloaded = SidebandStore(persistenceURL: url)
     #expect(reloaded.conversations.first(where: { $0.id == unread.id })?.unreadCount == 0)
