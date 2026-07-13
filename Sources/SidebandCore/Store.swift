@@ -185,6 +185,15 @@ public final class SidebandStore {
         return true
     }
 
+    @discardableResult
+    public func openContactLink(_ url: URL) -> Bool {
+        guard let contact = SidebandContactLink(url: url) else {
+            lastError = "This is not a valid Sideband contact link."
+            return false
+        }
+        return addConversation(destinationHash: contact.destinationHash, displayName: contact.displayName ?? "")
+    }
+
     public func markConversationRead(_ conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }), conversations[index].unreadCount > 0 else { return }
         conversations[index].unreadCount = 0

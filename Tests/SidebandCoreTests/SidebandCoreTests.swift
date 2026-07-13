@@ -51,6 +51,16 @@ import Testing
     #expect(SidebandContactLink(destinationHash: "invalid") == nil)
 }
 
+@MainActor @Test func storeOpensSidebandContactLinks() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    let contactURL = try #require(URL(string: "sideband://contact/0123456789abcdef0123456789abcdef?name=Deep%20Link"))
+
+    #expect(store.openContactLink(contactURL))
+    #expect(store.selectedConversation?.displayName == "Deep Link")
+    #expect(!store.openContactLink(URL(string: "https://example.com")!))
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
