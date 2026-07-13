@@ -105,6 +105,17 @@ import Testing
     #expect(store.localContactLink.displayName == "My Device")
 }
 
+@MainActor @Test func diagnosticsReportContainsSafeRoutingContext() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    let report = store.networkDiagnosticsReport
+
+    #expect(report.contains("Sideband Network Diagnostics"))
+    #expect(report.contains("Local destination: \(store.localDeliveryHash)"))
+    #expect(report.contains("TCP endpoint:"))
+    #expect(!report.localizedCaseInsensitiveContains("private key"))
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

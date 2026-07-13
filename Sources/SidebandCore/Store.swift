@@ -573,6 +573,32 @@ public final class SidebandStore {
     }
     public var localAnnounceAppData: Data { ReticulumAnnounceBuilder.lxmfAppData(displayName: localDisplayName) }
     public var localContactLink: SidebandContactLink { SidebandContactLink(destinationHash: localDeliveryHash, displayName: localDisplayName)! }
+    public var networkDiagnosticsReport: String {
+        let state: String
+        switch networkState {
+        case .stopped: state = "stopped"
+        case .connecting: state = "connecting"
+        case .ready: state = "ready"
+        case .failed(let reason): state = "failed: \(reason)"
+        }
+        return [
+            "Sideband Network Diagnostics",
+            "Generated: \(ISO8601DateFormatter().string(from: .now))",
+            "Local name: \(localDisplayName)",
+            "Local destination: \(localDeliveryHash)",
+            "Network state: \(state)",
+            "TCP endpoint: \(activeNetworkHost ?? networkHost):\(networkPort)",
+            "Prefer IPv6: \(preferIPv6)",
+            "System interface: \(reachability.interfaceSummary)",
+            "Packets received: \(receivedPacketCount)",
+            "Known paths: \(knownPathCount)",
+            "Discoveries: \(discoveries.count) (\(validatedDiscoveryCount) validated)",
+            "Links: \(activeLinkCount) active, \(pendingLinkCount) pending",
+            "Messages: \(messages.count) total, \(messages.count(where: { $0.state == .queued })) queued, \(messages.count(where: { $0.state == .failed })) failed",
+            "Propagation node: \(propagationNodeHash.isEmpty ? "not configured" : propagationNodeHash)",
+            "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")"
+        ].joined(separator: "\n")
+    }
 
     public func startGatewayDiscovery() { lanDiscovery.start() }
     public func stopGatewayDiscovery() { lanDiscovery.stop() }
