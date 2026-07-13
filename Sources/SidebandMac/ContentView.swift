@@ -281,6 +281,11 @@ private struct NetworkView: View {
                 GridRow { Text("Reconnect"); Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) })) }
                 GridRow { Text("Transport"); Text("TCP · HDLC" + (store.activeNetworkHost.map { " · \($0)" } ?? "")).foregroundStyle(.secondary) }
                 GridRow { Text("System network"); Text(reachabilityText).foregroundStyle(.secondary) }
+                GridRow {
+                    Text("Last connected")
+                    Text(store.lastNetworkReadyAt?.formatted(date: .abbreviated, time: .standard) ?? "Never")
+                        .foregroundStyle(.secondary)
+                }
             }.textFieldStyle(.roundedBorder).padding(6)
             }
             GroupBox("Routing") {

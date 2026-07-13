@@ -26,6 +26,7 @@ public final class SidebandStore {
     public private(set) var inboundLinksAccepted = 0
     public private(set) var opportunisticDeliveriesReceived = 0
     public private(set) var lastPropagationSync: Date?
+    public private(set) var lastNetworkReadyAt: Date?
     public private(set) var deliveryTimeoutCount = 0
     public private(set) var reconnectDelaySeconds: Int?
     public private(set) var recoveredOutboundCount = 0
@@ -106,6 +107,7 @@ public final class SidebandStore {
         autoConnectEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoConnect")
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
+        lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         receivedLXMFIDs = Set(UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? [])
         load()
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
@@ -533,6 +535,8 @@ public final class SidebandStore {
         guard generation == networkConnectionGeneration else { return }
         networkState = state
         if state == .ready {
+            lastNetworkReadyAt = .now
+            UserDefaults.standard.set(lastNetworkReadyAt, forKey: "reticulumLastReadyAt")
             reconnectTask?.cancel()
             reconnectTask = nil
             reconnectAttempt = 0
