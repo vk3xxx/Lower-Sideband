@@ -807,13 +807,16 @@ private struct ConversationView: View {
         for url in urls {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            if let attachment = try? await store.attachmentStore.importFile(from: url) {
+            do {
+                let attachment = try await store.attachmentStore.importFile(from: url)
                 if store.validateAttachmentIsUnique(attachment, among: pendingAttachments),
                    store.validateAttachmentTotal(pendingAttachments + [attachment]) {
                     pendingAttachments.append(attachment)
                 } else {
                     try? await store.attachmentStore.remove(attachment)
                 }
+            } catch {
+                store.reportAttachmentImportFailure(filename: url.lastPathComponent, error: error)
             }
         }
     }

@@ -217,6 +217,15 @@ import Testing
     #expect(store.lastError?.contains("Combined attachments") == true)
 }
 
+@MainActor @Test func attachmentImportFailuresArePresentedToTheUser() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    store.reportAttachmentImportFailure(filename: "large.bin", error: AttachmentStoreError.tooLarge)
+
+    #expect(store.lastError?.contains("large.bin") == true)
+    #expect(store.lastError?.contains("maximum attachment size") == true)
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

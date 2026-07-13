@@ -348,6 +348,10 @@ public final class SidebandStore {
         return true
     }
 
+    public func reportAttachmentImportFailure(filename: String, error: Error) {
+        lastError = "Could not attach \(filename): \(error.localizedDescription)"
+    }
+
     public func retryAttachment(messageID: UUID, attachmentID: UUID) async {
         guard let messageIndex = messages.firstIndex(where: { $0.id == messageID }),
               let attachmentIndex = messages[messageIndex].attachments.firstIndex(where: { $0.id == attachmentID }) else { return }

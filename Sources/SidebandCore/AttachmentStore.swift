@@ -41,4 +41,13 @@ public actor AttachmentStore {
     public func remove(_ attachment: Attachment) throws { try FileManager.default.removeItem(at: url(for: attachment)) }
 }
 
-public enum AttachmentStoreError: Error { case tooLarge, integrityMismatch }
+public enum AttachmentStoreError: LocalizedError {
+    case tooLarge, integrityMismatch
+
+    public var errorDescription: String? {
+        switch self {
+        case .tooLarge: "The file exceeds the maximum attachment size."
+        case .integrityMismatch: "The attachment failed its integrity check."
+        }
+    }
+}
