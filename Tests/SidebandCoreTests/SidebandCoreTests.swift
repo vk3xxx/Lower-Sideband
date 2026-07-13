@@ -90,6 +90,21 @@ import Testing
     #expect(LXMFAnnounceInfo(appData: store.localAnnounceAppData)?.displayName == "Native iPhone")
 }
 
+@MainActor @Test func localContactLinkContainsDeliveryDestination() {
+    let defaults = UserDefaults.standard
+    let previous = defaults.string(forKey: "lxmfLocalDisplayName")
+    defer {
+        if let previous { defaults.set(previous, forKey: "lxmfLocalDisplayName") }
+        else { defaults.removeObject(forKey: "lxmfLocalDisplayName") }
+    }
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    store.setLocalDisplayName("My Device")
+
+    #expect(store.localContactLink.destinationHash == store.localDeliveryHash)
+    #expect(store.localContactLink.displayName == "My Device")
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

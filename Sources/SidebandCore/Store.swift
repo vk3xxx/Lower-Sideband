@@ -572,6 +572,7 @@ public final class SidebandStore {
         return ReticulumIdentity.truncatedHash(nameHash + messagingIdentity.hash).hex
     }
     public var localAnnounceAppData: Data { ReticulumAnnounceBuilder.lxmfAppData(displayName: localDisplayName) }
+    public var localContactLink: SidebandContactLink { SidebandContactLink(destinationHash: localDeliveryHash, displayName: localDisplayName)! }
 
     public func startGatewayDiscovery() { lanDiscovery.start() }
     public func stopGatewayDiscovery() { lanDiscovery.stop() }
