@@ -179,7 +179,14 @@ struct ContentView: View {
                             Button { store.addConversation(from: discovery) } label: {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(discovery.announcedDisplayName ?? discovery.destinationHash).font(.caption.monospaced()).lineLimit(1)
-                                    Text("\(discovery.hops) hops · \(discovery.isValidated ? "validated" : "unverified")").font(.caption2).foregroundStyle(.secondary)
+                                    Text("\(discovery.hops) hops · \(discovery.isValidated ? "validated" : "unverified") · \(discovery.packetCount) packets")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                    HStack(spacing: 3) {
+                                        Text("Last seen")
+                                        Text(discovery.lastSeen, style: .relative)
+                                    }
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
                                 }
                             }
                             .buttonStyle(.plain)
