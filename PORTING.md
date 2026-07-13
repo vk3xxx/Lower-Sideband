@@ -40,6 +40,8 @@
 | Reticulum Resource advertisements, requests, parts, proofs and cancellation | `ReticulumResource*` | Implemented, Python-fixture tested |
 | Resource hash-map updates and multi-segment transfer | `ReticulumResourceHashMapUpdate`, segment planner/staging | Implemented |
 | Attachment sending, receiving, progress and inline images | `SidebandStore`, SwiftUI attachment views | Implemented for native Swift peers |
+| Portable contact links and QR display | `SidebandContactLink`, CoreImage, SwiftUI contact actions | Implemented; camera scanning remains future work |
+| Conversation archive, block, cleanup and retry controls | `Conversation`, `SidebandStore`, SwiftUI context menus | Implemented |
 | Reticulum routing/announces/link | Native Swift transport engine | Implemented for current TCP and AutoInterface scope |
 | `LXMF.LXMRouter` | Native Swift LXMF router | Direct, opportunistic, propagation and attachment Resource delivery implemented |
 | Identity and cryptography | CryptoKit-backed identity primitives | Implemented for current transport scope |
@@ -50,7 +52,7 @@
 1. Complete live attachment and large-Resource interoperability testing against upstream Sideband and Reticulum.
 2. Add migration/import support for existing Sideband SQLite data.
 3. Harden iOS background delivery, power use, and network-transition behavior on physical devices.
-4. Add QR contact exchange and transport configuration.
+4. Add camera-based QR scanning and transport configuration import/export.
 5. Port telemetry/maps, audio, LXST, hardware interfaces, and plugins incrementally.
 
 Avoid embedding Python in the product target: it would make the macOS prototype quick but would create a dead end for iOS sandboxing and distribution.

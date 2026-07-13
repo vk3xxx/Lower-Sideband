@@ -14,7 +14,9 @@ Live interoperability is implemented for direct links, opportunistic single-pack
 
 Network reliability includes receipt timeouts with delivery fallback, exponential reconnect backoff, live system reachability, IPv6 preference with IPv4 fallback, and relaunch recovery for unproved outbound messages. Verified incoming messages can generate opt-in local notifications. iOS background refresh coordinates propagation sync.
 
-Attachments use native Reticulum Resource advertisements, part requests, hash-map updates, encrypted parts, multi-segment sequencing, proofs and cancellation. Incoming segments are staged on disk, image attachments render inline with downsampled thumbnails and full-size previews, and interrupted transfers recover or clean up safely. The SwiftUI client also includes durable drafts, transcript and contact sharing, message search, drag-and-drop attachment import, route/link actions, conversation pinning and notification controls. Python-generated wire fixtures cover the Resource negotiation formats; live attachment interoperability with upstream Sideband remains an active validation target.
+Attachments use native Reticulum Resource advertisements, part requests, hash-map updates, encrypted parts, multi-segment sequencing, proofs and cancellation. Incoming segments are staged on disk, image attachments render inline with downsampled thumbnails and full-size previews, and interrupted transfers recover or clean up safely. Selection rejects duplicates, enforces per-file and combined-size limits, and reports import failures without silently dropping files.
+
+The SwiftUI client includes durable drafts, transcript sharing, message search, drag-and-drop attachment import, route/link actions, conversation pinning, archiving, blocking, notification controls, history cleanup, and failed-outbox retry. Portable `sideband://contact/` links can be copied, shared, imported when creating conversations, and rendered as QR codes. Python-generated wire fixtures cover the Resource negotiation formats; live attachment interoperability with upstream Sideband remains an active validation target.
 
 ## Build and run
 
