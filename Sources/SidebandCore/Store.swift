@@ -172,6 +172,13 @@ public final class SidebandStore {
         syncUnreadBadge()
     }
 
+    public func markConversationUnread(_ conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].unreadCount = max(1, conversations[index].unreadCount)
+        save()
+        syncUnreadBadge()
+    }
+
     @discardableResult
     public func renameConversation(_ conversationID: UUID, to displayName: String) -> Bool {
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)

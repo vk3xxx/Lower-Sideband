@@ -146,6 +146,16 @@ import Testing
     #expect(reloaded.conversations.first(where: { $0.id == unread.id })?.unreadCount == 0)
 }
 
+@MainActor @Test func conversationCanBeMarkedUnreadExplicitly() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let id = store.conversations[0].id
+    store.markConversationUnread(id)
+    #expect(store.conversations[0].unreadCount == 1)
+    #expect(SidebandStore(persistenceURL: url).conversations[0].unreadCount == 1)
+}
+
 @MainActor @Test func addingBackgroundConversationDoesNotReplaceSelection() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

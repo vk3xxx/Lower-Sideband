@@ -86,6 +86,12 @@ struct ContentView: View {
                         } label: {
                             Label(conversation.isPinned ? "Unpin" : "Pin", systemImage: conversation.isPinned ? "pin.slash" : "pin")
                         }
+                        Button {
+                            if conversation.unreadCount > 0 { store.markConversationRead(conversation.id) }
+                            else { store.markConversationUnread(conversation.id) }
+                        } label: {
+                            Label(conversation.unreadCount > 0 ? "Mark as Read" : "Mark as Unread", systemImage: conversation.unreadCount > 0 ? "envelope.open" : "envelope.badge")
+                        }
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }
                 } }
