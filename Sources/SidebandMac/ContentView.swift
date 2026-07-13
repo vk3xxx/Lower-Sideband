@@ -379,6 +379,14 @@ private struct ConversationView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
+                        if conversationMessages.isEmpty {
+                            ContentUnavailableView(
+                                messageSearch.isEmpty ? "No Messages Yet" : "No Matching Messages",
+                                systemImage: messageSearch.isEmpty ? "bubble.left" : "magnifyingglass",
+                                description: Text(messageSearch.isEmpty ? "Send a message to start this conversation." : "Try a different search term.")
+                            )
+                            .frame(maxWidth: .infinity, minHeight: 260)
+                        }
                         ForEach(conversationMessages) { message in
                             HStack {
                                 if message.direction == .outgoing { Spacer(minLength: 80) }
