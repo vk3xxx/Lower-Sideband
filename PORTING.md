@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | `sideband/core.py` conversation/message state | `SidebandCore` models and store | Implemented for current messaging scope |
 | Kivy conversation/message screens | `SidebandMac` SwiftUI split view | Implemented for current messaging scope |
-| SQLite state | Codable atomic application-support snapshot | Implemented; SQLite import remains future work |
+| SQLite state | Versioned Codable atomic application-support snapshot | Implemented with validated export/restore, rolling backup and corrupt-file recovery; SQLite import remains future work |
 | Reticulum TCP/HDLC and packet parsing | `ReticulumTCPInterface`, `HDLC`, `ReticulumPacket` | Implemented, unit tested |
 | Reticulum identity keys, hashes and signatures | `ReticulumIdentity` using CryptoKit | Implemented, Python-vector tested |
 | TCP configuration, packet counters and announce capture | Network panel and `SidebandStore` | Implemented |
@@ -37,10 +37,14 @@
 | Verified incoming local notifications | `LocalNotificationManager` | Implemented, opt-in |
 | iOS background propagation refresh | `BackgroundRefreshCoordinator` | Implemented |
 | Attachment metadata and durable local storage | `Attachment`, `AttachmentStore` | Implemented |
+| Orphaned attachment cleanup | `AttachmentStore.removeOrphans` | Implemented conservatively for unreferenced regular files |
 | Reticulum Resource advertisements, requests, parts, proofs and cancellation | `ReticulumResource*` | Implemented, Python-fixture tested |
 | Resource hash-map updates and multi-segment transfer | `ReticulumResourceHashMapUpdate`, segment planner/staging | Implemented |
 | Attachment sending, receiving, progress and inline images | `SidebandStore`, SwiftUI attachment views | Implemented for native Swift peers |
-| Portable contact links and QR display | `SidebandContactLink`, CoreImage, SwiftUI contact actions | Implemented; camera scanning remains future work |
+| Portable contact links, system URL opening and QR display | `SidebandContactLink`, app URL handler, CoreImage, SwiftUI contact actions | Implemented; camera scanning remains future work |
+| Local display identity and announce metadata | `SidebandStore.localDisplayName`, Network Status identity card | Implemented |
+| Safe copyable network diagnostics | `SidebandStore.networkDiagnosticsReport`, Network Status controls | Implemented |
+| Reproducible macOS application bundle | `Scripts/package-macos-app.sh`, `Support/Sideband-Info.plist` | Implemented |
 | Conversation archive, block, cleanup and retry controls | `Conversation`, `SidebandStore`, SwiftUI context menus | Implemented |
 | Reticulum routing/announces/link | Native Swift transport engine | Implemented for current TCP and AutoInterface scope |
 | `LXMF.LXMRouter` | Native Swift LXMF router | Direct, opportunistic, propagation and attachment Resource delivery implemented |

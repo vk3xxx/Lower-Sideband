@@ -10,13 +10,15 @@ The native network slice includes Reticulum-compatible HDLC framing, incremental
 
 The Network Status panel can discover Bonjour-advertised `_reticulum._tcp`, `_rns._tcp`, and `_sideband._tcp` gateways on the LAN. A conventional Reticulum TCP Server Interface does not advertise these records automatically, so manual IPv4 or IPv6 host/port configuration remains available. Native AutoInterface supports authenticated multicast peer discovery and the UDP data plane.
 
-Live interoperability is implemented for direct links, opportunistic single-packet delivery, propagation-node upload/download, and native Resource transfers with acknowledgements and deduplication. The app periodically synchronizes with the configured propagation node while active and resumes on foreground activation. On iOS, private Reticulum and LXMF identities are stored in the Keychain. Voice, telemetry, maps, QR transport, hardware interfaces, and plugins remain future work.
+Live interoperability is implemented for direct links, opportunistic single-packet delivery, propagation-node upload/download, and native Resource transfers with acknowledgements and deduplication. The app periodically synchronizes with the configured propagation node while active and resumes on foreground activation. On iOS, private Reticulum and LXMF identities are stored in the Keychain. Voice, telemetry, maps, camera-based QR scanning, hardware interfaces, and plugins remain future work.
 
 Network reliability includes receipt timeouts with delivery fallback, exponential reconnect backoff, live system reachability, IPv6 preference with IPv4 fallback, and relaunch recovery for unproved outbound messages. Verified incoming messages can generate opt-in local notifications. iOS background refresh coordinates propagation sync.
 
 Attachments use native Reticulum Resource advertisements, part requests, hash-map updates, encrypted parts, multi-segment sequencing, proofs and cancellation. Incoming segments are staged on disk, image attachments render inline with downsampled thumbnails and full-size previews, and interrupted transfers recover or clean up safely. Selection rejects duplicates, enforces per-file and combined-size limits, and reports import failures without silently dropping files.
 
-The SwiftUI client includes durable drafts, transcript sharing, message search, drag-and-drop attachment import, route/link actions, conversation pinning, archiving, blocking, notification controls, history cleanup, and failed-outbox retry. Portable `sideband://contact/` links can be copied, shared, imported when creating conversations, and rendered as QR codes. Python-generated wire fixtures cover the Resource negotiation formats; live attachment interoperability with upstream Sideband remains an active validation target.
+The SwiftUI client includes durable drafts, transcript sharing, message search, drag-and-drop attachment import, route/link actions, conversation pinning, archiving, blocking, notification controls, history cleanup, and failed-outbox retry. Portable `sideband://contact/` links can be copied, shared, imported when creating conversations, opened directly by macOS, and rendered as QR codes. The local display name is configurable and included in LXMF announces and shared contact links.
+
+Network diagnostics can be copied from the status panel without exposing private identity material. Versioned JSON backups can be exported and restored after validation. Every save maintains a rolling copy of the previous valid snapshot; corrupt primary data is quarantined and recovered from that copy silently at launch. Unreferenced attachment files are cleaned conservatively in the background. Python-generated wire fixtures cover the Resource negotiation formats; live attachment interoperability with upstream Sideband remains an active validation target.
 
 ## Build and run
 
@@ -26,6 +28,15 @@ Requires Xcode 16 or newer and macOS 14 or newer.
 swift test
 swift run SidebandMac
 ```
+
+To create the launchable application bundle used for local testing:
+
+```sh
+Scripts/package-macos-app.sh
+open dist/Sideband.app
+```
+
+The package script performs a release build and installs the executable plus the tracked `Support/Sideband-Info.plist`, including the `sideband` URL scheme and local-network declarations.
 
 The shared `SidebandCore` target supports macOS 14 and iOS 17. The executable target is the macOS SwiftUI application.
 
