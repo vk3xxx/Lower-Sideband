@@ -69,6 +69,11 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
     }
 
     public func accountAvailable() async -> Bool {
+        #if os(macOS)
+        // The SwiftPM desktop package is not yet provisioned for iCloud. Avoid asking
+        // CloudKit for a container from that unsigned bundle, which can terminate the app.
+        guard Bundle.main.bundleIdentifier == "com.supes.MacSideband" else { return false }
+        #endif
         let container = CKContainer(identifier: containerIdentifier)
         return (try? await container.accountStatus()) == .available
     }
