@@ -180,7 +180,9 @@ import Testing
     #expect(store.renameConversation(store.conversations[0].id, to: "After Rename"))
 
     let backupData = try Data(contentsOf: store.automaticBackupURL)
-    let backup = try store.validatedSnapshot(from: backupData)
+    #expect(LocalDataCipher().isEncrypted(backupData))
+    let backupPlaintext = try LocalDataCipher().open(backupData, context: "application-snapshot-v1")
+    let backup = try store.validatedSnapshot(from: backupPlaintext)
     #expect(backup.conversations.first?.displayName == "Before Rename")
     #expect(store.conversations.first?.displayName == "After Rename")
 }
@@ -199,6 +201,25 @@ import Testing
     #expect(try Data(contentsOf: quarantineURL) == Data("not-json".utf8))
     #expect(recovered.conversations.first?.displayName == "Recover Me")
     #expect(FileManager.default.fileExists(atPath: url.path))
+}
+
+@MainActor @Test func localPersistenceIsEncryptedAndMigratesPlaintext() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let url = root.appending(path: "store.json")
+    let destination = "0123456789abcdef0123456789abcdef"
+    let conversation = Conversation(destinationHash: destination, displayName: "Private local message")
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let plaintext = try encoder.encode(AppSnapshot(conversations: [conversation]))
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try plaintext.write(to: url, options: .atomic)
+
+    let migrated = SidebandStore(persistenceURL: url)
+    #expect(migrated.conversations.first?.displayName == "Private local message")
+    let encrypted = try Data(contentsOf: url)
+    #expect(LocalDataCipher().isEncrypted(encrypted))
+    #expect(!encrypted.contains(Data("Private local message".utf8)))
+    #expect(SidebandStore(persistenceURL: url).conversations.first?.destinationHash == destination)
 }
 
 @Test func attachmentStoreRemovesOnlyUnreferencedRegularFiles() async throws {

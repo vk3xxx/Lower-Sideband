@@ -19,6 +19,7 @@
 		12AE2465AC4DDD363C9E6B00 /* ReticulumResourceSegmentAccumulator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F6D4D9FBA74520C1EBCA068 /* ReticulumResourceSegmentAccumulator.swift */; };
 		12FEC80F1A04CA8DB8AF9083 /* MessagePackDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46AF8A5E292597111959AFC0 /* MessagePackDecoder.swift */; };
 		17580709C25AC62A5C4728AC /* Transport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CF805D6403CA445FE139DFE /* Transport.swift */; };
+		1AE1850BEC0224B1412A5A77 /* LocalDataCipher.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDEEF093B6A8C7DCC94F90AB /* LocalDataCipher.swift */; };
 		1C7BAFD9F3F915875C53DB19 /* HDLC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6800FA947758CF319790C30A /* HDLC.swift */; };
 		20C449F6B8CFBA88D1B76D47 /* ReticulumResourceLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */; };
 		245CCA5C8EAE1544DABD7B9F /* ReticulumResourceHashMapUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27404DC34CE9457F57AA67B7 /* ReticulumResourceHashMapUpdate.swift */; };
@@ -68,6 +69,7 @@
 		9B392826C889BCB3B7307C2E /* ReticulumResourceStagingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE27F948D0A3FD75DD885F4 /* ReticulumResourceStagingStore.swift */; };
 		9C59B45CE2681A3FD5A52084 /* TCPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */; };
 		9E76355F8F75B02C6F1CDE91 /* ReticulumLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */; };
+		A83D7EC7462B1CF15D836889 /* LocalDataCipher.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDEEF093B6A8C7DCC94F90AB /* LocalDataCipher.swift */; };
 		AB52501C356FF499722A17A8 /* LocalNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3454611B1022AF6027538880 /* LocalNotificationManager.swift */; };
 		ABB92F5EE86F97F500711D5D /* ReticulumAnnounceBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF78A5D135DF2BC78CB1A0E0 /* ReticulumAnnounceBuilder.swift */; };
 		ABB9B283A7A24A0A8860F702 /* ReticulumResourceRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBFD6D75DFA821C91F637012 /* ReticulumResourceRequest.swift */; };
@@ -191,6 +193,7 @@
 		C5D406BCA1BD18C778F10EA3 /* ReticulumProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumProof.swift; sourceTree = "<group>"; };
 		C93625631542290E7226AC8E /* ReticulumPathRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPathRequest.swift; sourceTree = "<group>"; };
 		CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStore.swift; sourceTree = "<group>"; };
+		DDEEF093B6A8C7DCC94F90AB /* LocalDataCipher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataCipher.swift; sourceTree = "<group>"; };
 		DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumTunnel.swift; sourceTree = "<group>"; };
 		E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SidebandCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryCapture.swift; sourceTree = "<group>"; };
@@ -316,6 +319,7 @@
 				1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */,
 				2E194B906C9B4844994C97C4 /* DestinationHash.swift */,
 				8FDA34BD01D0B7839C37388F /* ICloudSync.swift */,
+				DDEEF093B6A8C7DCC94F90AB /* LocalDataCipher.swift */,
 				3454611B1022AF6027538880 /* LocalNotificationManager.swift */,
 				E57A7BD924C6049E6C5DAA4A /* Models.swift */,
 				A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */,
@@ -524,6 +528,7 @@
 				DC474C973A9C53F74A80A8C1 /* LXMFPropagation.swift in Sources */,
 				D365CFC7A7FE5E7B2E4B8846 /* LXMFReceivedMessage.swift in Sources */,
 				51B0151D071F7725BA9175CE /* LXMFResourceEnvelope.swift in Sources */,
+				1AE1850BEC0224B1412A5A77 /* LocalDataCipher.swift in Sources */,
 				B4B677734B7E8E37A7E34D50 /* LocalNotificationManager.swift in Sources */,
 				FB0E65FC7859C8DD3CA6F281 /* MessagePack.swift in Sources */,
 				12FEC80F1A04CA8DB8AF9083 /* MessagePackDecoder.swift in Sources */,
@@ -596,6 +601,7 @@
 				8F943D1FE999971659BC8A0B /* LXMFPropagation.swift in Sources */,
 				3DDCAB680F41D01BD199D3CF /* LXMFReceivedMessage.swift in Sources */,
 				C809B013C94747039EE73030 /* LXMFResourceEnvelope.swift in Sources */,
+				A83D7EC7462B1CF15D836889 /* LocalDataCipher.swift in Sources */,
 				AB52501C356FF499722A17A8 /* LocalNotificationManager.swift in Sources */,
 				DEE742D31B993537112B18FA /* MessagePack.swift in Sources */,
 				E1B836E2F35FB1BC64DB9A5A /* MessagePackDecoder.swift in Sources */,

@@ -64,6 +64,7 @@ public final class SidebandStore {
 
     private let transport: any MessageTransport
     private let persistenceURL: URL
+    private let localDataCipher: LocalDataCipher
     private let cloudSync: any CloudSnapshotSyncing
     private let syncDeviceID: String
     private var iCloudSyncTask: Task<Void, Never>?
@@ -116,6 +117,7 @@ public final class SidebandStore {
     public init(transport: any MessageTransport = QueuedTransport(), persistenceURL: URL? = nil, cloudSync: (any CloudSnapshotSyncing)? = nil) {
         self.transport = transport
         self.persistenceURL = persistenceURL ?? Self.defaultPersistenceURL()
+        localDataCipher = LocalDataCipher()
         self.cloudSync = cloudSync ?? CloudKitSnapshotSync()
         let existingDeviceID = UserDefaults.standard.string(forKey: "iCloudSyncDeviceID")
         syncDeviceID = existingDeviceID ?? UUID().uuidString
@@ -1875,17 +1877,19 @@ public final class SidebandStore {
     private func load() {
         guard FileManager.default.fileExists(atPath: persistenceURL.path) else { return }
         guard let data = try? Data(contentsOf: persistenceURL),
-              let snapshot = try? validatedSnapshot(from: data) else {
+              let plaintext = try? localDataCipher.open(data, context: "application-snapshot-v1"),
+              let snapshot = try? validatedSnapshot(from: plaintext) else {
             quarantineInvalidPersistence()
             if let backupData = try? Data(contentsOf: automaticBackupURL),
-               let backup = try? validatedSnapshot(from: backupData) {
+               let backupPlaintext = try? localDataCipher.open(backupData, context: "application-snapshot-v1"),
+               let backup = try? validatedSnapshot(from: backupPlaintext) {
                 applyLoadedSnapshot(backup)
                 save()
             }
             return
         }
         applyLoadedSnapshot(snapshot)
-        if recoveredOutboundCount > 0 { save() }
+        if recoveredOutboundCount > 0 || !localDataCipher.isEncrypted(data) { save() }
     }
 
     private func applyLoadedSnapshot(_ snapshot: AppSnapshot) {
@@ -1938,11 +1942,13 @@ public final class SidebandStore {
         do {
             try FileManager.default.createDirectory(at: persistenceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if let existingData = try? Data(contentsOf: persistenceURL),
-               (try? validatedSnapshot(from: existingData)) != nil {
+               let existingPlaintext = try? localDataCipher.open(existingData, context: "application-snapshot-v1"),
+               (try? validatedSnapshot(from: existingPlaintext)) != nil {
                 try existingData.write(to: automaticBackupURL, options: .atomic)
             }
-            let data = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts))
-            try data.write(to: persistenceURL, options: .atomic)
+            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts))
+            let encrypted = try localDataCipher.seal(plaintext, context: "application-snapshot-v1")
+            try encrypted.write(to: persistenceURL, options: .atomic)
             if iCloudSyncEnabled, !isApplyingCloudSnapshot { scheduleICloudSync() }
         } catch { lastError = "Could not save local data: \(error.localizedDescription)" }
     }
