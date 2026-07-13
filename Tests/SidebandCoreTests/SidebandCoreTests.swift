@@ -49,6 +49,15 @@ import Testing
     #expect(store.messages[0].state == .queued)
 }
 
+@MainActor @Test func rejectsOversizedMessageText() async {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    await store.send(String(repeating: "x", count: SidebandMessageLimits.maximumTextCharacters + 1))
+    #expect(store.messages.isEmpty)
+    #expect(store.lastError != nil)
+}
+
 @MainActor @Test func latestMessageUsesTimestampOrder() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

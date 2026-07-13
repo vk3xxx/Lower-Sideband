@@ -1,5 +1,10 @@
 import Foundation
 
+public enum SidebandMessageLimits {
+    public static let maximumTextCharacters = 4_096
+    public static let maximumAttachments = 8
+}
+
 public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public var destinationHash: String

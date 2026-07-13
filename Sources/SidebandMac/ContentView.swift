@@ -614,6 +614,12 @@ private struct ConversationView: View {
                     TextField("Message", text: $draft, axis: .vertical).textFieldStyle(.roundedBorder).onSubmit(send)
                     Button(action: send) { Image(systemName: "paperplane.fill") }.buttonStyle(.borderedProminent).disabled(!canSend)
                 }
+                HStack {
+                    Spacer()
+                    Text("\(draft.count)/\(SidebandMessageLimits.maximumTextCharacters)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(draft.count == SidebandMessageLimits.maximumTextCharacters ? .orange : .secondary)
+                }
             }.padding()
         }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
@@ -624,7 +630,13 @@ private struct ConversationView: View {
             store.conversationDidAppear(conversation.id)
         }
         .onDisappear { store.conversationDidDisappear(conversation.id) }
-        .onChange(of: draft) { _, value in store.updateDraft(value, for: conversation.id) }
+        .onChange(of: draft) { _, value in
+            if value.count > SidebandMessageLimits.maximumTextCharacters {
+                draft = String(value.prefix(SidebandMessageLimits.maximumTextCharacters))
+            } else {
+                store.updateDraft(value, for: conversation.id)
+            }
+        }
         .quickLookPreview($previewAttachmentURL)
     }
 

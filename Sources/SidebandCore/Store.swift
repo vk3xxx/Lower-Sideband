@@ -247,6 +247,10 @@ public final class SidebandStore {
     public func send(_ text: String, attachments: [Attachment]) async {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (!body.isEmpty || !attachments.isEmpty), let conversation = selectedConversation else { return }
+        guard body.count <= SidebandMessageLimits.maximumTextCharacters else {
+            lastError = "Messages are limited to \(SidebandMessageLimits.maximumTextCharacters.formatted()) characters."
+            return
+        }
         let message = Message(conversationID: conversation.id, body: body, direction: .outgoing, state: .queued, attachments: attachments)
         messages.append(message)
         touch(conversation.id)
