@@ -8,7 +8,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    DEVELOPMENT_TEAM: DLV44BUBE7
+    DEVELOPMENT_TEAM: DN4HHRX3GX
 targets:
   SidebandCore:
     type: framework
