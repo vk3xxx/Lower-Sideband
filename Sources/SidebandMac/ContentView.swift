@@ -416,10 +416,13 @@ private struct NetworkView: View {
                 }
                 GridRow { Text("Host"); TextField("127.0.0.1", text: $store.networkHost) }
                 GridRow { Text("IPv6 host"); TextField("IPv6 gateway", text: $store.networkIPv6Host) }
+                GridRow { Text("Internet override"); TextField("Optional public IPv6 or DNS hostname", text: $store.networkInternetHost) }
+                GridRow { Text("Internet port"); TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never)) }
                 GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
                 GridRow { Text("Addressing"); Toggle("Prefer IPv6 with IPv4 fallback", isOn: Binding(get: { store.preferIPv6 }, set: { store.setPreferIPv6($0) })) }
                 GridRow { Text("Reconnect"); Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) })) }
-                GridRow { Text("Transport"); Text("TCP · HDLC" + (store.activeNetworkHost.map { " · \($0)" } ?? "")).foregroundStyle(.secondary) }
+                GridRow { Text("Automatic connection"); Text(store.automaticConnectionDescription).foregroundStyle(.secondary) }
+                GridRow { Text("Transport"); Text("TCP · HDLC" + (store.activeNetworkHost.map { " · \($0):\(store.activeNetworkPort ?? store.networkPort)" } ?? "")).foregroundStyle(.secondary) }
                 GridRow { Text("System network"); Text(reachabilityText).foregroundStyle(.secondary) }
                 GridRow {
                     Text("Last connected")
@@ -500,7 +503,7 @@ private struct NetworkView: View {
             GroupBox("LAN gateways") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        Text("Discovers Bonjour services: _reticulum._tcp, _rns._tcp and _sideband._tcp")
+                        Text("Automatic Bonjour discovery: _reticulum._tcp, _rns._tcp and _sideband._tcp")
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         if store.lanDiscovery.isSearching {
@@ -510,7 +513,7 @@ private struct NetworkView: View {
                         }
                     }
                     if store.lanDiscovery.gateways.isEmpty {
-                        ContentUnavailableView("No advertised gateways", systemImage: "dot.radiowaves.left.and.right", description: Text(store.lanDiscovery.isSearching ? "Listening on the local network…" : "Start discovery or connect manually above."))
+                        ContentUnavailableView("No advertised gateways", systemImage: "dot.radiowaves.left.and.right", description: Text(store.lanDiscovery.isSearching ? "Listening automatically; the configured dual-stack gateway remains available as fallback." : "Start discovery or connect manually above."))
                             .frame(maxHeight: 95)
                     } else {
                         ForEach(store.lanDiscovery.gateways) { gateway in

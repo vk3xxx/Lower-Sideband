@@ -94,3 +94,42 @@ public enum AutomaticGatewaySelector {
         }
     }
 }
+
+public struct InternetGateway: Identifiable, Hashable, Sendable {
+    public var id: String { "\(host.lowercased()):\(port)" }
+    public let name: String
+    public let host: String
+    public let port: UInt16
+
+    public init(name: String, host: String, port: UInt16) {
+        self.name = name
+        self.host = host
+        self.port = port
+    }
+}
+
+public enum PublicReticulumGateways {
+    public static let defaults: [InternetGateway] = [
+        InternetGateway(name: "Sydney RNS", host: "sydney.reticulum.au", port: 4_242),
+        InternetGateway(name: "Melbourne RNS", host: "mel.reticulum.net.nz", port: 4_242),
+        InternetGateway(name: "Dismail RNS", host: "rns.dismail.de", port: 7_822),
+        InternetGateway(name: "MobileFabrik", host: "phantom.mobilefabrik.com", port: 4_242)
+    ]
+
+    public static func ordered(customHost: String?, customPort: Int, preferredID: String?, excluding attemptedIDs: Set<String> = []) -> [InternetGateway] {
+        var gateways: [InternetGateway] = []
+        let normalizedHost = customHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !normalizedHost.isEmpty, let port = UInt16(exactly: customPort), port > 0 {
+            gateways.append(InternetGateway(name: "Configured internet gateway", host: normalizedHost, port: port))
+        }
+        gateways.append(contentsOf: defaults)
+        var seen: Set<String> = []
+        let unique = gateways.filter { seen.insert($0.id).inserted && !attemptedIDs.contains($0.id) }
+        return unique.sorted { lhs, rhs in
+            let lhsPreferred = lhs.id == preferredID
+            let rhsPreferred = rhs.id == preferredID
+            if lhsPreferred != rhsPreferred { return lhsPreferred }
+            return gateways.firstIndex(of: lhs)! < gateways.firstIndex(of: rhs)!
+        }
+    }
+}

@@ -918,6 +918,18 @@ import Testing
     #expect(AutomaticGatewaySelector.ordered([first, preferred], preferredID: preferred.id, excluding: [preferred.id]).map(\.id) == [first.id])
 }
 
+@Test func publicGatewaySelectionUsesCustomThenRotatesVerifiedDefaults() {
+    let custom = InternetGateway(name: "Configured internet gateway", host: "gateway.example", port: 5_000)
+    let ordered = PublicReticulumGateways.ordered(customHost: custom.host, customPort: Int(custom.port), preferredID: nil)
+    #expect(ordered.first?.id == custom.id)
+    #expect(ordered.count == PublicReticulumGateways.defaults.count + 1)
+
+    let preferred = PublicReticulumGateways.defaults[2]
+    let preferredOrder = PublicReticulumGateways.ordered(customHost: nil, customPort: 4_242, preferredID: preferred.id)
+    #expect(preferredOrder.first?.id == preferred.id)
+    #expect(PublicReticulumGateways.ordered(customHost: nil, customPort: 4_242, preferredID: preferred.id, excluding: [preferred.id]).allSatisfy { $0.id != preferred.id })
+}
+
 @Test func autoInterfaceAuthenticatesAndExpiresPeers() async {
     let address = "fe80::1234"
     let token = AutoInterfaceProtocol.discoveryToken(forIPv6Address: address)

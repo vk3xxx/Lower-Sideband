@@ -11,7 +11,7 @@
 | Announce parsing, signatures and destination derivation | `ReticulumAnnounce` | Implemented, Python-vector tested |
 | Path-request packet generation | `ReticulumPathRequest` | Implemented, Python-layout tested |
 | Validated route selection, pending requests and expiry | `ReticulumPathTable` | Implemented |
-| Bonjour LAN gateway discovery | `LANGatewayDiscovery` | Implemented for three service names |
+| Automatic LAN and internet gateway selection | `LANGatewayDiscovery`, `SidebandStore` | Implemented local-first with Bonjour, dual-stack configuration and rotating public community fallbacks |
 | AutoInterface group, authenticated beacons, multicast listener and peer expiry | `AutoInterfaceDiscovery` | Implemented |
 | AutoInterface UDP packet receive/send | `AutoInterfaceDiscovery` data listener | Implemented on port 42671 |
 | Link request, link ID and X25519/HKDF key derivation | `ReticulumLinkRequest` | Implemented, Python-vector tested |
@@ -35,7 +35,7 @@
 | Periodic propagation synchronization and lifecycle pause/resume | `SidebandStore` | Implemented |
 | iOS private identity persistence | `SecureIdentityStore` | Keychain-backed with legacy migration |
 | Receipt timeout and delivery escalation | `SidebandStore` | Implemented |
-| TCP reconnect, reachability and dual-stack fallback | `SidebandStore`, `NetworkReachability` | Implemented |
+| TCP reconnect, reachability-triggered recovery and dual-stack fallback | `SidebandStore`, `NetworkReachability` | Implemented with silent automatic selection |
 | Relaunch-safe outbound recovery | Codable snapshot recovery | Implemented, tested |
 | LXMF announce display names | `LXMFAnnounceInfo` | Implemented, tested |
 | Verified incoming local notifications | `LocalNotificationManager` | Implemented, opt-in |

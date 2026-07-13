@@ -36,6 +36,8 @@ public final class SidebandStore {
     public private(set) var visibleConversationID: UUID?
     public var networkHost: String
     public var networkIPv6Host: String
+    public var networkInternetHost: String
+    public var networkInternetPort: Int
     public var networkPort: Int
     public var preferIPv6: Bool
     public var autoConnectEnabled: Bool
@@ -51,6 +53,7 @@ public final class SidebandStore {
     public let resourceStagingStore: ReticulumResourceStagingStore
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
+    public private(set) var activeNetworkPort: Int?
     public private(set) var lastQuarantinedPersistenceURL: URL?
     public var selectedConversationID: UUID?
     public var lastError: String?
@@ -85,8 +88,11 @@ public final class SidebandStore {
     private var reconnectTask: Task<Void, Never>?
     private var attemptedGatewayIDs: Set<String> = []
     private var configuredGatewayAttempted = false
+    private var attemptedInternetGatewayIDs: Set<String> = []
     private var activeGatewayID: String?
+    private var activeInternetGatewayID: String?
     private var preferredGatewayID: String?
+    private var preferredInternetGatewayID: String?
     private var deferredPathRequests: Set<String> = []
     private var intentionallyDisconnected = false
     private var reconnectAttempt = 0
@@ -108,6 +114,9 @@ public final class SidebandStore {
         messagingIdentity = (try? ReticulumIdentity(privateKey: messagingMaterial)) ?? ReticulumIdentity()
         networkHost = UserDefaults.standard.string(forKey: "reticulumHost") ?? "10.20.20.133"
         networkIPv6Host = UserDefaults.standard.string(forKey: "reticulumIPv6Host") ?? "fd20:20:20::133"
+        networkInternetHost = UserDefaults.standard.string(forKey: "reticulumInternetHost") ?? ""
+        let savedInternetPort = UserDefaults.standard.integer(forKey: "reticulumInternetPort")
+        networkInternetPort = savedInternetPort == 0 ? 4_242 : savedInternetPort
         let savedPort = UserDefaults.standard.integer(forKey: "reticulumPort")
         networkPort = savedPort == 0 ? 4242 : savedPort
         preferIPv6 = UserDefaults.standard.object(forKey: "reticulumPreferIPv6") as? Bool ?? true
@@ -117,6 +126,7 @@ public final class SidebandStore {
         localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Sideband Swift"
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
+        preferredInternetGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredInternetGatewayID")
         receivedLXMFIDs = Set(UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? [])
         load()
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
@@ -454,15 +464,16 @@ public final class SidebandStore {
 
     public func clearError() { lastError = nil }
 
-    public func connectNetwork(forceIPv4: Bool = false) async {
+    public func connectNetwork(forceIPv4: Bool = false, explicitHost: String? = nil, explicitPort: UInt16? = nil, internetGatewayID: String? = nil) async {
         guard networkState != .connecting, networkState != .ready else { return }
-        guard !networkHost.isEmpty, (1...65_535).contains(networkPort), let port = UInt16(exactly: networkPort) else {
+        let useIPv6 = !forceIPv4 && preferIPv6 && reachability.supportsIPv6 && !networkIPv6Host.isEmpty
+        let selectedHost = explicitHost ?? (useIPv6 ? networkIPv6Host : networkHost)
+        let selectedPort = explicitPort ?? UInt16(exactly: networkPort)
+        guard !selectedHost.isEmpty, let port = selectedPort, port > 0 else {
             lastError = "Enter a valid TCP host and port."
             return
         }
         networkState = .connecting
-        let useIPv6 = !forceIPv4 && preferIPv6 && reachability.supportsIPv6 && !networkIPv6Host.isEmpty
-        let selectedHost = useIPv6 ? networkIPv6Host : networkHost
         let generation = UUID()
         networkConnectionGeneration = generation
         await networkInterface?.stop()
@@ -470,13 +481,17 @@ public final class SidebandStore {
         reconnectTask = nil
         intentionallyDisconnected = false
         activeGatewayID = nil
+        activeInternetGatewayID = internetGatewayID
         selectedGatewayName = nil
         UserDefaults.standard.set(networkHost, forKey: "reticulumHost")
         UserDefaults.standard.set(networkIPv6Host, forKey: "reticulumIPv6Host")
+        UserDefaults.standard.set(networkInternetHost, forKey: "reticulumInternetHost")
+        UserDefaults.standard.set(networkInternetPort, forKey: "reticulumInternetPort")
         UserDefaults.standard.set(networkPort, forKey: "reticulumPort")
         UserDefaults.standard.set(preferIPv6, forKey: "reticulumPreferIPv6")
         UserDefaults.standard.set(autoConnectEnabled, forKey: "reticulumAutoConnect")
         activeNetworkHost = selectedHost
+        activeNetworkPort = Int(port)
         let interface = ReticulumTCPInterface(host: selectedHost, port: port) { [weak self] packet in
             await self?.receive(packet)
         } stateHandler: { [weak self] state in
@@ -499,6 +514,7 @@ public final class SidebandStore {
         networkInterface = nil
         networkState = .stopped
         activeNetworkHost = nil
+        activeNetworkPort = nil
     }
 
     public func reconnectNetwork() async {
@@ -618,7 +634,7 @@ public final class SidebandStore {
             "Local name: \(localDisplayName)",
             "Local destination: \(localDeliveryHash)",
             "Network state: \(state)",
-            "TCP endpoint: \(activeNetworkHost ?? networkHost):\(networkPort)",
+            "TCP endpoint: \(activeNetworkHost ?? networkHost):\(activeNetworkPort ?? networkPort)",
             "Prefer IPv6: \(preferIPv6)",
             "System interface: \(reachability.interfaceSummary)",
             "Packets received: \(receivedPacketCount)",
@@ -694,7 +710,9 @@ public final class SidebandStore {
         await networkInterface?.stop()
         selectedGatewayName = gateway.name
         activeGatewayID = gateway.id
+        activeInternetGatewayID = nil
         activeNetworkHost = gateway.name
+        activeNetworkPort = nil
         automaticConnectionDescription = "Trying discovered gateway \(gateway.name)"
         let interface = ReticulumTCPInterface(endpoint: gateway.endpoint) { [weak self] packet in
             await self?.receive(packet)
@@ -781,6 +799,10 @@ public final class SidebandStore {
                 preferredGatewayID = activeGatewayID
                 UserDefaults.standard.set(activeGatewayID, forKey: "reticulumPreferredGatewayID")
             }
+            if let activeInternetGatewayID {
+                preferredInternetGatewayID = activeInternetGatewayID
+                UserDefaults.standard.set(activeInternetGatewayID, forKey: "reticulumPreferredInternetGatewayID")
+            }
             startPeriodicPropagationSync()
             Task {
                 await synthesizeTCPTunnel()
@@ -798,7 +820,9 @@ public final class SidebandStore {
         switch state {
         case .failed:
             stopPeriodicPropagationSync()
-            if activeNetworkHost == networkIPv6Host, networkHost != networkIPv6Host {
+            if activeGatewayID != nil, autoConnectEnabled, !intentionallyDisconnected {
+                Task { await tryNextAutomaticConnection() }
+            } else if activeNetworkHost == networkIPv6Host, networkHost != networkIPv6Host {
                 automaticConnectionDescription = "IPv6 unavailable; trying IPv4"
                 Task { await connectNetwork(forceIPv4: true) }
             } else if autoConnectEnabled, !intentionallyDisconnected {
@@ -824,6 +848,7 @@ public final class SidebandStore {
             self.reconnectTask = nil
             self.attemptedGatewayIDs.removeAll()
             self.configuredGatewayAttempted = false
+            self.attemptedInternetGatewayIDs.removeAll()
             await self.tryNextAutomaticConnection()
         }
     }
@@ -837,6 +862,7 @@ public final class SidebandStore {
         reconnectTask = nil
         attemptedGatewayIDs.removeAll()
         configuredGatewayAttempted = false
+        attemptedInternetGatewayIDs.removeAll()
         automaticConnectionDescription = "Discovering Reticulum gateways"
         await tryNextAutomaticConnection()
     }
@@ -862,8 +888,25 @@ public final class SidebandStore {
 
         if !configuredGatewayAttempted {
             configuredGatewayAttempted = true
-            automaticConnectionDescription = "Trying configured gateway"
+            automaticConnectionDescription = "Trying configured local gateway"
             await connectNetwork()
+            return
+        }
+
+        let internetCandidates = PublicReticulumGateways.ordered(
+            customHost: networkInternetHost,
+            customPort: networkInternetPort,
+            preferredID: preferredInternetGatewayID,
+            excluding: attemptedInternetGatewayIDs
+        )
+        if let gateway = internetCandidates.first {
+            attemptedInternetGatewayIDs.insert(gateway.id)
+            automaticConnectionDescription = "Trying public gateway \(gateway.name)"
+            await connectNetwork(
+                explicitHost: gateway.host,
+                explicitPort: gateway.port,
+                internetGatewayID: gateway.id
+            )
             return
         }
         scheduleReconnect()
@@ -883,6 +926,7 @@ public final class SidebandStore {
             reconnectTask = nil
             attemptedGatewayIDs.removeAll()
             configuredGatewayAttempted = false
+            attemptedInternetGatewayIDs.removeAll()
             Task { await tryNextAutomaticConnection() }
         } else if status == .unavailable {
             automaticConnectionDescription = "Waiting for a network"
