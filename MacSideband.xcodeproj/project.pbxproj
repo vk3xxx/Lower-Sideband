@@ -12,50 +12,101 @@
 		03301265781053B5497105C0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
 		046FAAE4F5A84EB7639357D2 /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */; };
 		071F1C134507F4A9515A838A /* HDLC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6800FA947758CF319790C30A /* HDLC.swift */; };
+		087FB0F3F6480890ADFB6944 /* ReticulumPathRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = C93625631542290E7226AC8E /* ReticulumPathRequest.swift */; };
 		0B2A75C6B8950F38CEE52AD3 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */; };
 		106CDA6E4EDEC8C4298FA6DF /* SecureIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9FEEDAB91A5EF3AFFE1A83D /* SecureIdentityStore.swift */; };
+		10FD27589DCA97D3DFD3A171 /* NetworkReachability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AD802CD72884DC504AE787A /* NetworkReachability.swift */; };
+		12AE2465AC4DDD363C9E6B00 /* ReticulumResourceSegmentAccumulator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F6D4D9FBA74520C1EBCA068 /* ReticulumResourceSegmentAccumulator.swift */; };
 		12FEC80F1A04CA8DB8AF9083 /* MessagePackDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46AF8A5E292597111959AFC0 /* MessagePackDecoder.swift */; };
 		17580709C25AC62A5C4728AC /* Transport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CF805D6403CA445FE139DFE /* Transport.swift */; };
+		1C7BAFD9F3F915875C53DB19 /* HDLC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6800FA947758CF319790C30A /* HDLC.swift */; };
+		20C449F6B8CFBA88D1B76D47 /* ReticulumResourceLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */; };
+		245CCA5C8EAE1544DABD7B9F /* ReticulumResourceHashMapUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27404DC34CE9457F57AA67B7 /* ReticulumResourceHashMapUpdate.swift */; };
 		24C7EB4BA44C85049769B182 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7578FB43B7F741FB5254EEFB /* ContentView.swift */; };
 		28C70C71F8CF5F3FCD0A832A /* SidebandAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F0A6D46420007C8FA91EF432 /* SidebandAssets.xcassets */; };
+		2C5914900748A5C63010085D /* AutoInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DF5C1B40489424F54A1262 /* AutoInterfaceDiscovery.swift */; };
+		2D6DB176F5FFA98038C37617 /* BackgroundRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */; };
 		3480BE51355576FBDA60B286 /* ReticulumResourceHashMapUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27404DC34CE9457F57AA67B7 /* ReticulumResourceHashMapUpdate.swift */; };
 		34B42B0C911C5E91A4C25053 /* LANGatewayDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F13B8BEBEA5AFB84C7EA08E /* LANGatewayDiscovery.swift */; };
+		358AD96A7FC9FB6A9EC12703 /* ReticulumTunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */; };
+		3808DE992B58626F64708159 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */; };
 		3A2164719C2EA62006BFB32A /* ReticulumPathRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = C93625631542290E7226AC8E /* ReticulumPathRequest.swift */; };
 		3DD2069FCD7E5B6C6984B204 /* ReticulumProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5D406BCA1BD18C778F10EA3 /* ReticulumProof.swift */; };
+		3DDCAB680F41D01BD199D3CF /* LXMFReceivedMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */; };
+		3F17F52D6CC7281CCF48B0B6 /* DestinationHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E194B906C9B4844994C97C4 /* DestinationHash.swift */; };
 		48EB119C7D1716383DA637A8 /* AutoInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DF5C1B40489424F54A1262 /* AutoInterfaceDiscovery.swift */; };
+		497181C45EB7BB7F8F7636C0 /* ReticulumResourceStagingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE27F948D0A3FD75DD885F4 /* ReticulumResourceStagingStore.swift */; };
+		4C5AF38C07933D8E47C61E81 /* SidebandCoreMac.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA647CF9E030E282C0470932 /* SidebandCoreMac.framework */; };
+		4C6D92567B29F2299CA5A83F /* SecureIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9FEEDAB91A5EF3AFFE1A83D /* SecureIdentityStore.swift */; };
 		5172AE1D7DC5CDCEA5796FAA /* ReticulumResourceSegmentAccumulator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F6D4D9FBA74520C1EBCA068 /* ReticulumResourceSegmentAccumulator.swift */; };
 		51B0151D071F7725BA9175CE /* LXMFResourceEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 708748E83168C209AE467E40 /* LXMFResourceEnvelope.swift */; };
+		53CD728908BE9D3759810415 /* ReticulumResourceAdvertisement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55215B7B5B59B3CB768518A8 /* ReticulumResourceAdvertisement.swift */; };
+		546ACC976EBECA0507AB7E61 /* ReticulumIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */; };
 		59F1229EDE718AE45B3B46C3 /* ReticulumPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */; };
+		5BD2BF82DCE8844E91F17A71 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7578FB43B7F741FB5254EEFB /* ContentView.swift */; };
+		5D51EEAE800511140DAE506D /* ReticulumAnnounceBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF78A5D135DF2BC78CB1A0E0 /* ReticulumAnnounceBuilder.swift */; };
 		612902045745242AA9383C85 /* TelemetryCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */; };
 		62D4F301A54BA2A4640C447A /* ReticulumResourceSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CE179CF749411718317DA9F /* ReticulumResourceSegments.swift */; };
+		641C2F0810172EA27D060CA0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
 		693916E438F815BA883FF42C /* ICloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDA34BD01D0B7839C37388F /* ICloudSync.swift */; };
 		6B7A84167E78768E7CC346AD /* ReticulumResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */; };
+		713D4949BAEA41D5A295658D /* ReticulumProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5D406BCA1BD18C778F10EA3 /* ReticulumProof.swift */; };
+		7229FC2669D7E5A9647CB778 /* ReticulumResourceRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBFD6D75DFA821C91F637012 /* ReticulumResourceRequest.swift */; };
+		72718B102EE0F9523D6EC7BD /* Transport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CF805D6403CA445FE139DFE /* Transport.swift */; };
+		74DF9A2BCAAACA321CCAFF5C /* VoiceMessageAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59439F9438760DD48AD116BC /* VoiceMessageAudio.swift */; };
+		7824B1F81353C4CAD197E090 /* Telemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBFAFB919BC8DFC5E6E3360E /* Telemetry.swift */; };
+		796EA5542B691CF4A206F16E /* TelemetryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC7290C1251DFC249932DBC0 /* TelemetryViews.swift */; };
+		79B693BCC13497C4F8F2EC8E /* TelemetryCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */; };
+		7D54E947F32D589336652761 /* LANGatewayDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F13B8BEBEA5AFB84C7EA08E /* LANGatewayDiscovery.swift */; };
 		851A3DB3680E62E8B3785D4E /* BackgroundRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */; };
+		8720EDA95D88DC8395026DA6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57A7BD924C6049E6C5DAA4A /* Models.swift */; };
 		8ED850A22B9378E5707933E1 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57A7BD924C6049E6C5DAA4A /* Models.swift */; };
+		8F943D1FE999971659BC8A0B /* LXMFPropagation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCE24619EAC858E5E6395B0 /* LXMFPropagation.swift */; };
 		91FD929272BA3B900D30332E /* SidebandMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F48887EC9B5C518D3AFB7565 /* SidebandMacApp.swift */; };
 		9432FF8A0D8AE4CFCA5A13DA /* ReticulumResourceAdvertisement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55215B7B5B59B3CB768518A8 /* ReticulumResourceAdvertisement.swift */; };
+		98C2C3D02CE6C20EDFA20EA6 /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */; };
 		9B392826C889BCB3B7307C2E /* ReticulumResourceStagingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE27F948D0A3FD75DD885F4 /* ReticulumResourceStagingStore.swift */; };
+		9C59B45CE2681A3FD5A52084 /* TCPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */; };
 		9E76355F8F75B02C6F1CDE91 /* ReticulumLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */; };
+		AB52501C356FF499722A17A8 /* LocalNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3454611B1022AF6027538880 /* LocalNotificationManager.swift */; };
 		ABB92F5EE86F97F500711D5D /* ReticulumAnnounceBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF78A5D135DF2BC78CB1A0E0 /* ReticulumAnnounceBuilder.swift */; };
 		ABB9B283A7A24A0A8860F702 /* ReticulumResourceRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBFD6D75DFA821C91F637012 /* ReticulumResourceRequest.swift */; };
+		AD9B710A16EBD8847C580DAC /* LXMFMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A94DB2EEB1FF3081E4531FA8 /* LXMFMessage.swift */; };
 		AEE275EE54D193884A6201B6 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */; };
 		AF13402E68C11412BB92925A /* LXMFMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A94DB2EEB1FF3081E4531FA8 /* LXMFMessage.swift */; };
 		B1953693F82C6624593511AF /* ReticulumPathTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */; };
 		B31676CD7B03C14A3D71B4C9 /* ReticulumTunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */; };
 		B4B677734B7E8E37A7E34D50 /* LocalNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3454611B1022AF6027538880 /* LocalNotificationManager.swift */; };
+		BAFB440028458EDA8F3DF0C8 /* ReticulumResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */; };
 		BFCC9E8D2B1B6F34169A774D /* TelemetryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC7290C1251DFC249932DBC0 /* TelemetryViews.swift */; };
 		C3AED9F45A9A29D7881185E2 /* DestinationHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E194B906C9B4844994C97C4 /* DestinationHash.swift */; };
 		C6A7F579F12508B84057AE05 /* TCPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */; };
+		C809B013C94747039EE73030 /* LXMFResourceEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 708748E83168C209AE467E40 /* LXMFResourceEnvelope.swift */; };
 		C9FBBAFC8455CCB2B8D43735 /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668FFE37826A8100E1CA09FF /* Store.swift */; };
+		CC91D3028934158569A65B56 /* ReticulumPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */; };
+		CE7D380C74F290A15E0883F4 /* ICloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDA34BD01D0B7839C37388F /* ICloudSync.swift */; };
 		D12CA1E59042A522571C47CC /* ReticulumResourceLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */; };
 		D1E4A2CCEE53DAE8DB98144F /* SidebandCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */; };
 		D365CFC7A7FE5E7B2E4B8846 /* LXMFReceivedMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */; };
+		D50FB43808FE2928541B76B0 /* ReticulumPathTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */; };
+		D53B751F641B467C1988F189 /* SidebandCoreMac.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = EA647CF9E030E282C0470932 /* SidebandCoreMac.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		D5FBACD693366687F284FCE0 /* NetworkReachability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AD802CD72884DC504AE787A /* NetworkReachability.swift */; };
+		DB68594BA43CE55967337F1F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */; };
 		DC474C973A9C53F74A80A8C1 /* LXMFPropagation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCE24619EAC858E5E6395B0 /* LXMFPropagation.swift */; };
+		DEB899191F6F97302FEDF1CF /* ReticulumLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */; };
+		DEE742D31B993537112B18FA /* MessagePack.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4EE409D3195CBCE25E43E03 /* MessagePack.swift */; };
+		E1B836E2F35FB1BC64DB9A5A /* MessagePackDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46AF8A5E292597111959AFC0 /* MessagePackDecoder.swift */; };
+		E240B3903C7F3B0D8AEFA83D /* ReticulumResourceSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CE179CF749411718317DA9F /* ReticulumResourceSegments.swift */; };
+		E34CC38E7F1D219FA1CDDEEC /* SidebandAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F0A6D46420007C8FA91EF432 /* SidebandAssets.xcassets */; };
+		E35C71D013C8108DAB131267 /* ReticulumAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2189201B52F69C0DED35D9FB /* ReticulumAnnounce.swift */; };
 		E5C8139C7113B1DF74C89137 /* ReticulumAnnounce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2189201B52F69C0DED35D9FB /* ReticulumAnnounce.swift */; };
+		E602F55241E235A581C33F75 /* SidebandMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F48887EC9B5C518D3AFB7565 /* SidebandMacApp.swift */; };
+		E67AD73F984D7EEEA59689B1 /* LXMFAnnounceInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B051F39471BC4F462A0AAD58 /* LXMFAnnounceInfo.swift */; };
 		E9D36E42A6F69176E3AC96C0 /* ReticulumToken.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3263ACF1C1FB68CD178CAB2 /* ReticulumToken.swift */; };
 		E9FEBF2B5261FAAF931F7073 /* SidebandCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		ECAB3611BA189FA907EA3AF8 /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668FFE37826A8100E1CA09FF /* Store.swift */; };
 		EDA8E97C8A88FA9DFBE7C787 /* Telemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBFAFB919BC8DFC5E6E3360E /* Telemetry.swift */; };
+		F0D00FF1478FFB4A9AACB9DB /* ReticulumToken.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3263ACF1C1FB68CD178CAB2 /* ReticulumToken.swift */; };
 		FB0E65FC7859C8DD3CA6F281 /* MessagePack.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4EE409D3195CBCE25E43E03 /* MessagePack.swift */; };
 		FE7573CA2B305D7801D7B736 /* LXMFAnnounceInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B051F39471BC4F462A0AAD58 /* LXMFAnnounceInfo.swift */; };
 /* End PBXBuildFile section */
@@ -68,9 +119,27 @@
 			remoteGlobalIDString = 32936334DD4E7E765975E481;
 			remoteInfo = SidebandCore;
 		};
+		A323DAD0BDF03DB4818B0B63 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3F28BB8C23D1E59D20B6922E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2AE46865E3DD9A494AE74F0D;
+			remoteInfo = SidebandCoreMac;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		4D4E07FE0057EC1E93341DC2 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				D53B751F641B467C1988F189 /* SidebandCoreMac.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F9EC443816A7B7A249EA2365 /* Embed Frameworks */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -95,6 +164,7 @@
 		2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFReceivedMessage.swift; sourceTree = "<group>"; };
 		2E194B906C9B4844994C97C4 /* DestinationHash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DestinationHash.swift; sourceTree = "<group>"; };
 		2F13B8BEBEA5AFB84C7EA08E /* LANGatewayDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANGatewayDiscovery.swift; sourceTree = "<group>"; };
+		30F161C32D51D06834BD3310 /* SidebandMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SidebandMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3454611B1022AF6027538880 /* LocalNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNotificationManager.swift; sourceTree = "<group>"; };
 		3F6D4D9FBA74520C1EBCA068 /* ReticulumResourceSegmentAccumulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceSegmentAccumulator.swift; sourceTree = "<group>"; };
 		46AF8A5E292597111959AFC0 /* MessagePackDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePackDecoder.swift; sourceTree = "<group>"; };
@@ -126,6 +196,7 @@
 		E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryCapture.swift; sourceTree = "<group>"; };
 		E57A7BD924C6049E6C5DAA4A /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E5DF5C1B40489424F54A1262 /* AutoInterfaceDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoInterfaceDiscovery.swift; sourceTree = "<group>"; };
+		EA647CF9E030E282C0470932 /* SidebandCoreMac.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SidebandCoreMac.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumLink.swift; sourceTree = "<group>"; };
 		F0A6D46420007C8FA91EF432 /* SidebandAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = SidebandAssets.xcassets; sourceTree = "<group>"; };
 		F3263ACF1C1FB68CD178CAB2 /* ReticulumToken.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumToken.swift; sourceTree = "<group>"; };
@@ -138,6 +209,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		73E061E182320C85ADAF40BA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4C5AF38C07933D8E47C61E81 /* SidebandCoreMac.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C8314273C398829AD3475FCC /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -193,7 +272,9 @@
 			isa = PBXGroup;
 			children = (
 				E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */,
+				EA647CF9E030E282C0470932 /* SidebandCoreMac.framework */,
 				FA286360FE93ECE796FE04E6 /* SidebandIOS.app */,
+				30F161C32D51D06834BD3310 /* SidebandMac.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -264,6 +345,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		2AE46865E3DD9A494AE74F0D /* SidebandCoreMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AABB958905057415008796F4 /* Build configuration list for PBXNativeTarget "SidebandCoreMac" */;
+			buildPhases = (
+				C4546130306FFC4BD2C77361 /* Sources */,
+				013DE11AB5F62C00FA7DD639 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SidebandCoreMac;
+			packageProductDependencies = (
+			);
+			productName = SidebandCoreMac;
+			productReference = EA647CF9E030E282C0470932 /* SidebandCoreMac.framework */;
+			productType = "com.apple.product-type.framework";
+		};
 		32936334DD4E7E765975E481 /* SidebandCore */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = DA62E13433FC0C4052210765 /* Build configuration list for PBXNativeTarget "SidebandCore" */;
@@ -281,6 +380,27 @@
 			productName = SidebandCore;
 			productReference = E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */;
 			productType = "com.apple.product-type.framework";
+		};
+		4C506682F73D31B9D5991FE0 /* SidebandMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 219A6273084EB45B75A58FFF /* Build configuration list for PBXNativeTarget "SidebandMac" */;
+			buildPhases = (
+				76F553C6F78DBC4FA7172721 /* Sources */,
+				47BDBD7F171EBF32F4488A83 /* Resources */,
+				73E061E182320C85ADAF40BA /* Frameworks */,
+				4D4E07FE0057EC1E93341DC2 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DDD9566333B6324EC2C1D3F1 /* PBXTargetDependency */,
+			);
+			name = SidebandMac;
+			packageProductDependencies = (
+			);
+			productName = SidebandMac;
+			productReference = 30F161C32D51D06834BD3310 /* SidebandMac.app */;
+			productType = "com.apple.product-type.application";
 		};
 		6FCA2DBD2D2C4A568C780ACC /* SidebandIOS */ = {
 			isa = PBXNativeTarget;
@@ -312,8 +432,15 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
+					2AE46865E3DD9A494AE74F0D = {
+						DevelopmentTeam = DLV44BUBE7;
+					};
 					32936334DD4E7E765975E481 = {
 						DevelopmentTeam = DLV44BUBE7;
+					};
+					4C506682F73D31B9D5991FE0 = {
+						DevelopmentTeam = DLV44BUBE7;
+						ProvisioningStyle = Automatic;
 					};
 					6FCA2DBD2D2C4A568C780ACC = {
 						DevelopmentTeam = DLV44BUBE7;
@@ -336,12 +463,31 @@
 			projectRoot = "";
 			targets = (
 				32936334DD4E7E765975E481 /* SidebandCore */,
+				2AE46865E3DD9A494AE74F0D /* SidebandCoreMac */,
 				6FCA2DBD2D2C4A568C780ACC /* SidebandIOS */,
+				4C506682F73D31B9D5991FE0 /* SidebandMac */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		013DE11AB5F62C00FA7DD639 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3808DE992B58626F64708159 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		47BDBD7F171EBF32F4488A83 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DB68594BA43CE55967337F1F /* PrivacyInfo.xcprivacy in Resources */,
+				E34CC38E7F1D219FA1CDDEEC /* SidebandAssets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		76F36C9A9E47EE35748C7B6B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -410,6 +556,18 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		76F553C6F78DBC4FA7172721 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5BD2BF82DCE8844E91F17A71 /* ContentView.swift in Sources */,
+				E602F55241E235A581C33F75 /* SidebandMacApp.swift in Sources */,
+				79B693BCC13497C4F8F2EC8E /* TelemetryCapture.swift in Sources */,
+				796EA5542B691CF4A206F16E /* TelemetryViews.swift in Sources */,
+				74DF9A2BCAAACA321CCAFF5C /* VoiceMessageAudio.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A7D8313A2673C3F57DF1998E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -422,6 +580,54 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C4546130306FFC4BD2C77361 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				98C2C3D02CE6C20EDFA20EA6 /* AttachmentStore.swift in Sources */,
+				2C5914900748A5C63010085D /* AutoInterfaceDiscovery.swift in Sources */,
+				2D6DB176F5FFA98038C37617 /* BackgroundRefreshCoordinator.swift in Sources */,
+				3F17F52D6CC7281CCF48B0B6 /* DestinationHash.swift in Sources */,
+				1C7BAFD9F3F915875C53DB19 /* HDLC.swift in Sources */,
+				CE7D380C74F290A15E0883F4 /* ICloudSync.swift in Sources */,
+				7D54E947F32D589336652761 /* LANGatewayDiscovery.swift in Sources */,
+				E67AD73F984D7EEEA59689B1 /* LXMFAnnounceInfo.swift in Sources */,
+				AD9B710A16EBD8847C580DAC /* LXMFMessage.swift in Sources */,
+				8F943D1FE999971659BC8A0B /* LXMFPropagation.swift in Sources */,
+				3DDCAB680F41D01BD199D3CF /* LXMFReceivedMessage.swift in Sources */,
+				C809B013C94747039EE73030 /* LXMFResourceEnvelope.swift in Sources */,
+				AB52501C356FF499722A17A8 /* LocalNotificationManager.swift in Sources */,
+				DEE742D31B993537112B18FA /* MessagePack.swift in Sources */,
+				E1B836E2F35FB1BC64DB9A5A /* MessagePackDecoder.swift in Sources */,
+				8720EDA95D88DC8395026DA6 /* Models.swift in Sources */,
+				10FD27589DCA97D3DFD3A171 /* NetworkReachability.swift in Sources */,
+				E35C71D013C8108DAB131267 /* ReticulumAnnounce.swift in Sources */,
+				5D51EEAE800511140DAE506D /* ReticulumAnnounceBuilder.swift in Sources */,
+				546ACC976EBECA0507AB7E61 /* ReticulumIdentity.swift in Sources */,
+				DEB899191F6F97302FEDF1CF /* ReticulumLink.swift in Sources */,
+				CC91D3028934158569A65B56 /* ReticulumPacket.swift in Sources */,
+				087FB0F3F6480890ADFB6944 /* ReticulumPathRequest.swift in Sources */,
+				D50FB43808FE2928541B76B0 /* ReticulumPathTable.swift in Sources */,
+				713D4949BAEA41D5A295658D /* ReticulumProof.swift in Sources */,
+				BAFB440028458EDA8F3DF0C8 /* ReticulumResource.swift in Sources */,
+				53CD728908BE9D3759810415 /* ReticulumResourceAdvertisement.swift in Sources */,
+				245CCA5C8EAE1544DABD7B9F /* ReticulumResourceHashMapUpdate.swift in Sources */,
+				20C449F6B8CFBA88D1B76D47 /* ReticulumResourceLimits.swift in Sources */,
+				7229FC2669D7E5A9647CB778 /* ReticulumResourceRequest.swift in Sources */,
+				12AE2465AC4DDD363C9E6B00 /* ReticulumResourceSegmentAccumulator.swift in Sources */,
+				E240B3903C7F3B0D8AEFA83D /* ReticulumResourceSegments.swift in Sources */,
+				497181C45EB7BB7F8F7636C0 /* ReticulumResourceStagingStore.swift in Sources */,
+				F0D00FF1478FFB4A9AACB9DB /* ReticulumToken.swift in Sources */,
+				358AD96A7FC9FB6A9EC12703 /* ReticulumTunnel.swift in Sources */,
+				4C6D92567B29F2299CA5A83F /* SecureIdentityStore.swift in Sources */,
+				641C2F0810172EA27D060CA0 /* SidebandContactLink.swift in Sources */,
+				ECAB3611BA189FA907EA3AF8 /* Store.swift in Sources */,
+				9C59B45CE2681A3FD5A52084 /* TCPInterface.swift in Sources */,
+				7824B1F81353C4CAD197E090 /* Telemetry.swift in Sources */,
+				72718B102EE0F9523D6EC7BD /* Transport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -430,9 +636,36 @@
 			target = 32936334DD4E7E765975E481 /* SidebandCore */;
 			targetProxy = 250397D1E1BC45FC1878E206 /* PBXContainerItemProxy */;
 		};
+		DDD9566333B6324EC2C1D3F1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2AE46865E3DD9A494AE74F0D /* SidebandCoreMac */;
+			targetProxy = A323DAD0BDF03DB4818B0B63 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		13DE2157D2C0135D1E4E5082 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Support/Sideband.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 8;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Support/Sideband-macOS-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband;
+				PRODUCT_NAME = Sideband;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
 		167449911AE14CFCF2226823 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -457,6 +690,32 @@
 			};
 			name = Release;
 		};
+		3E97B6F0151C3E0A9F51BB98 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 8;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband.Core.mac;
+				PRODUCT_MODULE_NAME = SidebandCore;
+				PRODUCT_NAME = SidebandCore;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
 		42830FA8F5E02688E4339AB5 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -480,6 +739,28 @@
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Debug;
+		};
+		9A03AB980A94C9B23B86CB5B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Support/Sideband.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 8;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Support/Sideband-macOS-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband;
+				PRODUCT_NAME = Sideband;
+				SDKROOT = macosx;
+			};
+			name = Release;
 		};
 		9EBD8B372D2DD49C6618EA86 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -552,10 +833,10 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 6.0;
@@ -585,6 +866,32 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		D9A7127AEDB24BBC875FBF9E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 8;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband.Core.mac;
+				PRODUCT_MODULE_NAME = SidebandCore;
+				PRODUCT_NAME = SidebandCore;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
 		};
 		DC35BF4346103984AB752969 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -639,11 +946,11 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
@@ -653,11 +960,29 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		219A6273084EB45B75A58FFF /* Build configuration list for PBXNativeTarget "SidebandMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				13DE2157D2C0135D1E4E5082 /* Debug */,
+				9A03AB980A94C9B23B86CB5B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		6EB02C5CDDF756DD124693C3 /* Build configuration list for PBXProject "MacSideband" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				DC35BF4346103984AB752969 /* Debug */,
 				B1B23D724E7D6C8FBF90AA75 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AABB958905057415008796F4 /* Build configuration list for PBXNativeTarget "SidebandCoreMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3E97B6F0151C3E0A9F51BB98 /* Debug */,
+				D9A7127AEDB24BBC875FBF9E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

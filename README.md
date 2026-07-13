@@ -41,6 +41,8 @@ open dist/Sideband.app
 
 The package script performs a release build and installs the executable plus the tracked `Support/Sideband-Info.plist`, including the `sideband` URL scheme and local-network declarations.
 
+For the provisioned native macOS app, open `MacSideband.xcodeproj` and run the `SidebandMac` scheme. This target uses the same bundle identifier, Individual Apple team, synchronizable keychain identity and private CloudKit container as the iPhone/iPad target.
+
 ## Build and run on iOS
 
 The checked-in `MacSideband.xcodeproj` contains the `SidebandIOS` application scheme for iOS 17 or newer. It uses the production bundle identifier `com.supes.MacSideband` and the Mark Beacham Individual Apple developer team. Open the project, select an iPhone, iPad or simulator, and run the `SidebandIOS` scheme:
@@ -57,6 +59,8 @@ Scripts/validate-ios-app.sh 'generic/platform=iOS'
 ```
 
 The iOS target declares local-network, Bonjour, location, background-refresh and `sideband://` URL handling. `Support/PrivacyInfo.xcprivacy` declares the approved reasons for app-local preferences and attachment staging timestamps.
+
+Private iCloud device sync is available under Network Status on both provisioned app targets. It merges conversations, messages and drafts, restores attachments from encrypted CloudKit assets, and coordinates queued-message ownership to avoid duplicate sends. Device-specific Reticulum route discoveries remain local.
 
 TCP gateway connectivity works on physical iOS devices. iOS schedules background propagation refresh opportunistically and does not guarantee an indefinitely active TCP socket while the app is suspended. Reticulum AutoInterface multicast on physical devices additionally requires Apple approval for the restricted multicast networking entitlement; the entitlement is intentionally not claimed by the current distribution profile.
 
