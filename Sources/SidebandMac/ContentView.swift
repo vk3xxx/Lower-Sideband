@@ -425,6 +425,9 @@ private struct NetworkView: View {
                 Button("Close") { dismiss() }
                 Spacer()
                 if isConnectedOrConnecting {
+                    if store.networkState == .ready {
+                        Button("Reconnect") { Task { await store.reconnectNetwork() } }
+                    }
                     Button("Disconnect") { Task { await store.disconnectNetwork() } }
                 } else {
                     Button("Connect") { Task { await store.connectNetwork() } }.buttonStyle(.borderedProminent)

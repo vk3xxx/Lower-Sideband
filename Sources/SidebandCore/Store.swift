@@ -350,6 +350,11 @@ public final class SidebandStore {
         activeNetworkHost = nil
     }
 
+    public func reconnectNetwork() async {
+        await disconnectNetwork()
+        await connectNetwork()
+    }
+
     public func applicationDidBecomeActive() async {
         isApplicationActive = true
         if let visibleConversationID { markConversationRead(visibleConversationID) }
