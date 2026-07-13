@@ -27,6 +27,7 @@ public final class SidebandStore {
     public private(set) var opportunisticDeliveriesReceived = 0
     public private(set) var lastPropagationSync: Date?
     public private(set) var lastNetworkReadyAt: Date?
+    public private(set) var automaticConnectionDescription = "Idle"
     public private(set) var deliveryTimeoutCount = 0
     public private(set) var reconnectDelaySeconds: Int?
     public private(set) var recoveredOutboundCount = 0
@@ -82,6 +83,10 @@ public final class SidebandStore {
     private var inboundLinkIDs: Set<String> = []
     private var propagationSyncTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var attemptedGatewayIDs: Set<String> = []
+    private var configuredGatewayAttempted = false
+    private var activeGatewayID: String?
+    private var preferredGatewayID: String?
     private var deferredPathRequests: Set<String> = []
     private var intentionallyDisconnected = false
     private var reconnectAttempt = 0
@@ -101,19 +106,22 @@ public final class SidebandStore {
         UserDefaults.standard.set(interfaceMaterial, forKey: "reticulumTCPInterfaceHash")
         let messagingMaterial = SecureIdentityStore.loadOrCreate(account: "lxmf.messaging", legacyDefaultsKey: "lxmfMessagingIdentity")
         messagingIdentity = (try? ReticulumIdentity(privateKey: messagingMaterial)) ?? ReticulumIdentity()
-        networkHost = UserDefaults.standard.string(forKey: "reticulumHost") ?? "127.0.0.1"
-        networkIPv6Host = UserDefaults.standard.string(forKey: "reticulumIPv6Host") ?? "2403:5810:568a:1:be24:11ff:fe03:ff12"
+        networkHost = UserDefaults.standard.string(forKey: "reticulumHost") ?? "10.20.20.133"
+        networkIPv6Host = UserDefaults.standard.string(forKey: "reticulumIPv6Host") ?? "fd20:20:20::133"
         let savedPort = UserDefaults.standard.integer(forKey: "reticulumPort")
         networkPort = savedPort == 0 ? 4242 : savedPort
         preferIPv6 = UserDefaults.standard.object(forKey: "reticulumPreferIPv6") as? Bool ?? true
-        autoConnectEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoConnect")
+        autoConnectEnabled = UserDefaults.standard.object(forKey: "reticulumAutoConnect") as? Bool ?? true
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
         localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Sideband Swift"
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
+        preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
         receivedLXMFIDs = Set(UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? [])
         load()
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
+        lanDiscovery.setUpdateHandler { [weak self] gateways in self?.gatewayResultsChanged(gateways) }
+        reachability.setStatusHandler { [weak self] status in self?.reachabilityChanged(status) }
         backgroundRefresh.register { [weak self] in await self?.performBackgroundRefresh() }
         Task { try? await resourceStagingStore.removeStale(olderThan: Date(timeIntervalSinceNow: -86_400)) }
         Task { [weak self] in _ = await self?.cleanOrphanedAttachments() }
@@ -461,6 +469,8 @@ public final class SidebandStore {
         reconnectTask?.cancel()
         reconnectTask = nil
         intentionallyDisconnected = false
+        activeGatewayID = nil
+        selectedGatewayName = nil
         UserDefaults.standard.set(networkHost, forKey: "reticulumHost")
         UserDefaults.standard.set(networkIPv6Host, forKey: "reticulumIPv6Host")
         UserDefaults.standard.set(networkPort, forKey: "reticulumPort")
@@ -483,6 +493,7 @@ public final class SidebandStore {
         networkConnectionGeneration = UUID()
         reconnectTask?.cancel()
         reconnectTask = nil
+        automaticConnectionDescription = "Disconnected"
         stopPeriodicPropagationSync()
         await networkInterface?.stop()
         networkInterface = nil
@@ -498,7 +509,7 @@ public final class SidebandStore {
     public func applicationDidBecomeActive() async {
         isApplicationActive = true
         if let visibleConversationID { markConversationRead(visibleConversationID) }
-        if autoConnectEnabled, networkState != .ready { await connectNetwork() }
+        if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
         if autoInterfaceEnabled, !autoInterfaceDiscovery.isListening { autoInterfaceDiscovery.start() }
         startPeriodicPropagationSync()
         await syncPropagationNow()
@@ -552,6 +563,13 @@ public final class SidebandStore {
     public func setAutoConnect(_ enabled: Bool) {
         autoConnectEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "reticulumAutoConnect")
+        if enabled {
+            Task { await startAutomaticConnection() }
+        } else {
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            automaticConnectionDescription = "Automatic connection disabled"
+        }
     }
 
     public func setPreferIPv6(_ enabled: Bool) {
@@ -675,6 +693,9 @@ public final class SidebandStore {
         networkConnectionGeneration = generation
         await networkInterface?.stop()
         selectedGatewayName = gateway.name
+        activeGatewayID = gateway.id
+        activeNetworkHost = gateway.name
+        automaticConnectionDescription = "Trying discovered gateway \(gateway.name)"
         let interface = ReticulumTCPInterface(endpoint: gateway.endpoint) { [weak self] packet in
             await self?.receive(packet)
         } stateHandler: { [weak self] state in
@@ -755,6 +776,11 @@ public final class SidebandStore {
             reconnectTask = nil
             reconnectAttempt = 0
             reconnectDelaySeconds = nil
+            automaticConnectionDescription = selectedGatewayName.map { "Connected automatically to \($0)" } ?? "Connected automatically to \(activeNetworkHost ?? networkHost)"
+            if let activeGatewayID {
+                preferredGatewayID = activeGatewayID
+                UserDefaults.standard.set(activeGatewayID, forKey: "reticulumPreferredGatewayID")
+            }
             startPeriodicPropagationSync()
             Task {
                 await synthesizeTCPTunnel()
@@ -773,7 +799,10 @@ public final class SidebandStore {
         case .failed:
             stopPeriodicPropagationSync()
             if activeNetworkHost == networkIPv6Host, networkHost != networkIPv6Host {
+                automaticConnectionDescription = "IPv6 unavailable; trying IPv4"
                 Task { await connectNetwork(forceIPv4: true) }
+            } else if autoConnectEnabled, !intentionallyDisconnected {
+                Task { await tryNextAutomaticConnection() }
             } else {
                 scheduleReconnect()
             }
@@ -787,10 +816,76 @@ public final class SidebandStore {
         let delay = min(60, 1 << min(reconnectAttempt + 1, 5))
         reconnectAttempt += 1
         reconnectDelaySeconds = delay
+        automaticConnectionDescription = "No gateway available; retrying in \(delay)s"
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
-            await self?.connectNetwork()
+            guard let self else { return }
+            self.reconnectTask = nil
+            self.attemptedGatewayIDs.removeAll()
+            self.configuredGatewayAttempted = false
+            await self.tryNextAutomaticConnection()
+        }
+    }
+
+    public func startAutomaticConnection() async {
+        guard autoConnectEnabled, !intentionallyDisconnected || networkState == .stopped else { return }
+        intentionallyDisconnected = false
+        lanDiscovery.start()
+        guard networkState != .ready, networkState != .connecting else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        attemptedGatewayIDs.removeAll()
+        configuredGatewayAttempted = false
+        automaticConnectionDescription = "Discovering Reticulum gateways"
+        await tryNextAutomaticConnection()
+    }
+
+    private func tryNextAutomaticConnection() async {
+        guard autoConnectEnabled, !intentionallyDisconnected else { return }
+        guard reachability.status != .unavailable else {
+            automaticConnectionDescription = "Waiting for a network"
+            return
+        }
+        guard networkState != .ready, networkState != .connecting else { return }
+
+        let candidates = AutomaticGatewaySelector.ordered(
+            lanDiscovery.gateways,
+            preferredID: preferredGatewayID,
+            excluding: attemptedGatewayIDs
+        )
+        if let gateway = candidates.first {
+            attemptedGatewayIDs.insert(gateway.id)
+            await connect(to: gateway)
+            return
+        }
+
+        if !configuredGatewayAttempted {
+            configuredGatewayAttempted = true
+            automaticConnectionDescription = "Trying configured gateway"
+            await connectNetwork()
+            return
+        }
+        scheduleReconnect()
+    }
+
+    private func gatewayResultsChanged(_ gateways: [LANGateway]) {
+        guard autoConnectEnabled, !gateways.isEmpty, networkState != .ready, networkState != .connecting else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        Task { await tryNextAutomaticConnection() }
+    }
+
+    private func reachabilityChanged(_ status: NetworkReachability.Status) {
+        guard autoConnectEnabled else { return }
+        if status == .available, networkState != .ready, networkState != .connecting {
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            attemptedGatewayIDs.removeAll()
+            configuredGatewayAttempted = false
+            Task { await tryNextAutomaticConnection() }
+        } else if status == .unavailable {
+            automaticConnectionDescription = "Waiting for a network"
         }
     }
 

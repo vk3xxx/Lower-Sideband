@@ -131,7 +131,7 @@ struct ContentView: View {
         }
         .task {
             await store.startTransport()
-            if store.autoConnectEnabled { await store.connectNetwork() }
+            if store.autoConnectEnabled { await store.startAutomaticConnection() }
             if store.autoInterfaceEnabled { store.startAutoInterfaceDiscovery() }
         }
         .onOpenURL { url in
