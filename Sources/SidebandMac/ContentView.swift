@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var conversationSearch = ""
     @State private var renamingConversation: Conversation?
     @State private var renameDraft = ""
+    @State private var deletingConversation: Conversation?
 
     var body: some View {
         NavigationSplitView {
@@ -70,6 +71,7 @@ struct ContentView: View {
                             renameDraft = conversation.displayName
                             renamingConversation = conversation
                         } label: { Label("Rename", systemImage: "pencil") }
+                        Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }
                 } }
                 if !store.discoveries.isEmpty {
@@ -113,6 +115,15 @@ struct ContentView: View {
                 if let id = renamingConversation?.id { _ = store.renameConversation(id, to: renameDraft) }
                 renamingConversation = nil
             }
+        }
+        .alert("Delete Conversation?", isPresented: Binding(get: { deletingConversation != nil }, set: { if !$0 { deletingConversation = nil } })) {
+            Button("Cancel", role: .cancel) { deletingConversation = nil }
+            Button("Delete", role: .destructive) {
+                if let id = deletingConversation?.id { Task { await store.deleteConversation(id) } }
+                deletingConversation = nil
+            }
+        } message: {
+            Text("This removes the conversation and its locally stored messages and attachments.")
         }
         .task {
             await store.startTransport()

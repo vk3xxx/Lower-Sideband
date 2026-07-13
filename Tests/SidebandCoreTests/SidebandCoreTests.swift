@@ -149,6 +149,23 @@ import Testing
     #expect(SidebandStore(persistenceURL: url).conversations[0].displayName == "Renamed")
 }
 
+@MainActor @Test func deleteConversationRemovesOnlyItsMessages() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let first = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "First")
+    let second = Conversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Second")
+    let firstMessage = Message(conversationID: first.id, body: "remove", direction: .incoming, state: .delivered)
+    let secondMessage = Message(conversationID: second.id, body: "keep", direction: .incoming, state: .delivered)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [first, second], messages: [firstMessage, secondMessage])).write(to: url)
+
+    let store = SidebandStore(persistenceURL: url)
+    await store.deleteConversation(first.id)
+    #expect(store.conversations.map(\.id) == [second.id])
+    #expect(store.messages.map(\.id) == [secondMessage.id])
+}
+
 @MainActor @Test func selectedConversationRemainsUnreadUntilApplicationIsActive() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

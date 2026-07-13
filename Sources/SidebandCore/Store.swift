@@ -157,6 +157,22 @@ public final class SidebandStore {
         return true
     }
 
+    public func deleteConversation(_ conversationID: UUID) async {
+        guard conversations.contains(where: { $0.id == conversationID }) else { return }
+        let removedMessages = messages.filter { $0.conversationID == conversationID }
+        for message in removedMessages {
+            for attachment in message.attachments {
+                await cancelActiveResources(messageID: message.id, attachmentID: attachment.id)
+                try? await attachmentStore.remove(attachment)
+            }
+        }
+        messages.removeAll { $0.conversationID == conversationID }
+        conversations.removeAll { $0.id == conversationID }
+        if visibleConversationID == conversationID { visibleConversationID = nil }
+        if selectedConversationID == conversationID { selectedConversationID = conversations.first?.id }
+        save()
+    }
+
     public func conversationDidAppear(_ conversationID: UUID) {
         visibleConversationID = conversationID
         if isApplicationActive { markConversationRead(conversationID) }
