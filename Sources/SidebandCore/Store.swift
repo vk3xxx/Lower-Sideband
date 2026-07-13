@@ -372,7 +372,10 @@ public final class SidebandStore {
             return
         }
         guard validateAttachmentTotal(attachments) else { return }
-        let message = Message(conversationID: conversation.id, body: body, direction: .outgoing, state: .queued, attachments: attachments, telemetry: telemetry)
+        let message = Message(
+            conversationID: conversation.id, body: body, direction: .outgoing, state: .queued,
+            attachments: attachments, telemetry: telemetry, outboxOwnerID: syncDeviceID, outboxOwnerUpdatedAt: .now
+        )
         messages.append(message)
         touch(conversation.id)
         save()
@@ -422,6 +425,8 @@ public final class SidebandStore {
         messages[messageIndex].attachments[attachmentIndex].state = .queued
         messages[messageIndex].attachments[attachmentIndex].progress = 0
         messages[messageIndex].state = .queued
+        messages[messageIndex].outboxOwnerID = syncDeviceID
+        messages[messageIndex].outboxOwnerUpdatedAt = .now
         save()
         await attemptDelivery(for: messages[messageIndex].conversationID)
     }
@@ -433,6 +438,8 @@ public final class SidebandStore {
             messages[index].attachments[attachmentIndex].progress = 0
         }
         messages[index].state = .queued
+        messages[index].outboxOwnerID = syncDeviceID
+        messages[index].outboxOwnerUpdatedAt = .now
         let conversationID = messages[index].conversationID
         save()
         await attemptDelivery(for: conversationID)
@@ -445,6 +452,8 @@ public final class SidebandStore {
         guard !failedIndices.isEmpty else { return }
         for index in failedIndices {
             messages[index].state = .queued
+            messages[index].outboxOwnerID = syncDeviceID
+            messages[index].outboxOwnerUpdatedAt = .now
             for attachmentIndex in messages[index].attachments.indices where messages[index].attachments[attachmentIndex].state == .failed {
                 messages[index].attachments[attachmentIndex].state = .queued
                 messages[index].attachments[attachmentIndex].progress = 0
@@ -1495,7 +1504,9 @@ public final class SidebandStore {
 
     private func attemptDelivery(for conversationID: UUID) async {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
-        let pending = messages.filter { $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }
+        let pending = messages.filter {
+            $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0)
+        }
         guard !pending.isEmpty else { return }
         let queued = pending.filter { $0.attachments.isEmpty }
         let attachmentMessages = pending.filter { !$0.attachments.isEmpty }
@@ -1528,7 +1539,7 @@ public final class SidebandStore {
             return
         }
         guard let session = activeSession(to: conversation.destinationHash) else { return }
-        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }) {
+        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0) }) {
             guard item.attachments.isEmpty else { continue }
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8), fields: lxmfFields(for: item))
@@ -1798,7 +1809,7 @@ public final class SidebandStore {
               let propagationSession = activeLinks.values.first(where: { $0.destinationHash.hex == propagationNodeHash }) else { return }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
-        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }) {
+        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0) }) {
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8), fields: lxmfFields(for: item))
                 let envelope = try lxmf.propagatedEnvelope(recipientIdentity: recipient, ratchet: discovery.ratchet)
@@ -1853,6 +1864,10 @@ public final class SidebandStore {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         messages[index].state = state
         save()
+    }
+
+    private func ownsOutbox(_ message: Message) -> Bool {
+        message.outboxOwnerID == nil || message.outboxOwnerID == syncDeviceID
     }
 
     private func abbreviated(_ hash: String) -> String { "\(hash.prefix(8))…\(hash.suffix(4))" }

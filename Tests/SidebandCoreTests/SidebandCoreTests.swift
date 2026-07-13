@@ -220,6 +220,8 @@ import Testing
     await store.send("hello")
     #expect(store.messages.count == 1)
     #expect(store.messages[0].state == .queued)
+    #expect(store.messages[0].outboxOwnerID?.isEmpty == false)
+    #expect(store.messages[0].outboxOwnerUpdatedAt != nil)
 }
 
 @MainActor @Test func queuedTelemetryPersistsAcrossRelaunch() async throws {
@@ -1170,11 +1172,11 @@ import Testing
     let messageID = UUID()
     let localMessage = Message(
         id: messageID, conversationID: localConversation.id, body: "hello", timestamp: Date(timeIntervalSince1970: 20),
-        direction: .outgoing, state: .queued
+        direction: .outgoing, state: .queued, outboxOwnerID: "phone", outboxOwnerUpdatedAt: Date(timeIntervalSince1970: 20)
     )
     let remoteMessage = Message(
         id: messageID, conversationID: remoteConversation.id, body: "hello", timestamp: Date(timeIntervalSince1970: 20),
-        direction: .outgoing, state: .delivered
+        direction: .outgoing, state: .delivered, outboxOwnerID: "ipad", outboxOwnerUpdatedAt: Date(timeIntervalSince1970: 30)
     )
     let merged = AppSnapshot(
         conversations: [localConversation], messages: [localMessage], drafts: [localConversation.id: "local draft"]
@@ -1188,6 +1190,7 @@ import Testing
     #expect(merged.messages.count == 1)
     #expect(merged.messages[0].conversationID == remoteConversation.id)
     #expect(merged.messages[0].state == .delivered)
+    #expect(merged.messages[0].outboxOwnerID == "ipad")
     #expect(merged.drafts[remoteConversation.id] == "local draft")
 }
 

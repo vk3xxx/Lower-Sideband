@@ -179,7 +179,8 @@ public extension AppSnapshot {
             return Message(
                 id: message.id, conversationID: conversationID, body: message.body,
                 timestamp: message.timestamp, direction: message.direction, state: message.state,
-                attachments: message.attachments, telemetry: message.telemetry
+                attachments: message.attachments, telemetry: message.telemetry,
+                outboxOwnerID: message.outboxOwnerID, outboxOwnerUpdatedAt: message.outboxOwnerUpdatedAt
             )
         }
 
@@ -189,11 +190,14 @@ public extension AppSnapshot {
             guard let remoteMessage = messagesByID[local.id] else { messagesByID[local.id] = local; continue }
             let state = Self.furthestDeliveryState(local.state, remoteMessage.state)
             let preferred = local.timestamp >= remoteMessage.timestamp ? local : remoteMessage
+            let ownerSource = (local.outboxOwnerUpdatedAt ?? .distantPast) >= (remoteMessage.outboxOwnerUpdatedAt ?? .distantPast)
+                ? local : remoteMessage
             messagesByID[local.id] = Message(
                 id: preferred.id, conversationID: preferred.conversationID, body: preferred.body,
                 timestamp: preferred.timestamp, direction: preferred.direction, state: state,
                 attachments: preferred.attachments.isEmpty ? (local.attachments.isEmpty ? remoteMessage.attachments : local.attachments) : preferred.attachments,
-                telemetry: preferred.telemetry ?? local.telemetry ?? remoteMessage.telemetry
+                telemetry: preferred.telemetry ?? local.telemetry ?? remoteMessage.telemetry,
+                outboxOwnerID: ownerSource.outboxOwnerID, outboxOwnerUpdatedAt: ownerSource.outboxOwnerUpdatedAt
             )
         }
 
