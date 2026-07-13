@@ -571,6 +571,9 @@ private struct ConversationView: View {
                                     if !message.body.isEmpty {
                                         Button { copyToSystemClipboard(message.body) } label: { Label("Copy Message", systemImage: "doc.on.doc") }
                                     }
+                                    Button { copyToSystemClipboard(messageMetadata(message)) } label: {
+                                        Label("Copy Message Details", systemImage: "info.square")
+                                    }
                                     if message.direction == .outgoing && (message.state == .failed || message.state == .queued) {
                                         Button { Task { await store.retryMessage(message.id) } } label: { Label("Retry Now", systemImage: "arrow.clockwise") }
                                     }
@@ -675,6 +678,24 @@ private struct ConversationView: View {
     }
 
     private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty }
+
+    private func messageMetadata(_ message: Message) -> String {
+        let formatter = ISO8601DateFormatter()
+        var lines = [
+            "Message ID: \(message.id.uuidString)",
+            "Conversation: \(conversation.destinationHash)",
+            "Direction: \(message.direction.rawValue)",
+            "Delivery state: \(message.state.rawValue)",
+            "Timestamp: \(formatter.string(from: message.timestamp))"
+        ]
+        if !message.attachments.isEmpty {
+            lines.append("Attachments: \(message.attachments.count)")
+            lines.append(contentsOf: message.attachments.map {
+                "- \($0.filename) (\(ByteCountFormatter.string(fromByteCount: Int64($0.byteCount), countStyle: .file)), \($0.state.rawValue))"
+            })
+        }
+        return lines.joined(separator: "\n")
+    }
 
     private func importAttachments(_ urls: [URL]) async {
         guard store.validateAttachmentSelection(currentCount: pendingAttachments.count, adding: urls.count) else { return }
