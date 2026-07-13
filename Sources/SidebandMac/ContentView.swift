@@ -865,8 +865,16 @@ private struct NewConversationView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("New Conversation").font(.title2.bold())
             TextField("Display name (optional)", text: $name)
-            TextField("32-character LXMF destination", text: $address).font(.body.monospaced())
-            HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Create") { if store.addConversation(destinationHash: address, displayName: name) { dismiss() } }.buttonStyle(.borderedProminent) }
+            TextField("LXMF destination or sideband:// contact link", text: $address).font(.body.monospaced())
+            HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Create", action: create).buttonStyle(.borderedProminent) }
         }.textFieldStyle(.roundedBorder).padding(24).frame(width: 470)
+    }
+
+    private func create() {
+        let contact = SidebandContactLink(string: address)
+        let destination = contact?.destinationHash ?? address
+        let enteredName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = enteredName.isEmpty ? (contact?.displayName ?? "") : enteredName
+        if store.addConversation(destinationHash: destination, displayName: displayName) { dismiss() }
     }
 }
