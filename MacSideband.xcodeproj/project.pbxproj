@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		01E564776CA9E776B55ED75B /* ReticulumIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */; };
+		026DAF6778C7172BBEB38D1D /* VoiceMessageAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59439F9438760DD48AD116BC /* VoiceMessageAudio.swift */; };
 		03301265781053B5497105C0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
 		046FAAE4F5A84EB7639357D2 /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */; };
 		071F1C134507F4A9515A838A /* HDLC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6800FA947758CF319790C30A /* HDLC.swift */; };
@@ -27,6 +28,7 @@
 		59F1229EDE718AE45B3B46C3 /* ReticulumPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */; };
 		612902045745242AA9383C85 /* TelemetryCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */; };
 		62D4F301A54BA2A4640C447A /* ReticulumResourceSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CE179CF749411718317DA9F /* ReticulumResourceSegments.swift */; };
+		693916E438F815BA883FF42C /* ICloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDA34BD01D0B7839C37388F /* ICloudSync.swift */; };
 		6B7A84167E78768E7CC346AD /* ReticulumResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */; };
 		851A3DB3680E62E8B3785D4E /* BackgroundRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */; };
 		8ED850A22B9378E5707933E1 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57A7BD924C6049E6C5DAA4A /* Models.swift */; };
@@ -45,8 +47,6 @@
 		C3AED9F45A9A29D7881185E2 /* DestinationHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E194B906C9B4844994C97C4 /* DestinationHash.swift */; };
 		C6A7F579F12508B84057AE05 /* TCPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */; };
 		C9FBBAFC8455CCB2B8D43735 /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668FFE37826A8100E1CA09FF /* Store.swift */; };
-		D9C10A000000000000000001 /* ICloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9C10A000000000000000002 /* ICloudSync.swift */; };
-		D04A2F901E8C4A42B20E1601 /* VoiceMessageAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04A2F901E8C4A42B20E1602 /* VoiceMessageAudio.swift */; };
 		D12CA1E59042A522571C47CC /* ReticulumResourceLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */; };
 		D1E4A2CCEE53DAE8DB98144F /* SidebandCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */; };
 		D365CFC7A7FE5E7B2E4B8846 /* LXMFReceivedMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */; };
@@ -99,6 +99,7 @@
 		3F6D4D9FBA74520C1EBCA068 /* ReticulumResourceSegmentAccumulator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceSegmentAccumulator.swift; sourceTree = "<group>"; };
 		46AF8A5E292597111959AFC0 /* MessagePackDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePackDecoder.swift; sourceTree = "<group>"; };
 		55215B7B5B59B3CB768518A8 /* ReticulumResourceAdvertisement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceAdvertisement.swift; sourceTree = "<group>"; };
+		59439F9438760DD48AD116BC /* VoiceMessageAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageAudio.swift; sourceTree = "<group>"; };
 		5CF805D6403CA445FE139DFE /* Transport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transport.swift; sourceTree = "<group>"; };
 		6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumIdentity.swift; sourceTree = "<group>"; };
 		668FFE37826A8100E1CA09FF /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
@@ -108,6 +109,7 @@
 		725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPacket.swift; sourceTree = "<group>"; };
 		7578FB43B7F741FB5254EEFB /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		7AD802CD72884DC504AE787A /* NetworkReachability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkReachability.swift; sourceTree = "<group>"; };
+		8FDA34BD01D0B7839C37388F /* ICloudSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudSync.swift; sourceTree = "<group>"; };
 		A4EE409D3195CBCE25E43E03 /* MessagePack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePack.swift; sourceTree = "<group>"; };
 		A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebandContactLink.swift; sourceTree = "<group>"; };
 		A94DB2EEB1FF3081E4531FA8 /* LXMFMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFMessage.swift; sourceTree = "<group>"; };
@@ -119,9 +121,6 @@
 		C5D406BCA1BD18C778F10EA3 /* ReticulumProof.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumProof.swift; sourceTree = "<group>"; };
 		C93625631542290E7226AC8E /* ReticulumPathRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPathRequest.swift; sourceTree = "<group>"; };
 		CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentStore.swift; sourceTree = "<group>"; };
-		D04A2F901E8C4A42B20E1602 /* VoiceMessageAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMessageAudio.swift; sourceTree = "<group>"; };
-		D9C10A000000000000000002 /* ICloudSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudSync.swift; sourceTree = "<group>"; };
-		D9C10A000000000000000003 /* Sideband.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Sideband.entitlements; sourceTree = "<group>"; };
 		DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumTunnel.swift; sourceTree = "<group>"; };
 		E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = SidebandCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryCapture.swift; sourceTree = "<group>"; };
@@ -154,7 +153,6 @@
 			isa = PBXGroup;
 			children = (
 				AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */,
-				D9C10A000000000000000003 /* Sideband.entitlements */,
 				F0A6D46420007C8FA91EF432 /* SidebandAssets.xcassets */,
 			);
 			path = Support;
@@ -216,7 +214,7 @@
 				F48887EC9B5C518D3AFB7565 /* SidebandMacApp.swift */,
 				E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */,
 				BC7290C1251DFC249932DBC0 /* TelemetryViews.swift */,
-				D04A2F901E8C4A42B20E1602 /* VoiceMessageAudio.swift */,
+				59439F9438760DD48AD116BC /* VoiceMessageAudio.swift */,
 			);
 			path = SidebandMac;
 			sourceTree = "<group>";
@@ -236,7 +234,7 @@
 				CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */,
 				1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */,
 				2E194B906C9B4844994C97C4 /* DestinationHash.swift */,
-				D9C10A000000000000000002 /* ICloudSync.swift */,
+				8FDA34BD01D0B7839C37388F /* ICloudSync.swift */,
 				3454611B1022AF6027538880 /* LocalNotificationManager.swift */,
 				E57A7BD924C6049E6C5DAA4A /* Models.swift */,
 				A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */,
@@ -369,11 +367,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				046FAAE4F5A84EB7639357D2 /* AttachmentStore.swift in Sources */,
-				D9C10A000000000000000001 /* ICloudSync.swift in Sources */,
 				48EB119C7D1716383DA637A8 /* AutoInterfaceDiscovery.swift in Sources */,
 				851A3DB3680E62E8B3785D4E /* BackgroundRefreshCoordinator.swift in Sources */,
 				C3AED9F45A9A29D7881185E2 /* DestinationHash.swift in Sources */,
 				071F1C134507F4A9515A838A /* HDLC.swift in Sources */,
+				693916E438F815BA883FF42C /* ICloudSync.swift in Sources */,
 				34B42B0C911C5E91A4C25053 /* LANGatewayDiscovery.swift in Sources */,
 				FE7573CA2B305D7801D7B736 /* LXMFAnnounceInfo.swift in Sources */,
 				AF13402E68C11412BB92925A /* LXMFMessage.swift in Sources */,
@@ -420,7 +418,7 @@
 				91FD929272BA3B900D30332E /* SidebandMacApp.swift in Sources */,
 				612902045745242AA9383C85 /* TelemetryCapture.swift in Sources */,
 				BFCC9E8D2B1B6F34169A774D /* TelemetryViews.swift in Sources */,
-				D04A2F901E8C4A42B20E1601 /* VoiceMessageAudio.swift in Sources */,
+				026DAF6778C7172BBEB38D1D /* VoiceMessageAudio.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -440,8 +438,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_ENTITLEMENTS = Support/Sideband.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 8;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -569,8 +567,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_ENTITLEMENTS = Support/Sideband.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 8;
 				GENERATE_INFOPLIST_FILE = NO;
