@@ -358,6 +358,10 @@ private struct NetworkView: View {
                 .font(.callout).foregroundStyle(.secondary)
             GroupBox("Interface") {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
+                GridRow {
+                    Text("Local name")
+                    TextField("Sideband Swift", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
+                }
                 GridRow { Text("Host"); TextField("127.0.0.1", text: $store.networkHost) }
                 GridRow { Text("IPv6 host"); TextField("IPv6 gateway", text: $store.networkIPv6Host) }
                 GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
