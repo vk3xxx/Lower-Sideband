@@ -215,6 +215,15 @@ import Testing
     #expect(reloaded.conversations.first?.isPinned == true)
 }
 
+@MainActor @Test func mutedConversationStatePersists() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let id = store.conversations[0].id
+    store.setConversationNotificationsMuted(true, conversationID: id)
+    #expect(SidebandStore(persistenceURL: url).conversations[0].notificationsMuted)
+}
+
 @MainActor @Test func conversationDraftPersistsAndClears() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

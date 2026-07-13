@@ -39,6 +39,7 @@ struct ContentView: View {
                             HStack {
                                 Text(conversation.displayName).font(.headline)
                                 if conversation.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Pinned") }
+                                if conversation.notificationsMuted { Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Notifications muted") }
                                 if conversation.isTrusted {
                                     Image(systemName: "checkmark.shield.fill").foregroundStyle(.green).accessibilityLabel("Trusted contact")
                                 }
@@ -91,6 +92,11 @@ struct ContentView: View {
                             else { store.markConversationUnread(conversation.id) }
                         } label: {
                             Label(conversation.unreadCount > 0 ? "Mark as Read" : "Mark as Unread", systemImage: conversation.unreadCount > 0 ? "envelope.open" : "envelope.badge")
+                        }
+                        Button {
+                            store.setConversationNotificationsMuted(!conversation.notificationsMuted, conversationID: conversation.id)
+                        } label: {
+                            Label(conversation.notificationsMuted ? "Unmute Notifications" : "Mute Notifications", systemImage: conversation.notificationsMuted ? "bell" : "bell.slash")
                         }
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }
