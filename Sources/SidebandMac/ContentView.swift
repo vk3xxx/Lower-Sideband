@@ -674,6 +674,13 @@ private struct ConversationView: View {
                                     Button { copyToSystemClipboard(messageMetadata(message)) } label: {
                                         Label("Copy Message Details", systemImage: "info.square")
                                     }
+                                    if !message.attachments.isEmpty {
+                                        Menu("Copy Attachment Details", systemImage: "paperclip") {
+                                            ForEach(message.attachments) { attachment in
+                                                Button(attachment.filename) { copyToSystemClipboard(attachmentMetadata(attachment)) }
+                                            }
+                                        }
+                                    }
                                     if message.direction == .outgoing && (message.state == .failed || message.state == .queued) {
                                         Button { Task { await store.retryMessage(message.id) } } label: { Label("Retry Now", systemImage: "arrow.clockwise") }
                                     }
@@ -798,6 +805,20 @@ private struct ConversationView: View {
             lines.append(contentsOf: message.attachments.map {
                 "- \($0.filename) (\(ByteCountFormatter.string(fromByteCount: Int64($0.byteCount), countStyle: .file)), \($0.state.rawValue))"
             })
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func attachmentMetadata(_ attachment: Attachment) -> String {
+        var lines = [
+            "Attachment ID: \(attachment.id.uuidString)",
+            "Filename: \(attachment.filename)",
+            "MIME type: \(attachment.mimeType ?? "unknown")",
+            "Size: \(ByteCountFormatter.string(fromByteCount: Int64(attachment.byteCount), countStyle: .file))",
+            "Transfer state: \(attachment.state.rawValue)"
+        ]
+        if let contentHash = attachment.contentHash {
+            lines.append("SHA-256: \(contentHash.map { String(format: "%02x", $0) }.joined())")
         }
         return lines.joined(separator: "\n")
     }
