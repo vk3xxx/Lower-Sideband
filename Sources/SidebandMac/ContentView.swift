@@ -60,6 +60,7 @@ struct ContentView: View {
         } detail: {
             if let conversation = store.selectedConversation {
                 ConversationView(store: store, conversation: conversation)
+                    .id(conversation.id)
             } else {
                 ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a conversation using an LXMF destination."))
             }
@@ -403,6 +404,8 @@ private struct ConversationView: View {
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case let .success(urls) = result { Task { await importAttachments(urls) } }
         }
+        .onAppear { store.conversationDidAppear(conversation.id) }
+        .onDisappear { store.conversationDidDisappear(conversation.id) }
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }

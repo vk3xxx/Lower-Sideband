@@ -30,6 +30,7 @@ public final class SidebandStore {
     public private(set) var recoveredOutboundCount = 0
     public private(set) var incomingResourceProgress: [String: Double] = [:]
     public private(set) var isApplicationActive = true
+    public private(set) var visibleConversationID: UUID?
     public var networkHost: String
     public var networkIPv6Host: String
     public var networkPort: Int
@@ -46,13 +47,7 @@ public final class SidebandStore {
     public let resourceStagingStore: ReticulumResourceStagingStore
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
-    public var selectedConversationID: UUID? {
-        didSet {
-            if selectedConversationID != oldValue, let selectedConversationID {
-                markConversationRead(selectedConversationID)
-            }
-        }
-    }
+    public var selectedConversationID: UUID?
     public var lastError: String?
 
     private let transport: any MessageTransport
@@ -149,6 +144,15 @@ public final class SidebandStore {
         save()
     }
 
+    public func conversationDidAppear(_ conversationID: UUID) {
+        visibleConversationID = conversationID
+        if isApplicationActive { markConversationRead(conversationID) }
+    }
+
+    public func conversationDidDisappear(_ conversationID: UUID) {
+        if visibleConversationID == conversationID { visibleConversationID = nil }
+    }
+
     public func send(_ text: String) async {
         await send(text, attachments: [])
     }
@@ -240,7 +244,7 @@ public final class SidebandStore {
 
     public func applicationDidBecomeActive() async {
         isApplicationActive = true
-        if let selectedConversationID { markConversationRead(selectedConversationID) }
+        if let visibleConversationID { markConversationRead(visibleConversationID) }
         if autoConnectEnabled, networkState != .ready { await connectNetwork() }
         if autoInterfaceEnabled, !autoInterfaceDiscovery.isListening { autoInterfaceDiscovery.start() }
         startPeriodicPropagationSync()
@@ -1077,7 +1081,7 @@ public final class SidebandStore {
 
     func noteIncomingActivity(in conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
-        if !isApplicationActive || selectedConversationID != conversationID {
+        if !isApplicationActive || visibleConversationID != conversationID {
             conversations[index].unreadCount += 1
         }
         touch(conversationID)

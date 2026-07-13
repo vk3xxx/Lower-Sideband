@@ -63,7 +63,7 @@ import Testing
     #expect(store.recoveredOutboundCount == 1)
 }
 
-@MainActor @Test func selectingConversationClearsPersistedUnreadCount() throws {
+@MainActor @Test func showingConversationClearsPersistedUnreadCount() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let unread = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Unread", unreadCount: 3)
     let selected = Conversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Selected")
@@ -75,6 +75,8 @@ import Testing
     let store = SidebandStore(persistenceURL: url)
     #expect(store.conversations.first(where: { $0.id == unread.id })?.unreadCount == 3)
     store.selectedConversationID = unread.id
+    #expect(store.conversations.first(where: { $0.id == unread.id })?.unreadCount == 3)
+    store.conversationDidAppear(unread.id)
     #expect(store.conversations.first(where: { $0.id == unread.id })?.unreadCount == 0)
 
     let reloaded = SidebandStore(persistenceURL: url)
@@ -96,6 +98,7 @@ import Testing
     let store = SidebandStore(persistenceURL: url)
     #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Selected"))
     let selectedID = try #require(store.selectedConversationID)
+    store.conversationDidAppear(selectedID)
 
     store.applicationDidBecomeInactive()
     store.noteIncomingActivity(in: selectedID)
