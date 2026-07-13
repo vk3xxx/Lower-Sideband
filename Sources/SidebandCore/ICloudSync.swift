@@ -1,4 +1,5 @@
 import CloudKit
+import CryptoKit
 import Foundation
 
 public enum ICloudSyncStatus: Equatable, Sendable {
@@ -59,13 +60,75 @@ public protocol CloudSnapshotSyncing: Sendable {
     func saveAttachment(_ payload: CloudAttachmentPayload) async throws
 }
 
+enum CloudPayloadCipherError: Error {
+    case invalidCiphertext
+}
+
+struct CloudPayloadCipher: Sendable {
+    private let key: SymmetricKey
+
+    init() {
+        let material = SecureIdentityStore.loadOrCreate(
+            account: "icloud.payload.encryption",
+            legacyDefaultsKey: "iCloudPayloadEncryptionKey",
+            synchronizable: true
+        )
+        self.init(keyMaterial: material)
+    }
+
+    init(keyMaterial: Data) {
+        let domain = Data("Sideband private CloudKit payload key v1".utf8)
+        key = SymmetricKey(data: SHA256.hash(data: domain + keyMaterial))
+    }
+
+    func seal<Value: Encodable>(_ value: Value, context: String) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let plaintext = try encoder.encode(value)
+        let sealed = try AES.GCM.seal(plaintext, using: key, authenticating: Data(context.utf8))
+        guard let combined = sealed.combined else { throw CloudPayloadCipherError.invalidCiphertext }
+        return combined
+    }
+
+    func open<Value: Decodable>(_ type: Value.Type, ciphertext: Data, context: String) throws -> Value {
+        let box = try AES.GCM.SealedBox(combined: ciphertext)
+        let plaintext = try AES.GCM.open(box, using: key, authenticating: Data(context.utf8))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(type, from: plaintext)
+    }
+
+    func recordName(for scope: String) -> String {
+        let authentication = HMAC<SHA256>.authenticationCode(for: Data(scope.utf8), using: key)
+        return Data(authentication).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private struct CloudSnapshotEnvelope: Codable {
+    let version: Int
+    let data: Data
+    let modifiedAt: Date
+    let deviceID: String
+}
+
+private struct CloudAttachmentEnvelope: Codable {
+    let version: Int
+    let id: UUID
+    let data: Data
+    let filename: String
+    let mimeType: String?
+    let contentHash: Data
+}
+
 public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
     public static let containerIdentifier = "iCloud.com.supes.MacSideband"
     private let containerIdentifier: String
-    private let recordID = CKRecord.ID(recordName: "sideband-private-state-v1")
+    private let cipher: CloudPayloadCipher
 
     public init(containerIdentifier: String = CloudKitSnapshotSync.containerIdentifier) {
         self.containerIdentifier = containerIdentifier
+        cipher = CloudPayloadCipher()
     }
 
     public func accountAvailable() async -> Bool {
@@ -80,27 +143,31 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
 
     public func fetchSnapshot() async throws -> CloudSnapshotPayload? {
         let database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
+        let recordID = snapshotRecordID
         let record: CKRecord
         do { record = try await database.record(for: recordID) }
         catch let error as CKError where error.code == .unknownItem { return nil }
-        let encrypted = record.encryptedValues["snapshot"] as? Data
-            ?? (record.encryptedValues["snapshot"] as? NSData).map { Data(referencing: $0) }
-        guard let encrypted else { return nil }
+        let ciphertext = record.encryptedValues["payload"] as? Data
+            ?? (record.encryptedValues["payload"] as? NSData).map { Data(referencing: $0) }
+        guard let ciphertext else { return nil }
+        let envelope = try cipher.open(CloudSnapshotEnvelope.self, ciphertext: ciphertext, context: "snapshot-v1")
         return CloudSnapshotPayload(
-            data: encrypted,
-            modifiedAt: record["modifiedAt"] as? Date ?? record.modificationDate ?? .distantPast,
-            deviceID: record["deviceID"] as? String ?? "unknown"
+            data: envelope.data,
+            modifiedAt: envelope.modifiedAt,
+            deviceID: envelope.deviceID
         )
     }
 
     public func saveSnapshot(_ payload: CloudSnapshotPayload) async throws {
         let database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
+        let recordID = snapshotRecordID
         let record: CKRecord
         do { record = try await database.record(for: recordID) }
         catch let error as CKError where error.code == .unknownItem { record = CKRecord(recordType: "SidebandState", recordID: recordID) }
-        record.encryptedValues["snapshot"] = payload.data as NSData
-        record["modifiedAt"] = payload.modifiedAt as NSDate
-        record["deviceID"] = payload.deviceID as NSString
+        let envelope = CloudSnapshotEnvelope(
+            version: 1, data: payload.data, modifiedAt: payload.modifiedAt, deviceID: payload.deviceID
+        )
+        record.encryptedValues["payload"] = try cipher.seal(envelope, context: "snapshot-v1") as NSData
         _ = try await database.save(record)
     }
 
@@ -109,16 +176,19 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
         let record: CKRecord
         do { record = try await database.record(for: attachmentRecordID(id)) }
         catch let error as CKError where error.code == .unknownItem { return nil }
-        guard let asset = record.encryptedValues["file"] as? CKAsset,
-              let fileURL = asset.fileURL,
-              let filename = record.encryptedValues["filename"] as? String,
-              let contentHash = record.encryptedValues["contentHash"] as? Data else { return nil }
+        guard let asset = record.encryptedValues["payload"] as? CKAsset,
+              let fileURL = asset.fileURL else { return nil }
+        let ciphertext = try Data(contentsOf: fileURL)
+        let envelope = try cipher.open(
+            CloudAttachmentEnvelope.self, ciphertext: ciphertext, context: "attachment-v1:\(id.uuidString.lowercased())"
+        )
+        guard envelope.id == id else { throw CloudPayloadCipherError.invalidCiphertext }
         return CloudAttachmentPayload(
             id: id,
-            data: try Data(contentsOf: fileURL),
-            filename: filename,
-            mimeType: record.encryptedValues["mimeType"] as? String,
-            contentHash: contentHash
+            data: envelope.data,
+            filename: envelope.filename,
+            mimeType: envelope.mimeType,
+            contentHash: envelope.contentHash
         )
     }
 
@@ -127,26 +197,30 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
         let recordID = attachmentRecordID(payload.id)
         let record: CKRecord
         do {
-            let existing = try await database.record(for: recordID)
-            if existing.encryptedValues["contentHash"] as? Data == payload.contentHash { return }
-            record = existing
+            _ = try await database.record(for: recordID)
+            return
         } catch let error as CKError where error.code == .unknownItem {
             record = CKRecord(recordType: "SidebandAttachment", recordID: recordID)
         }
         let temporaryURL = FileManager.default.temporaryDirectory
             .appending(path: "sideband-cloud-\(payload.id.uuidString)-\(UUID().uuidString)")
-        try payload.data.write(to: temporaryURL, options: .atomic)
+        let envelope = CloudAttachmentEnvelope(
+            version: 1, id: payload.id, data: payload.data, filename: payload.filename,
+            mimeType: payload.mimeType, contentHash: payload.contentHash
+        )
+        let ciphertext = try cipher.seal(envelope, context: "attachment-v1:\(payload.id.uuidString.lowercased())")
+        try ciphertext.write(to: temporaryURL, options: .atomic)
         defer { try? FileManager.default.removeItem(at: temporaryURL) }
-        record.encryptedValues["file"] = CKAsset(fileURL: temporaryURL)
-        record.encryptedValues["filename"] = payload.filename as NSString
-        if let mimeType = payload.mimeType { record.encryptedValues["mimeType"] = mimeType as NSString }
-        else { record.encryptedValues["mimeType"] = nil }
-        record.encryptedValues["contentHash"] = payload.contentHash as NSData
+        record.encryptedValues["payload"] = CKAsset(fileURL: temporaryURL)
         _ = try await database.save(record)
     }
 
     private func attachmentRecordID(_ id: UUID) -> CKRecord.ID {
-        CKRecord.ID(recordName: "attachment-\(id.uuidString.lowercased())")
+        CKRecord.ID(recordName: cipher.recordName(for: "attachment-v1:\(id.uuidString.lowercased())"))
+    }
+
+    private var snapshotRecordID: CKRecord.ID {
+        CKRecord.ID(recordName: cipher.recordName(for: "snapshot-v1"))
     }
 }
 

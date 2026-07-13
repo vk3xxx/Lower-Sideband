@@ -1203,6 +1203,48 @@ import Testing
     #expect(merged.discoveries == [localDiscovery])
 }
 
+@Test func cloudPayloadEncryptionRoundTripsWithoutExposingPlaintext() throws {
+    struct Secret: Codable, Equatable { let message: String; let count: Int }
+    let cipher = CloudPayloadCipher(keyMaterial: Data(repeating: 0x42, count: 64))
+    let secret = Secret(message: "private conversation text", count: 7)
+
+    let ciphertext = try cipher.seal(secret, context: "snapshot-v1")
+    let opened = try cipher.open(Secret.self, ciphertext: ciphertext, context: "snapshot-v1")
+
+    #expect(opened == secret)
+    #expect(!ciphertext.contains(Data(secret.message.utf8)))
+}
+
+@Test func cloudPayloadEncryptionRejectsTamperingAndWrongContext() throws {
+    struct Secret: Codable { let message: String }
+    let cipher = CloudPayloadCipher(keyMaterial: Data(repeating: 0x24, count: 64))
+    let ciphertext = try cipher.seal(Secret(message: "authenticated"), context: "snapshot-v1")
+    var tampered = ciphertext
+    tampered[tampered.index(before: tampered.endIndex)] ^= 0x01
+
+    var tamperRejected = false
+    do { _ = try cipher.open(Secret.self, ciphertext: tampered, context: "snapshot-v1") }
+    catch { tamperRejected = true }
+    #expect(tamperRejected)
+
+    var wrongContextRejected = false
+    do { _ = try cipher.open(Secret.self, ciphertext: ciphertext, context: "attachment-v1") }
+    catch { wrongContextRejected = true }
+    #expect(wrongContextRejected)
+}
+
+@Test func cloudRecordNamesAreOpaqueAndDomainSeparated() {
+    let cipher = CloudPayloadCipher(keyMaterial: Data(repeating: 0x5a, count: 64))
+    let attachmentID = UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff")!
+    let attachmentScope = "attachment-v1:\(attachmentID.uuidString.lowercased())"
+    let first = cipher.recordName(for: attachmentScope)
+
+    #expect(first == cipher.recordName(for: attachmentScope))
+    #expect(first != cipher.recordName(for: "snapshot-v1"))
+    #expect(!first.contains(attachmentID.uuidString.lowercased()))
+    #expect(first.count == 64)
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
     init(hex: String) {
