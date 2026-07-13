@@ -358,9 +358,10 @@ private struct ConversationView: View {
     @State private var draft = ""
     @State private var pendingAttachments: [Attachment] = []
     @State private var showingFileImporter = false
+    @State private var messageSearch = ""
 
     var body: some View {
-        let conversationMessages = store.messages(for: conversation.id)
+        let conversationMessages = filteredMessages
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading) {
@@ -368,6 +369,9 @@ private struct ConversationView: View {
                     Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary)
                 }
                 Spacer()
+                TextField("Search messages", text: $messageSearch)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 220)
                 Label(routingStatus, systemImage: routingIcon)
                     .font(.caption).foregroundStyle(.secondary)
             }.padding()
@@ -439,6 +443,15 @@ private struct ConversationView: View {
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
+
+    private var filteredMessages: [Message] {
+        let all = store.messages(for: conversation.id)
+        let query = messageSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return all }
+        return all.filter { message in
+            message.body.localizedCaseInsensitiveContains(query) || message.attachments.contains { $0.filename.localizedCaseInsensitiveContains(query) }
+        }
+    }
 
     private func scrollToBottom(using proxy: ScrollViewProxy) {
         Task { @MainActor in
