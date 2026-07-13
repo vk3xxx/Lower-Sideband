@@ -58,8 +58,9 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var direction: Direction
     public var state: DeliveryState
     public var attachments: [Attachment]
+    public var telemetry: SidebandTelemetry?
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = []) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
@@ -67,9 +68,10 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.direction = direction
         self.state = state
         self.attachments = attachments
+        self.telemetry = telemetry
     }
 
-    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments }
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -79,6 +81,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         direction = try values.decode(Direction.self, forKey: .direction)
         state = try values.decode(DeliveryState.self, forKey: .state)
         attachments = try values.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
+        telemetry = try values.decodeIfPresent(SidebandTelemetry.self, forKey: .telemetry)
     }
 }
 

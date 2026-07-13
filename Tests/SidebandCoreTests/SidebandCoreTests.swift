@@ -222,6 +222,20 @@ import Testing
     #expect(store.messages[0].state == .queued)
 }
 
+@MainActor @Test func queuedTelemetryPersistsAcrossRelaunch() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Telemetry Peer"))
+    let telemetry = SidebandTelemetry(
+        capturedAt: Date(timeIntervalSince1970: 1_700_000_000),
+        location: .init(latitude: -37.8136, longitude: 144.9631, accuracy: 8, updatedAt: Date(timeIntervalSince1970: 1_700_000_000))
+    )
+
+    await store.send("Position", attachments: [], telemetry: telemetry)
+    let reloaded = SidebandStore(persistenceURL: url)
+    #expect(reloaded.messages.first?.telemetry == telemetry)
+}
+
 @MainActor @Test func rejectsOversizedMessageText() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

@@ -307,12 +307,12 @@ public final class SidebandStore {
     }
 
     public func send(_ text: String) async {
-        await send(text, attachments: [])
+        await send(text, attachments: [], telemetry: nil)
     }
 
-    public func send(_ text: String, attachments: [Attachment]) async {
+    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil) async {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!body.isEmpty || !attachments.isEmpty), let conversation = selectedConversation else { return }
+        guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil), let conversation = selectedConversation else { return }
         guard !conversation.isBlocked else {
             lastError = "Unblock this contact before sending a message."
             return
@@ -325,8 +325,12 @@ public final class SidebandStore {
             lastError = "Messages are limited to \(SidebandMessageLimits.maximumAttachments) attachments."
             return
         }
+        guard telemetry == nil || attachments.isEmpty else {
+            lastError = "Send telemetry separately from file attachments."
+            return
+        }
         guard validateAttachmentTotal(attachments) else { return }
-        let message = Message(conversationID: conversation.id, body: body, direction: .outgoing, state: .queued, attachments: attachments)
+        let message = Message(conversationID: conversation.id, body: body, direction: .outgoing, state: .queued, attachments: attachments, telemetry: telemetry)
         messages.append(message)
         touch(conversation.id)
         save()
@@ -1058,7 +1062,8 @@ public final class SidebandStore {
             _ = addConversation(destinationHash: source, displayName: name, select: false)
         }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }), let body = String(data: message.content, encoding: .utf8) else { return false }
-        messages.append(Message(conversationID: conversation.id, body: body, timestamp: Date(timeIntervalSince1970: message.timestamp), direction: .incoming, state: .delivered))
+        let telemetry = message.binaryField(0x02).flatMap { try? SidebandTelemetry(packed: $0) }
+        messages.append(Message(conversationID: conversation.id, body: body, timestamp: Date(timeIntervalSince1970: message.timestamp), direction: .incoming, state: .delivered, telemetry: telemetry))
         noteIncomingActivity(in: conversation.id)
         receivedLXMFIDs.insert(message.messageID.hex)
         UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
@@ -1101,7 +1106,7 @@ public final class SidebandStore {
         var requiresLink = !attachmentMessages.isEmpty
         for item in queued {
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8), fields: lxmfFields(for: item))
                 let raw = try lxmf.opportunisticPacket(recipientIdentity: recipient, ratchet: discovery.ratchet)
                 guard raw.count <= 500 else { requiresLink = true; continue }
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
@@ -1120,7 +1125,7 @@ public final class SidebandStore {
         for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }) {
             guard item.attachments.isEmpty else { continue }
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8), fields: lxmfFields(for: item))
                 let raw = try session.encryptedPacket(lxmf.packed)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
@@ -1389,7 +1394,7 @@ public final class SidebandStore {
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
         for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued }) {
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8), fields: lxmfFields(for: item))
                 let envelope = try lxmf.propagatedEnvelope(recipientIdentity: recipient, ratchet: discovery.ratchet)
                 let raw = try propagationSession.encryptedPacket(envelope)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
@@ -1405,6 +1410,10 @@ public final class SidebandStore {
         let paths = await pathTable.all()
         knownPathHashes = Set(paths.map { $0.destinationHash.hex })
         pendingPathHashes.subtract(knownPathHashes)
+    }
+
+    private func lxmfFields(for message: Message) -> [UInt64: Data] {
+        message.telemetry.map { [0x02: $0.packed()] } ?? [:]
     }
 
     private func touch(_ id: UUID) {
