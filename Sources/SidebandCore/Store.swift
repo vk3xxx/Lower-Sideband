@@ -608,6 +608,35 @@ public final class SidebandStore {
         return data
     }
 
+    public func validatedSnapshot(from data: Data) throws -> AppSnapshot {
+        let snapshot = try JSONDecoder.sideband.decode(AppSnapshot.self, from: data)
+        guard snapshot.schemaVersion <= AppSnapshot.currentSchemaVersion else { throw SnapshotError.unsupportedVersion }
+        let conversationIDs = Set(snapshot.conversations.map(\.id))
+        let destinations = snapshot.conversations.map(\.destinationHash)
+        guard conversationIDs.count == snapshot.conversations.count,
+              Set(destinations).count == destinations.count,
+              destinations.allSatisfy(DestinationHash.isValid),
+              snapshot.messages.allSatisfy({ conversationIDs.contains($0.conversationID) }),
+              snapshot.drafts.keys.allSatisfy({ conversationIDs.contains($0) }),
+              snapshot.messages.flatMap(\.attachments).allSatisfy({
+                  !$0.relativePath.isEmpty && URL(fileURLWithPath: $0.relativePath).lastPathComponent == $0.relativePath
+              }) else { throw SnapshotError.invalidData }
+        return snapshot
+    }
+
+    public func restoreSnapshotData(_ data: Data) throws {
+        let snapshot = try validatedSnapshot(from: data)
+        conversations = snapshot.conversations
+        sortConversations()
+        messages = snapshot.messages
+        discoveries = snapshot.discoveries
+        drafts = snapshot.drafts
+        selectedConversationID = conversations.first?.id
+        visibleConversationID = nil
+        save()
+        syncUnreadBadge()
+    }
+
     public func startGatewayDiscovery() { lanDiscovery.start() }
     public func stopGatewayDiscovery() { lanDiscovery.stop() }
     public func startAutoInterfaceDiscovery() {

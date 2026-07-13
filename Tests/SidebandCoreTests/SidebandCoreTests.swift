@@ -134,6 +134,19 @@ import Testing
     #expect(snapshot.conversations.first?.displayName == "Backup Peer")
 }
 
+@MainActor @Test func validatedBackupRestoresApplicationState() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let source = SidebandStore(persistenceURL: root.appending(path: "source.json"))
+    #expect(source.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Restored Peer"))
+    source.updateDraft("saved draft", for: source.conversations[0].id)
+    let backup = try source.exportSnapshotData()
+    let target = SidebandStore(persistenceURL: root.appending(path: "target.json"))
+
+    try target.restoreSnapshotData(backup)
+    #expect(target.conversations.first?.displayName == "Restored Peer")
+    #expect(target.draft(for: target.conversations[0].id) == "saved draft")
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
