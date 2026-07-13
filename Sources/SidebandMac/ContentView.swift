@@ -28,6 +28,7 @@ struct ContentView: View {
     @State private var showingNewConversation = false
     @State private var showingNetwork = false
     @State private var conversationSearch = ""
+    @State private var showingArchived = false
     @State private var renamingConversation: Conversation?
     @State private var renameDraft = ""
     @State private var deletingConversation: Conversation?
@@ -41,6 +42,7 @@ struct ContentView: View {
                             HStack {
                                 Text(conversation.displayName).font(.headline)
                                 if conversation.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Pinned") }
+                                if conversation.isArchived { Image(systemName: "archivebox.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Archived") }
                                 if conversation.notificationsMuted { Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Notifications muted") }
                                 Image(systemName: sidebarRouteIcon(for: conversation))
                                     .font(.caption)
@@ -115,6 +117,14 @@ struct ContentView: View {
                             Label(conversation.isPinned ? "Unpin" : "Pin", systemImage: conversation.isPinned ? "pin.slash" : "pin")
                         }
                         Button {
+                            store.setConversationArchived(!conversation.isArchived, conversationID: conversation.id)
+                            if !showingArchived && !conversation.isArchived {
+                                store.selectedConversationID = store.conversations.first(where: { !$0.isArchived })?.id
+                            }
+                        } label: {
+                            Label(conversation.isArchived ? "Unarchive" : "Archive", systemImage: conversation.isArchived ? "tray.and.arrow.up" : "archivebox")
+                        }
+                        Button {
                             if conversation.unreadCount > 0 { store.markConversationRead(conversation.id) }
                             else { store.markConversationUnread(conversation.id) }
                         } label: {
@@ -171,6 +181,10 @@ struct ContentView: View {
                 Button(action: { showingNetwork = true }) {
                     Label(networkToolbarLabel, systemImage: networkToolbarIcon)
                 }.help("Reticulum network status")
+                Button { showingArchived.toggle() } label: {
+                    Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
+                }
+                .help(showingArchived ? "Hide archived conversations" : "Show archived conversations")
                 Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
             }
         } detail: {
@@ -229,8 +243,9 @@ struct ContentView: View {
 
     private var filteredConversations: [Conversation] {
         let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return store.conversations }
-        return store.conversations.filter {
+        let visible = store.conversations.filter { showingArchived || !$0.isArchived }
+        guard !query.isEmpty else { return visible }
+        return visible.filter {
             $0.displayName.localizedCaseInsensitiveContains(query) || $0.destinationHash.localizedCaseInsensitiveContains(query)
         }
     }
