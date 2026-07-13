@@ -192,6 +192,17 @@ import Testing
     #expect(SidebandStore(persistenceURL: url).conversations[0].isTrusted)
 }
 
+@MainActor @Test func conversationDraftPersistsAndClears() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let id = store.conversations[0].id
+    store.updateDraft("unfinished", for: id)
+    #expect(SidebandStore(persistenceURL: url).draft(for: id) == "unfinished")
+    store.updateDraft("", for: id)
+    #expect(SidebandStore(persistenceURL: url).draft(for: id).isEmpty)
+}
+
 @MainActor @Test func selectedConversationRemainsUnreadUntilApplicationIsActive() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

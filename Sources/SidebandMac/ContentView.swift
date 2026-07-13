@@ -534,8 +534,12 @@ private struct ConversationView: View {
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case let .success(urls) = result { Task { await importAttachments(urls) } }
         }
-        .onAppear { store.conversationDidAppear(conversation.id) }
+        .onAppear {
+            draft = store.draft(for: conversation.id)
+            store.conversationDidAppear(conversation.id)
+        }
         .onDisappear { store.conversationDidDisappear(conversation.id) }
+        .onChange(of: draft) { _, value in store.updateDraft(value, for: conversation.id) }
         .quickLookPreview($previewAttachmentURL)
     }
 
@@ -561,6 +565,7 @@ private struct ConversationView: View {
         let text = draft
         let attachments = pendingAttachments
         draft = ""
+        store.updateDraft("", for: conversation.id)
         pendingAttachments = []
         Task { await store.send(text, attachments: attachments) }
     }

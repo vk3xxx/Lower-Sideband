@@ -5,6 +5,7 @@ import Observation
 public final class SidebandStore {
     public private(set) var conversations: [Conversation] = []
     public private(set) var messages: [Message] = []
+    public private(set) var drafts: [UUID: String] = [:]
     public private(set) var transportState: TransportState = .offline
     public private(set) var networkState: ReticulumTCPInterface.State = .stopped
     public private(set) var receivedPacketCount = 0
@@ -138,6 +139,14 @@ public final class SidebandStore {
         return (["Conversation with \(conversation.displayName)", "Destination: \(conversation.destinationHash)", ""] + lines).joined(separator: "\n")
     }
 
+    public func draft(for conversationID: UUID) -> String { drafts[conversationID] ?? "" }
+
+    public func updateDraft(_ text: String, for conversationID: UUID) {
+        if text.isEmpty { drafts.removeValue(forKey: conversationID) }
+        else { drafts[conversationID] = text }
+        save()
+    }
+
     @discardableResult
     public func addConversation(destinationHash: String, displayName: String, select: Bool = true) -> Bool {
         let hash = destinationHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -182,6 +191,7 @@ public final class SidebandStore {
             }
         }
         messages.removeAll { $0.conversationID == conversationID }
+        drafts.removeValue(forKey: conversationID)
         conversations.removeAll { $0.id == conversationID }
         if visibleConversationID == conversationID { visibleConversationID = nil }
         if selectedConversationID == conversationID { selectedConversationID = conversations.first?.id }
@@ -1194,6 +1204,8 @@ public final class SidebandStore {
             }
         }
         discoveries = snapshot.discoveries
+        let conversationIDs = Set(conversations.map(\.id))
+        drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }
         selectedConversationID = conversations.first?.id
         if recoveredOutboundCount > 0 { save() }
     }
@@ -1201,7 +1213,7 @@ public final class SidebandStore {
     private func save() {
         do {
             try FileManager.default.createDirectory(at: persistenceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries))
+            let data = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts))
             try data.write(to: persistenceURL, options: .atomic)
         } catch { lastError = "Could not save local data: \(error.localizedDescription)" }
     }
