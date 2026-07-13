@@ -308,6 +308,7 @@ public final class SidebandStore {
             lastError = "Messages are limited to \(SidebandMessageLimits.maximumAttachments) attachments."
             return
         }
+        guard validateAttachmentTotal(attachments) else { return }
         let message = Message(conversationID: conversation.id, body: body, direction: .outgoing, state: .queued, attachments: attachments)
         messages.append(message)
         touch(conversation.id)
@@ -332,6 +333,16 @@ public final class SidebandStore {
         }
         guard !isDuplicate else {
             lastError = "\(candidate.filename) is already attached."
+            return false
+        }
+        return true
+    }
+
+    public func validateAttachmentTotal(_ attachments: [Attachment]) -> Bool {
+        let total = attachments.reduce(0) { $0 + $1.byteCount }
+        guard total <= SidebandMessageLimits.maximumCombinedAttachmentBytes else {
+            let limit = ByteCountFormatter.string(fromByteCount: Int64(SidebandMessageLimits.maximumCombinedAttachmentBytes), countStyle: .file)
+            lastError = "Combined attachments are limited to \(limit) per message."
             return false
         }
         return true

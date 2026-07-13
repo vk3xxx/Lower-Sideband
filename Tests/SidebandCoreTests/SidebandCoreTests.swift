@@ -206,6 +206,17 @@ import Testing
     #expect(store.lastError?.contains("already attached") == true)
 }
 
+@MainActor @Test func combinedAttachmentSizeIsLimitedPerMessage() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    let half = SidebandMessageLimits.maximumCombinedAttachmentBytes / 2
+    let first = Attachment(filename: "first.bin", byteCount: half + 1, relativePath: "first", state: .local)
+    let second = Attachment(filename: "second.bin", byteCount: half, relativePath: "second", state: .local)
+
+    #expect(!store.validateAttachmentTotal([first, second]))
+    #expect(store.lastError?.contains("Combined attachments") == true)
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
