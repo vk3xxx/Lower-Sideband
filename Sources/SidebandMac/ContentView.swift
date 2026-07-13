@@ -625,7 +625,15 @@ private struct ConversationView: View {
                             )
                             .frame(maxWidth: .infinity, minHeight: 260)
                         }
-                        ForEach(conversationMessages) { message in
+                        ForEach(Array(conversationMessages.enumerated()), id: \.element.id) { index, message in
+                            if index == 0 || !Calendar.current.isDate(message.timestamp, inSameDayAs: conversationMessages[index - 1].timestamp) {
+                                Text(message.timestamp.formatted(date: .long, time: .omitted))
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.secondary)
+                                    .padding(.vertical, 4)
+                                    .frame(maxWidth: .infinity)
+                                    .accessibilityAddTraits(.isHeader)
+                            }
                             HStack {
                                 if message.direction == .outgoing { Spacer(minLength: 80) }
                                 VStack(alignment: .leading, spacing: 5) {
