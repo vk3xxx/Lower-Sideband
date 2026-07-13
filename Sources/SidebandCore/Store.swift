@@ -65,6 +65,7 @@ public final class SidebandStore {
     private let pathTable = ReticulumPathTable()
     private var pendingLinks: [String: ReticulumLinkRequest] = [:]
     private var pendingLinkTimeoutTokens: [String: UUID] = [:]
+    private var deferredLinkRetryTokens: [String: UUID] = [:]
     private var activeLinks: [String: ReticulumLinkSession] = [:]
     private enum ReceiptKind { case direct, opportunistic, propagation }
     private struct PendingReceipt { let messageID: UUID; let kind: ReceiptKind; let destinationHash: String }
@@ -504,6 +505,7 @@ public final class SidebandStore {
 
     public func disconnectNetwork() async {
         intentionallyDisconnected = true
+        deferredLinkRetryTokens.removeAll()
         reconnectAttempt = 0
         reconnectDelaySeconds = nil
         networkConnectionGeneration = UUID()
@@ -774,10 +776,26 @@ public final class SidebandStore {
 
     public func requestLink(to destinationHash: String) async {
         let normalized = destinationHash.lowercased()
-        guard hasPath(to: normalized), let target = Data(hexadecimal: normalized) else {
-            lastError = "A validated path is required before establishing a link."
+        guard let target = Data(hexadecimal: normalized) else {
+            lastError = "The destination address is invalid."
             return
         }
+        guard hasPath(to: normalized) else {
+            await requestPath(to: normalized)
+            deferLinkRequest(to: normalized)
+            return
+        }
+        guard networkState == .ready, networkInterface != nil else {
+            deferLinkRequest(to: normalized)
+            if networkState != .connecting { await startAutomaticConnection() }
+            return
+        }
+        guard !activeLinkHashes.contains(normalized),
+              !pendingLinks.values.contains(where: { $0.destinationHash == target }) else {
+            return
+        }
+        deferredLinkRetryTokens.removeValue(forKey: normalized)
+        pendingLinkHashes.remove(normalized)
         do {
             clearPendingLinks(to: normalized)
             let request = try ReticulumLinkRequest(destinationHash: target)
@@ -789,7 +807,37 @@ public final class SidebandStore {
             pendingLinkHashes.insert(normalized)
             UserDefaults.standard.set(linkID, forKey: "reticulumLastPendingLink")
             scheduleLinkTimeout(linkID: linkID, destinationHash: normalized, token: timeoutToken)
-        } catch { lastError = "Link request failed: \(error.localizedDescription)" }
+        } catch {
+            // iOS can replace a TCP connection while a still-valid route is
+            // visible. Secure-link maintenance retries in the background.
+            deferLinkRequest(to: normalized)
+            if networkState != .connecting { await startAutomaticConnection() }
+        }
+    }
+
+    private func deferLinkRequest(to destinationHash: String) {
+        guard !activeLinkHashes.contains(destinationHash) else { return }
+        let token = UUID()
+        deferredLinkRetryTokens[destinationHash] = token
+        pendingLinkHashes.insert(destinationHash)
+        automaticConnectionDescription = networkState == .ready ? "Establishing secure link" : "Reconnecting securely"
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            await self?.retryDeferredLink(to: destinationHash, token: token)
+        }
+    }
+
+    private func retryDeferredLink(to destinationHash: String, token: UUID) async {
+        guard deferredLinkRetryTokens[destinationHash] == token else { return }
+        deferredLinkRetryTokens.removeValue(forKey: destinationHash)
+        pendingLinkHashes.remove(destinationHash)
+        if networkState != .ready {
+            await startAutomaticConnection()
+            deferLinkRequest(to: destinationHash)
+            return
+        }
+        await requestLink(to: destinationHash)
     }
 
     private func scheduleLinkTimeout(linkID: String, destinationHash: String, token: UUID) {
@@ -813,6 +861,7 @@ public final class SidebandStore {
     }
 
     private func clearPendingLinks(to destinationHash: String) {
+        deferredLinkRetryTokens.removeValue(forKey: destinationHash)
         let linkIDs = pendingLinks.compactMap { $0.value.destinationHash.hex == destinationHash ? $0.key : nil }
         for linkID in linkIDs {
             pendingLinks.removeValue(forKey: linkID)
