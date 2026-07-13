@@ -35,171 +35,22 @@ struct ContentView: View {
     @State private var clearingConversation: Conversation?
     @State private var backupDocument = SnapshotBackupDocument(data: Data())
     @State private var showingBackupExporter = false
+    @State private var showingBackupImporter = false
+    @State private var pendingRestoreData: Data?
 
     var body: some View {
         NavigationSplitView {
             List(selection: $store.selectedConversationID) {
                 Section("Conversations") { ForEach(filteredConversations) { conversation in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(conversation.displayName).font(.headline)
-                                if conversation.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Pinned") }
-                                if conversation.isArchived { Image(systemName: "archivebox.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Archived") }
-                                if conversation.notificationsMuted { Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Notifications muted") }
-                                if conversation.isBlocked { Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(.red).accessibilityLabel("Blocked") }
-                                Image(systemName: sidebarRouteIcon(for: conversation))
-                                    .font(.caption)
-                                    .foregroundStyle(sidebarRouteColor(for: conversation))
-                                    .accessibilityLabel(sidebarRouteLabel(for: conversation))
-                                if conversation.isTrusted {
-                                    Image(systemName: "checkmark.shield.fill").foregroundStyle(.green).accessibilityLabel("Trusted contact")
-                                }
-                                Spacer()
-                                if let message = store.latestMessage(for: conversation.id) {
-                                    if message.direction == .outgoing {
-                                        Image(systemName: deliveryStateIcon(message.state))
-                                            .font(.caption2)
-                                            .foregroundStyle(message.state == .failed ? .red : .secondary)
-                                            .accessibilityLabel("Latest message \(message.state.rawValue)")
-                                    }
-                                    Text(message.timestamp, style: .relative)
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                }
-                            }
-                            Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                            if !store.draft(for: conversation.id).isEmpty {
-                                Text("Draft: \(store.draft(for: conversation.id))")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                                    .lineLimit(1)
-                            } else if let message = store.latestMessage(for: conversation.id) {
-                                Text(messagePreview(message))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
-                        Spacer()
-                        let failedCount = store.failedMessageCount(for: conversation.id)
-                        if failedCount > 0 {
-                            Label("\(failedCount)", systemImage: "exclamationmark.circle.fill")
-                                .font(.caption.bold())
-                                .foregroundStyle(.red)
-                                .accessibilityLabel("\(failedCount) failed messages")
-                        }
-                        if conversation.unreadCount > 0 {
-                            Text(conversation.unreadCount, format: .number)
-                                .font(.caption.bold())
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(Color.accentColor, in: Capsule())
-                                .accessibilityLabel("\(conversation.unreadCount) unread messages")
-                        }
-                    }
+                    conversationRow(conversation)
                     .padding(.vertical, 4)
                     .tag(conversation.id)
-                    .contextMenu {
-                        Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
-                        if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
-                            Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: {
-                                Label("Copy Contact Link", systemImage: "link")
-                            }
-                        }
-                        if let contactCard = store.conversationContactCard(conversation.id) {
-                            ShareLink(item: contactCard, subject: Text("Sideband contact: \(conversation.displayName)")) {
-                                Label("Share Contact", systemImage: "person.crop.circle.badge.plus")
-                            }
-                        }
-                        Button {
-                            renameDraft = conversation.displayName
-                            renamingConversation = conversation
-                        } label: { Label("Rename", systemImage: "pencil") }
-                        Button {
-                            store.setConversationTrusted(!conversation.isTrusted, conversationID: conversation.id)
-                        } label: {
-                            Label(conversation.isTrusted ? "Remove Trust" : "Mark as Trusted", systemImage: conversation.isTrusted ? "shield.slash" : "checkmark.shield")
-                        }
-                        Button {
-                            store.setConversationPinned(!conversation.isPinned, conversationID: conversation.id)
-                        } label: {
-                            Label(conversation.isPinned ? "Unpin" : "Pin", systemImage: conversation.isPinned ? "pin.slash" : "pin")
-                        }
-                        Button {
-                            store.setConversationArchived(!conversation.isArchived, conversationID: conversation.id)
-                            if !showingArchived && !conversation.isArchived {
-                                store.selectedConversationID = store.conversations.first(where: { !$0.isArchived })?.id
-                            }
-                        } label: {
-                            Label(conversation.isArchived ? "Unarchive" : "Archive", systemImage: conversation.isArchived ? "tray.and.arrow.up" : "archivebox")
-                        }
-                        Button {
-                            if conversation.unreadCount > 0 { store.markConversationRead(conversation.id) }
-                            else { store.markConversationUnread(conversation.id) }
-                        } label: {
-                            Label(conversation.unreadCount > 0 ? "Mark as Read" : "Mark as Unread", systemImage: conversation.unreadCount > 0 ? "envelope.open" : "envelope.badge")
-                        }
-                        Button {
-                            store.setConversationNotificationsMuted(!conversation.notificationsMuted, conversationID: conversation.id)
-                        } label: {
-                            Label(conversation.notificationsMuted ? "Unmute Notifications" : "Mute Notifications", systemImage: conversation.notificationsMuted ? "bell" : "bell.slash")
-                        }
-                        Button {
-                            store.setConversationBlocked(!conversation.isBlocked, conversationID: conversation.id)
-                        } label: {
-                            Label(conversation.isBlocked ? "Unblock Contact" : "Block Contact", systemImage: conversation.isBlocked ? "hand.raised.slash" : "hand.raised")
-                        }
-                        Button {
-                            Task { await store.requestPath(to: conversation.destinationHash) }
-                        } label: {
-                            Label(store.isPathPending(to: conversation.destinationHash) ? "Finding Route" : "Request Path", systemImage: "point.3.connected.trianglepath.dotted")
-                        }
-                        .disabled(store.networkState != .ready || store.isPathPending(to: conversation.destinationHash))
-                        Button {
-                            Task { await store.requestLink(to: conversation.destinationHash) }
-                        } label: {
-                            Label(
-                                store.activeLinkHashes.contains(conversation.destinationHash) ? "Encrypted Link Active" : (store.pendingLinkHashes.contains(conversation.destinationHash) ? "Establishing Link" : "Establish Encrypted Link"),
-                                systemImage: "lock.shield"
-                            )
-                        }
-                        .disabled(!store.hasPath(to: conversation.destinationHash) || store.activeLinkHashes.contains(conversation.destinationHash) || store.pendingLinkHashes.contains(conversation.destinationHash))
-                        if store.failedMessageCount(for: conversation.id) > 0 {
-                            Button { Task { await store.retryAllFailedMessages(in: conversation.id) } } label: {
-                                Label("Retry All Failed", systemImage: "arrow.clockwise")
-                            }
-                        }
-                        Button(role: .destructive) { clearingConversation = conversation } label: { Label("Clear History", systemImage: "eraser") }
-                        Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
-                    }
+                    .contextMenu { conversationMenu(conversation) }
                 } }
                 if !filteredDiscoveries.isEmpty {
                     Section("Discovered") {
                         ForEach(filteredDiscoveries) { discovery in
-                            Button { store.addConversation(from: discovery) } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(discovery.announcedDisplayName ?? discovery.destinationHash).font(.caption.monospaced()).lineLimit(1)
-                                    Text("\(discovery.hops) hops · \(discovery.isValidated ? "validated" : "unverified") · \(discovery.packetCount) packets")
-                                        .font(.caption2).foregroundStyle(.secondary)
-                                    HStack(spacing: 3) {
-                                        Text("Last seen")
-                                        Text(discovery.lastSeen, style: .relative)
-                                    }
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .contextMenu {
-                                Button { copyToSystemClipboard(discovery.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
-                                if let contactLink = SidebandContactLink(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName) {
-                                    Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
-                                    ShareLink(item: contactLink.url) { Label("Share Contact Link", systemImage: "square.and.arrow.up") }
-                                }
-                                Button { store.addConversation(from: discovery) } label: { Label("Start Conversation", systemImage: "message") }
-                            }
+                            discoveryRow(discovery)
                         }
                     }
                 }
@@ -216,6 +67,8 @@ struct ContentView: View {
                 .help(showingArchived ? "Hide archived conversations" : "Show archived conversations")
                 Button(action: exportBackup) { Label("Export backup", systemImage: "externaldrive.badge.plus") }
                     .help("Export Sideband backup")
+                Button { showingBackupImporter = true } label: { Label("Restore backup", systemImage: "externaldrive.badge.timemachine") }
+                    .help("Restore Sideband backup")
                 Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
             }
         } detail: {
@@ -230,6 +83,10 @@ struct ContentView: View {
         .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
         .fileExporter(isPresented: $showingBackupExporter, document: backupDocument, contentType: .json, defaultFilename: "Sideband-Backup") { result in
             if case let .failure(error) = result { store.lastError = "Could not export backup: \(error.localizedDescription)" }
+        }
+        .fileImporter(isPresented: $showingBackupImporter, allowedContentTypes: [.json]) { result in
+            if case let .success(url) = result { prepareRestore(from: url) }
+            if case let .failure(error) = result { store.lastError = "Could not open backup: \(error.localizedDescription)" }
         }
         .alert("Sideband", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.clearError() } })) {
             Button("OK") { store.clearError() }
@@ -259,6 +116,18 @@ struct ContentView: View {
             }
         } message: {
             Text("This permanently removes locally stored messages and attachments while keeping the contact.")
+        }
+        .alert("Restore Sideband Backup?", isPresented: Binding(get: { pendingRestoreData != nil }, set: { if !$0 { pendingRestoreData = nil } })) {
+            Button("Cancel", role: .cancel) { pendingRestoreData = nil }
+            Button("Restore", role: .destructive) {
+                if let data = pendingRestoreData {
+                    do { try store.restoreSnapshotData(data) }
+                    catch { store.lastError = "Could not restore backup: \(error.localizedDescription)" }
+                }
+                pendingRestoreData = nil
+            }
+        } message: {
+            Text("Current conversations, messages, discoveries, and drafts will be replaced with the validated backup contents.")
         }
         .task {
             await store.startTransport()
@@ -293,6 +162,141 @@ struct ContentView: View {
             showingBackupExporter = true
         } catch {
             store.lastError = "Could not prepare backup: \(error.localizedDescription)"
+        }
+    }
+
+    @ViewBuilder private func conversationRow(_ conversation: Conversation) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(conversation.displayName).font(.headline)
+                    if conversation.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Pinned") }
+                    if conversation.isArchived { Image(systemName: "archivebox.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Archived") }
+                    if conversation.notificationsMuted { Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Notifications muted") }
+                    if conversation.isBlocked { Image(systemName: "hand.raised.fill").font(.caption).foregroundStyle(.red).accessibilityLabel("Blocked") }
+                    Image(systemName: sidebarRouteIcon(for: conversation))
+                        .font(.caption)
+                        .foregroundStyle(sidebarRouteColor(for: conversation))
+                        .accessibilityLabel(sidebarRouteLabel(for: conversation))
+                    if conversation.isTrusted {
+                        Image(systemName: "checkmark.shield.fill").foregroundStyle(.green).accessibilityLabel("Trusted contact")
+                    }
+                    Spacer()
+                    if let message = store.latestMessage(for: conversation.id) {
+                        if message.direction == .outgoing {
+                            Image(systemName: deliveryStateIcon(message.state))
+                                .font(.caption2)
+                                .foregroundStyle(message.state == .failed ? .red : .secondary)
+                                .accessibilityLabel("Latest message \(message.state.rawValue)")
+                        }
+                        Text(message.timestamp, style: .relative)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                if !store.draft(for: conversation.id).isEmpty {
+                    Text("Draft: \(store.draft(for: conversation.id))")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                } else if let message = store.latestMessage(for: conversation.id) {
+                    Text(messagePreview(message))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            let failedCount = store.failedMessageCount(for: conversation.id)
+            if failedCount > 0 {
+                Label(String(failedCount), systemImage: "exclamationmark.circle.fill")
+                    .font(.caption.bold())
+                    .foregroundStyle(.red)
+                    .accessibilityLabel("\(failedCount) failed messages")
+            }
+            if conversation.unreadCount > 0 {
+                Text(conversation.unreadCount, format: .number)
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor, in: Capsule())
+                    .accessibilityLabel("\(conversation.unreadCount) unread messages")
+            }
+        }
+    }
+
+    @ViewBuilder private func discoveryRow(_ discovery: DiscoveredDestination) -> some View {
+        Button { store.addConversation(from: discovery) } label: {
+            DiscoveredDestinationRow(discovery: discovery)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button { copyToSystemClipboard(discovery.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+            if let contactLink = SidebandContactLink(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName) {
+                Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
+                ShareLink(item: contactLink.url) { Label("Share Contact Link", systemImage: "square.and.arrow.up") }
+            }
+            Button { store.addConversation(from: discovery) } label: { Label("Start Conversation", systemImage: "message") }
+        }
+    }
+
+    @ViewBuilder private func conversationMenu(_ conversation: Conversation) -> some View {
+        Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+        if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+            Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
+        }
+        if let contactCard = store.conversationContactCard(conversation.id) {
+            ShareLink(item: contactCard, subject: Text("Sideband contact: \(conversation.displayName)")) {
+                Label("Share Contact", systemImage: "person.crop.circle.badge.plus")
+            }
+        }
+        Button { renameDraft = conversation.displayName; renamingConversation = conversation } label: { Label("Rename", systemImage: "pencil") }
+        Button { store.setConversationTrusted(!conversation.isTrusted, conversationID: conversation.id) } label: {
+            Label(conversation.isTrusted ? "Remove Trust" : "Mark as Trusted", systemImage: conversation.isTrusted ? "shield.slash" : "checkmark.shield")
+        }
+        Button { store.setConversationPinned(!conversation.isPinned, conversationID: conversation.id) } label: {
+            Label(conversation.isPinned ? "Unpin" : "Pin", systemImage: conversation.isPinned ? "pin.slash" : "pin")
+        }
+        Button {
+            store.setConversationArchived(!conversation.isArchived, conversationID: conversation.id)
+            if !showingArchived && !conversation.isArchived { store.selectedConversationID = store.conversations.first(where: { !$0.isArchived })?.id }
+        } label: { Label(conversation.isArchived ? "Unarchive" : "Archive", systemImage: conversation.isArchived ? "tray.and.arrow.up" : "archivebox") }
+        Button {
+            if conversation.unreadCount > 0 { store.markConversationRead(conversation.id) }
+            else { store.markConversationUnread(conversation.id) }
+        } label: { Label(conversation.unreadCount > 0 ? "Mark as Read" : "Mark as Unread", systemImage: conversation.unreadCount > 0 ? "envelope.open" : "envelope.badge") }
+        Button { store.setConversationNotificationsMuted(!conversation.notificationsMuted, conversationID: conversation.id) } label: {
+            Label(conversation.notificationsMuted ? "Unmute Notifications" : "Mute Notifications", systemImage: conversation.notificationsMuted ? "bell" : "bell.slash")
+        }
+        Button { store.setConversationBlocked(!conversation.isBlocked, conversationID: conversation.id) } label: {
+            Label(conversation.isBlocked ? "Unblock Contact" : "Block Contact", systemImage: conversation.isBlocked ? "hand.raised.slash" : "hand.raised")
+        }
+        Button { Task { await store.requestPath(to: conversation.destinationHash) } } label: {
+            Label(store.isPathPending(to: conversation.destinationHash) ? "Finding Route" : "Request Path", systemImage: "point.3.connected.trianglepath.dotted")
+        }
+        .disabled(store.networkState != .ready || store.isPathPending(to: conversation.destinationHash))
+        Button { Task { await store.requestLink(to: conversation.destinationHash) } } label: {
+            Label(store.activeLinkHashes.contains(conversation.destinationHash) ? "Encrypted Link Active" : (store.pendingLinkHashes.contains(conversation.destinationHash) ? "Establishing Link" : "Establish Encrypted Link"), systemImage: "lock.shield")
+        }
+        .disabled(!store.hasPath(to: conversation.destinationHash) || store.activeLinkHashes.contains(conversation.destinationHash) || store.pendingLinkHashes.contains(conversation.destinationHash))
+        if store.failedMessageCount(for: conversation.id) > 0 {
+            Button { Task { await store.retryAllFailedMessages(in: conversation.id) } } label: { Label("Retry All Failed", systemImage: "arrow.clockwise") }
+        }
+        Button(role: .destructive) { clearingConversation = conversation } label: { Label("Clear History", systemImage: "eraser") }
+        Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
+    }
+
+    private func prepareRestore(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            _ = try store.validatedSnapshot(from: data)
+            pendingRestoreData = data
+        } catch {
+            store.lastError = "Could not validate backup: \(error.localizedDescription)"
         }
     }
 
@@ -354,6 +358,24 @@ struct ContentView: View {
         case .connecting: "network"
         case .failed: "network.slash"
         case .stopped: "network.slash"
+        }
+    }
+}
+
+private struct DiscoveredDestinationRow: View {
+    let discovery: DiscoveredDestination
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(discovery.announcedDisplayName ?? discovery.destinationHash)
+                .font(.caption.monospaced())
+                .lineLimit(1)
+            Text("\(discovery.hops) hops · \(discovery.isValidated ? "validated" : "unverified") · \(discovery.packetCount) packets")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 3) { Text("Last seen"); Text(discovery.lastSeen, style: .relative) }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 }
