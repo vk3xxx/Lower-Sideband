@@ -88,6 +88,11 @@ struct ContentView: View {
                     .tag(conversation.id)
                     .contextMenu {
                         Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+                        if let contactCard = store.conversationContactCard(conversation.id) {
+                            ShareLink(item: contactCard, subject: Text("Sideband contact: \(conversation.displayName)")) {
+                                Label("Share Contact", systemImage: "person.crop.circle.badge.plus")
+                            }
+                        }
                         Button {
                             renameDraft = conversation.displayName
                             renamingConversation = conversation

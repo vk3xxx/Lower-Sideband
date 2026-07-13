@@ -99,6 +99,20 @@ import Testing
     #expect(transcript.contains(conversation.destinationHash))
 }
 
+@MainActor @Test func conversationContactCardIncludesNameDestinationAndTrust() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer", isTrusted: true)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation])).write(to: url)
+
+    let card = try #require(SidebandStore(persistenceURL: url).conversationContactCard(conversation.id))
+    #expect(card.contains("Name: Peer"))
+    #expect(card.contains("LXMF Destination: \(conversation.destinationHash)"))
+    #expect(card.contains("Trusted: yes"))
+}
+
 @MainActor @Test func retryMessageRequeuesFailedAttachments() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
