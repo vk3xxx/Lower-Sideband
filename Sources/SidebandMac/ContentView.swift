@@ -131,9 +131,9 @@ struct ContentView: View {
                         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
                     }
                 } }
-                if !store.discoveries.isEmpty {
+                if !filteredDiscoveries.isEmpty {
                     Section("Discovered") {
-                        ForEach(store.discoveries) { discovery in
+                        ForEach(filteredDiscoveries) { discovery in
                             Button { store.addConversation(from: discovery) } label: {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(discovery.announcedDisplayName ?? discovery.destinationHash).font(.caption.monospaced()).lineLimit(1)
@@ -211,6 +211,15 @@ struct ContentView: View {
         guard !query.isEmpty else { return store.conversations }
         return store.conversations.filter {
             $0.displayName.localizedCaseInsensitiveContains(query) || $0.destinationHash.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var filteredDiscoveries: [DiscoveredDestination] {
+        let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return store.discoveries }
+        return store.discoveries.filter {
+            $0.destinationHash.localizedCaseInsensitiveContains(query)
+                || ($0.announcedDisplayName?.localizedCaseInsensitiveContains(query) ?? false)
         }
     }
 
