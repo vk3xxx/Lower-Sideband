@@ -11,6 +11,7 @@
 		03301265781053B5497105C0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
 		046FAAE4F5A84EB7639357D2 /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */; };
 		071F1C134507F4A9515A838A /* HDLC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6800FA947758CF319790C30A /* HDLC.swift */; };
+		0B2A75C6B8950F38CEE52AD3 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */; };
 		106CDA6E4EDEC8C4298FA6DF /* SecureIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9FEEDAB91A5EF3AFFE1A83D /* SecureIdentityStore.swift */; };
 		12FEC80F1A04CA8DB8AF9083 /* MessagePackDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46AF8A5E292597111959AFC0 /* MessagePackDecoder.swift */; };
 		17580709C25AC62A5C4728AC /* Transport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CF805D6403CA445FE139DFE /* Transport.swift */; };
@@ -35,6 +36,7 @@
 		9E76355F8F75B02C6F1CDE91 /* ReticulumLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */; };
 		ABB92F5EE86F97F500711D5D /* ReticulumAnnounceBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF78A5D135DF2BC78CB1A0E0 /* ReticulumAnnounceBuilder.swift */; };
 		ABB9B283A7A24A0A8860F702 /* ReticulumResourceRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBFD6D75DFA821C91F637012 /* ReticulumResourceRequest.swift */; };
+		AEE275EE54D193884A6201B6 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */; };
 		AF13402E68C11412BB92925A /* LXMFMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A94DB2EEB1FF3081E4531FA8 /* LXMFMessage.swift */; };
 		B1953693F82C6624593511AF /* ReticulumPathTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */; };
 		B31676CD7B03C14A3D71B4C9 /* ReticulumTunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */; };
@@ -108,6 +110,7 @@
 		A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebandContactLink.swift; sourceTree = "<group>"; };
 		A94DB2EEB1FF3081E4531FA8 /* LXMFMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFMessage.swift; sourceTree = "<group>"; };
 		AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceLimits.swift; sourceTree = "<group>"; };
+		AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B051F39471BC4F462A0AAD58 /* LXMFAnnounceInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFAnnounceInfo.swift; sourceTree = "<group>"; };
 		BC7290C1251DFC249932DBC0 /* TelemetryViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryViews.swift; sourceTree = "<group>"; };
 		BFCE24619EAC858E5E6395B0 /* LXMFPropagation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFPropagation.swift; sourceTree = "<group>"; };
@@ -145,6 +148,7 @@
 		07F623D84D233250DA7D1A2F /* Support */ = {
 			isa = PBXGroup;
 			children = (
+				AC69F882B448501D60795644 /* PrivacyInfo.xcprivacy */,
 				F0A6D46420007C8FA91EF432 /* SidebandAssets.xcassets */,
 			);
 			path = Support;
@@ -259,6 +263,7 @@
 			buildConfigurationList = DA62E13433FC0C4052210765 /* Build configuration list for PBXNativeTarget "SidebandCore" */;
 			buildPhases = (
 				6C32E4F7E832A3C6E4EC660D /* Sources */,
+				76F36C9A9E47EE35748C7B6B /* Resources */,
 			);
 			buildRules = (
 			);
@@ -331,10 +336,19 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		76F36C9A9E47EE35748C7B6B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AEE275EE54D193884A6201B6 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		BAC2E8147BA98ED6CBFC7D68 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0B2A75C6B8950F38CEE52AD3 /* PrivacyInfo.xcprivacy in Resources */,
 				28C70C71F8CF5F3FCD0A832A /* SidebandAssets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -42,6 +42,8 @@ xcodebuild \
 
 APP="$DERIVED_DATA/Build/Products/$SDK_DIRECTORY/Sideband.app"
 PLIST="$APP/Info.plist"
+APP_PRIVACY="$APP/PrivacyInfo.xcprivacy"
+CORE_PRIVACY="$APP/Frameworks/SidebandCore.framework/PrivacyInfo.xcprivacy"
 
 if [[ ! -d "$APP" ]]; then
     echo "Expected application bundle was not produced: $APP" >&2
@@ -49,6 +51,20 @@ if [[ ! -d "$APP" ]]; then
 fi
 
 plutil -lint "$PLIST" >/dev/null
+
+for privacy_manifest in "$APP_PRIVACY" "$CORE_PRIVACY"; do
+    if [[ ! -f "$privacy_manifest" ]]; then
+        echo "Privacy manifest was not bundled: $privacy_manifest" >&2
+        exit 1
+    fi
+    plutil -lint "$privacy_manifest" >/dev/null
+    privacy_contents="$(plutil -convert json -o - "$privacy_manifest")"
+    if ! grep -q 'NSPrivacyAccessedAPICategoryUserDefaults' <<<"$privacy_contents" || \
+       ! grep -q 'NSPrivacyAccessedAPICategoryFileTimestamp' <<<"$privacy_contents"; then
+        echo "Privacy manifest is missing a required-reason API category: $privacy_manifest" >&2
+        exit 1
+    fi
+done
 
 assert_plist_value() {
     local key="$1"
