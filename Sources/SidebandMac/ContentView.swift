@@ -88,6 +88,11 @@ struct ContentView: View {
                     .tag(conversation.id)
                     .contextMenu {
                         Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+                        if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+                            Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: {
+                                Label("Copy Contact Link", systemImage: "link")
+                            }
+                        }
                         if let contactCard = store.conversationContactCard(conversation.id) {
                             ShareLink(item: contactCard, subject: Text("Sideband contact: \(conversation.displayName)")) {
                                 Label("Share Contact", systemImage: "person.crop.circle.badge.plus")
@@ -520,6 +525,9 @@ private struct ConversationView: View {
                         .foregroundStyle(.secondary)
                         .contextMenu {
                             Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+                            if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+                                Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
+                            }
                         }
                 }
                 Spacer()
