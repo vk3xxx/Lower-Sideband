@@ -81,11 +81,21 @@ struct ConversationTelemetryMapView: View {
             .navigationTitle("\(conversationName) Telemetry")
             .toolbar { Button("Done") { dismiss() } }
         }
-        .frame(minWidth: 620, minHeight: 440)
+        .platformTelemetryMapSize()
     }
 
     private var initialPosition: MapCameraPosition {
         guard let latest = points.last else { return .automatic }
         return .region(MKCoordinateRegion(center: latest.coordinate, latitudinalMeters: 10_000, longitudinalMeters: 10_000))
+    }
+}
+
+private extension View {
+    @ViewBuilder func platformTelemetryMapSize() -> some View {
+        #if os(macOS)
+        frame(minWidth: 620, minHeight: 440)
+        #else
+        self
+        #endif
     }
 }

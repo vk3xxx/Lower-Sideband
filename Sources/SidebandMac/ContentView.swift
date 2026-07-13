@@ -589,7 +589,7 @@ private struct NetworkView: View {
             }
         }.padding(24)
         }
-        .frame(width: 620, height: 760)
+        .platformNetworkSheetSize()
         .sheet(isPresented: $showingLocalContactQR) {
             ContactQRCodeView(name: store.localDisplayName, link: store.localContactLink.url)
         }
@@ -1023,7 +1023,7 @@ private struct ContactQRCodeView: View {
             Text(link.absoluteString).font(.caption.monospaced()).textSelection(.enabled)
         }
         .padding(24)
-        .frame(minWidth: 360, minHeight: 430)
+        .platformContactSheetSize()
     }
 
     private var qrImage: PlatformImage? {
@@ -1107,7 +1107,7 @@ private struct InlineImageAttachmentView: View {
             VStack(spacing: 12) {
                 HStack { Text(attachment.filename).font(.headline); Spacer(); Button("Close") { showingPreview = false } }
                 if let preview = fullImage ?? image { swiftUIImage(preview).resizable().scaledToFit() }
-            }.padding().frame(minWidth: 320, minHeight: 420)
+            }.padding().platformPreviewSheetSize()
                 .task {
                     if let data = try? await store.read(attachment) { fullImage = PlatformImage(data: data) }
                 }
@@ -1137,6 +1137,40 @@ private struct InlineImageAttachmentView: View {
     }
 }
 
+private extension View {
+    @ViewBuilder func platformNetworkSheetSize() -> some View {
+        #if os(macOS)
+        frame(width: 620, height: 760)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder func platformContactSheetSize() -> some View {
+        #if os(macOS)
+        frame(minWidth: 360, minHeight: 430)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder func platformPreviewSheetSize() -> some View {
+        #if os(macOS)
+        frame(minWidth: 320, minHeight: 420)
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder func platformNewConversationSize() -> some View {
+        #if os(macOS)
+        frame(width: 470)
+        #else
+        self
+        #endif
+    }
+}
+
 private struct NewConversationView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var store: SidebandStore
@@ -1148,7 +1182,7 @@ private struct NewConversationView: View {
             TextField("Display name (optional)", text: $name)
             TextField("LXMF destination or sideband:// contact link", text: $address).font(.body.monospaced())
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Create", action: create).buttonStyle(.borderedProminent) }
-        }.textFieldStyle(.roundedBorder).padding(24).frame(width: 470)
+        }.textFieldStyle(.roundedBorder).padding(24).platformNewConversationSize()
     }
 
     private func create() {
