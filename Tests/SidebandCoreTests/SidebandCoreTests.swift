@@ -53,6 +53,19 @@ import Testing
     ]))
 }
 
+@Test func telemetryMatchesPythonSidebandFixture() throws {
+    let telemetry = SidebandTelemetry(
+        capturedAt: Date(timeIntervalSince1970: 1_700_000_000),
+        location: .init(latitude: -37.8136, longitude: 144.9631, altitude: 123.45, speed: 1.5, bearing: 90.5, accuracy: 8, updatedAt: Date(timeIntervalSince1970: 1_700_000_000)),
+        battery: .init(chargePercent: 87.5, isCharging: true)
+    )
+    let pythonFixture = Data(hex: "8301ce6553f1000297c404fdbf02a0c40408a3f61cc40400003039c40400000096c4040000235ac4020320ce6553f1000493cb4055e00000000000c3c0")
+    #expect(telemetry.packed() == pythonFixture)
+
+    let decoded = try SidebandTelemetry(packed: pythonFixture)
+    #expect(decoded == telemetry)
+}
+
 @Test func sidebandContactLinksRoundTripNameAndDestination() throws {
     let hash = "0123456789abcdef0123456789abcdef"
     let contact = try #require(SidebandContactLink(destinationHash: hash, displayName: "Mesh Peer"))
