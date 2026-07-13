@@ -16,6 +16,7 @@ public final class BackgroundRefreshCoordinator {
         isRegistered = BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.identifier, using: nil) { task in
             guard let refresh = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
             let work = Task { @MainActor in
+                self.schedule()
                 await handler()
                 refresh.setTaskCompleted(success: !Task.isCancelled)
             }
@@ -26,6 +27,8 @@ public final class BackgroundRefreshCoordinator {
 
     public func schedule() {
 #if os(iOS)
+        guard isRegistered else { return }
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.identifier)
         let request = BGAppRefreshTaskRequest(identifier: Self.identifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         try? BGTaskScheduler.shared.submit(request)
