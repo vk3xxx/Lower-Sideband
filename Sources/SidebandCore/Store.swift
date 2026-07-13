@@ -571,6 +571,7 @@ public final class SidebandStore {
         let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         return ReticulumIdentity.truncatedHash(nameHash + messagingIdentity.hash).hex
     }
+    public var localAnnounceAppData: Data { ReticulumAnnounceBuilder.lxmfAppData(displayName: localDisplayName) }
 
     public func startGatewayDiscovery() { lanDiscovery.start() }
     public func stopGatewayDiscovery() { lanDiscovery.stop() }
@@ -719,7 +720,7 @@ public final class SidebandStore {
 
     private func announceLocalDeliveryDestination() async {
         do {
-            let packet = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: "lxmf.delivery", appData: ReticulumAnnounceBuilder.lxmfAppData(displayName: "Sideband Swift"))
+            let packet = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: "lxmf.delivery", appData: localAnnounceAppData)
             try await transmitRawPacket(packet)
             deliveryAnnouncesSent += 1
         } catch {

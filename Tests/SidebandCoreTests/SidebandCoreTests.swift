@@ -76,6 +76,20 @@ import Testing
     #expect(SidebandStore(persistenceURL: url).localDisplayName == "Mesh Phone")
 }
 
+@MainActor @Test func localDisplayNameIsEncodedInAnnounceData() {
+    let defaults = UserDefaults.standard
+    let previous = defaults.string(forKey: "lxmfLocalDisplayName")
+    defer {
+        if let previous { defaults.set(previous, forKey: "lxmfLocalDisplayName") }
+        else { defaults.removeObject(forKey: "lxmfLocalDisplayName") }
+    }
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    store.setLocalDisplayName("Native iPhone")
+
+    #expect(LXMFAnnounceInfo(appData: store.localAnnounceAppData)?.displayName == "Native iPhone")
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
