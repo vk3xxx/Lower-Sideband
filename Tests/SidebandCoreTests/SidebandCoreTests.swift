@@ -159,6 +159,22 @@ import Testing
     #expect(store.conversations.first?.displayName == "After Rename")
 }
 
+@MainActor @Test func corruptPersistenceIsQuarantinedAndRollingBackupRecovered() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let url = root.appending(path: "store.json")
+    let original = SidebandStore(persistenceURL: url)
+    #expect(original.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Recover Me"))
+    #expect(original.renameConversation(original.conversations[0].id, to: "Current Name"))
+    try Data("not-json".utf8).write(to: url, options: .atomic)
+
+    let recovered = SidebandStore(persistenceURL: url)
+    let quarantineURL = try #require(recovered.lastQuarantinedPersistenceURL)
+    #expect(FileManager.default.fileExists(atPath: quarantineURL.path))
+    #expect(try Data(contentsOf: quarantineURL) == Data("not-json".utf8))
+    #expect(recovered.conversations.first?.displayName == "Recover Me")
+    #expect(FileManager.default.fileExists(atPath: url.path))
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

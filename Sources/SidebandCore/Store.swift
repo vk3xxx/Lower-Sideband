@@ -50,6 +50,7 @@ public final class SidebandStore {
     public let resourceStagingStore: ReticulumResourceStagingStore
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
+    public private(set) var lastQuarantinedPersistenceURL: URL?
     public var selectedConversationID: UUID?
     public var lastError: String?
 
@@ -1436,8 +1437,22 @@ public final class SidebandStore {
     private func abbreviated(_ hash: String) -> String { "\(hash.prefix(8))…\(hash.suffix(4))" }
 
     private func load() {
+        guard FileManager.default.fileExists(atPath: persistenceURL.path) else { return }
         guard let data = try? Data(contentsOf: persistenceURL),
-              let snapshot = try? JSONDecoder.sideband.decode(AppSnapshot.self, from: data) else { return }
+              let snapshot = try? validatedSnapshot(from: data) else {
+            quarantineInvalidPersistence()
+            if let backupData = try? Data(contentsOf: automaticBackupURL),
+               let backup = try? validatedSnapshot(from: backupData) {
+                applyLoadedSnapshot(backup)
+                save()
+            }
+            return
+        }
+        applyLoadedSnapshot(snapshot)
+        if recoveredOutboundCount > 0 { save() }
+    }
+
+    private func applyLoadedSnapshot(_ snapshot: AppSnapshot) {
         conversations = snapshot.conversations
         sortConversations()
         messages = snapshot.messages
@@ -1457,7 +1472,17 @@ public final class SidebandStore {
         let conversationIDs = Set(conversations.map(\.id))
         drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }
         selectedConversationID = conversations.first?.id
-        if recoveredOutboundCount > 0 { save() }
+    }
+
+    private func quarantineInvalidPersistence() {
+        let quarantineURL = persistenceURL.deletingPathExtension()
+            .appendingPathExtension("corrupt-\(UUID().uuidString).json")
+        do {
+            try FileManager.default.moveItem(at: persistenceURL, to: quarantineURL)
+            lastQuarantinedPersistenceURL = quarantineURL
+        } catch {
+            lastQuarantinedPersistenceURL = nil
+        }
     }
 
     private func save() {
