@@ -25,6 +25,8 @@ struct ContentView: View {
     @State private var showingNewConversation = false
     @State private var showingNetwork = false
     @State private var conversationSearch = ""
+    @State private var renamingConversation: Conversation?
+    @State private var renameDraft = ""
 
     var body: some View {
         NavigationSplitView {
@@ -64,6 +66,10 @@ struct ContentView: View {
                     .tag(conversation.id)
                     .contextMenu {
                         Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+                        Button {
+                            renameDraft = conversation.displayName
+                            renamingConversation = conversation
+                        } label: { Label("Rename", systemImage: "pencil") }
                     }
                 } }
                 if !store.discoveries.isEmpty {
@@ -100,6 +106,14 @@ struct ContentView: View {
         .alert("Sideband", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.clearError() } })) {
             Button("OK") { store.clearError() }
         } message: { Text(store.lastError ?? "") }
+        .alert("Rename Conversation", isPresented: Binding(get: { renamingConversation != nil }, set: { if !$0 { renamingConversation = nil } })) {
+            TextField("Name", text: $renameDraft)
+            Button("Cancel", role: .cancel) { renamingConversation = nil }
+            Button("Save") {
+                if let id = renamingConversation?.id { _ = store.renameConversation(id, to: renameDraft) }
+                renamingConversation = nil
+            }
+        }
         .task {
             await store.startTransport()
             if store.autoConnectEnabled { await store.connectNetwork() }

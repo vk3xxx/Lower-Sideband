@@ -139,6 +139,16 @@ import Testing
     #expect(store.selectedConversationID == selectedID)
 }
 
+@MainActor @Test func renameConversationPersistsNonemptyName() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Original"))
+    let id = store.conversations[0].id
+    #expect(!store.renameConversation(id, to: "   "))
+    #expect(store.renameConversation(id, to: " Renamed "))
+    #expect(SidebandStore(persistenceURL: url).conversations[0].displayName == "Renamed")
+}
+
 @MainActor @Test func selectedConversationRemainsUnreadUntilApplicationIsActive() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

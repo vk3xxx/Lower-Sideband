@@ -148,6 +148,15 @@ public final class SidebandStore {
         save()
     }
 
+    @discardableResult
+    public func renameConversation(_ conversationID: UUID, to displayName: String) -> Bool {
+        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return false }
+        conversations[index].displayName = name
+        save()
+        return true
+    }
+
     public func conversationDidAppear(_ conversationID: UUID) {
         visibleConversationID = conversationID
         if isApplicationActive { markConversationRead(conversationID) }
