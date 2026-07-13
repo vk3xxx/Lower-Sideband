@@ -320,6 +320,7 @@ struct ContentView: View {
 
     private func messagePreview(_ message: Message) -> String {
         if !message.body.isEmpty { return message.body }
+        if message.telemetry?.location != nil { return "Location telemetry" }
         if message.attachments.count == 1, let attachment = message.attachments.first { return "Attachment: \(attachment.filename)" }
         return "\(message.attachments.count) attachments"
     }
@@ -917,6 +918,20 @@ private struct ConversationView: View {
             lines.append(contentsOf: message.attachments.map {
                 "- \($0.filename) (\(ByteCountFormatter.string(fromByteCount: Int64($0.byteCount), countStyle: .file)), \($0.state.rawValue))"
             })
+        }
+        if let telemetry = message.telemetry {
+            lines.append("Telemetry captured: \(formatter.string(from: telemetry.capturedAt))")
+            if let location = telemetry.location {
+                lines.append("Location: \(location.latitude), \(location.longitude)")
+                lines.append("Accuracy: ±\(location.accuracy) m")
+                lines.append("Altitude: \(location.altitude) m")
+                lines.append("Speed: \(location.speed) km/h")
+                lines.append("Bearing: \(location.bearing)°")
+                lines.append("Location updated: \(formatter.string(from: location.updatedAt))")
+            }
+            if let battery = telemetry.battery {
+                lines.append("Battery: \(battery.chargePercent)%\(battery.isCharging ? " (charging)" : "")")
+            }
         }
         return lines.joined(separator: "\n")
     }

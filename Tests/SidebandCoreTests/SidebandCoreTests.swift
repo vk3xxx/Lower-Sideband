@@ -275,7 +275,8 @@ import Testing
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
     let attachment = Attachment(filename: "photo.jpg", byteCount: 1, relativePath: "photo.jpg", state: .available)
-    let message = Message(conversationID: conversation.id, body: "hello", timestamp: Date(timeIntervalSince1970: 0), direction: .incoming, state: .delivered, attachments: [attachment])
+    let telemetry = SidebandTelemetry(location: .init(latitude: -37.8136, longitude: 144.9631, accuracy: 8))
+    let message = Message(conversationID: conversation.id, body: "hello", timestamp: Date(timeIntervalSince1970: 0), direction: .incoming, state: .delivered, attachments: [attachment], telemetry: telemetry)
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -283,6 +284,7 @@ import Testing
 
     let transcript = try #require(SidebandStore(persistenceURL: url).conversationTranscript(conversation.id))
     #expect(transcript.contains("Peer: hello [Attachment: photo.jpg]"))
+    #expect(transcript.contains("[Location: -37.813600, 144.963100 ±8m]"))
     #expect(transcript.contains(conversation.destinationHash))
 }
 

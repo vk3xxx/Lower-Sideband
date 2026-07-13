@@ -148,7 +148,10 @@ public final class SidebandStore {
         let lines = messages(for: conversationID).map { message in
             let sender = message.direction == .outgoing ? "Me" : conversation.displayName
             let attachments = message.attachments.map { "[Attachment: \($0.filename)]" }.joined(separator: " ")
-            return "[\(formatter.string(from: message.timestamp))] \(sender): \([message.body, attachments].filter { !$0.isEmpty }.joined(separator: " "))"
+            let telemetry = message.telemetry?.location.map {
+                "[Location: \($0.latitude.formatted(.number.precision(.fractionLength(6)))), \($0.longitude.formatted(.number.precision(.fractionLength(6)))) ±\($0.accuracy.formatted(.number.precision(.fractionLength(0))))m]"
+            } ?? ""
+            return "[\(formatter.string(from: message.timestamp))] \(sender): \([message.body, attachments, telemetry].filter { !$0.isEmpty }.joined(separator: " "))"
         }
         return (["Conversation with \(conversation.displayName)", "Destination: \(conversation.destinationHash)", ""] + lines).joined(separator: "\n")
     }
