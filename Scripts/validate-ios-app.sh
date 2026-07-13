@@ -77,13 +77,13 @@ assert_plist_value() {
     fi
 }
 
-assert_plist_value CFBundleIdentifier io.unsigned.sideband.swift
+assert_plist_value CFBundleIdentifier com.supes.MacSideband
 assert_plist_value CFBundleShortVersionString 0.2.0
 assert_plist_value CFBundleVersion 2
 assert_plist_value NSBonjourServices:0 _reticulum._tcp
 assert_plist_value NSBonjourServices:1 _rns._tcp
 assert_plist_value NSBonjourServices:2 _sideband._tcp
-assert_plist_value BGTaskSchedulerPermittedIdentifiers:0 io.unsigned.sideband.swift.refresh
+assert_plist_value BGTaskSchedulerPermittedIdentifiers:0 com.supes.MacSideband.refresh
 
 for required_key in \
     NSLocalNetworkUsageDescription \

@@ -21,7 +21,7 @@ enum SecureIdentityStore {
     }
 
 #if os(iOS)
-    private static let service = "io.unsigned.sideband.swift.identities"
+    private static let service = "com.supes.MacSideband.identities"
 
     private static func readKeychain(account: String) -> Data? {
         let query: [String: Any] = [

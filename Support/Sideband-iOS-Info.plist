@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>BGTaskSchedulerPermittedIdentifiers</key>
-    <array><string>io.unsigned.sideband.swift.refresh</string></array>
+    <array><string>com.supes.MacSideband.refresh</string></array>
     <key>CFBundleDevelopmentRegion</key><string>$(DEVELOPMENT_LANGUAGE)</string>
     <key>CFBundleDisplayName</key><string>Sideband</string>
     <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>

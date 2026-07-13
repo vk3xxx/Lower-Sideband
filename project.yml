@@ -19,7 +19,7 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.unsigned.sideband.core
+        PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandIOS:
@@ -34,7 +34,7 @@ targets:
       - target: SidebandCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.unsigned.sideband.swift
+        PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Sideband
         MARKETING_VERSION: 0.2.0
         CURRENT_PROJECT_VERSION: 2

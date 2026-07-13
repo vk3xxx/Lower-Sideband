@@ -5,7 +5,7 @@ import BackgroundTasks
 
 @MainActor
 public final class BackgroundRefreshCoordinator {
-    public static let identifier = "io.unsigned.sideband.swift.refresh"
+    public static let identifier = "com.supes.MacSideband.refresh"
     private var isRegistered = false
 
     public init() { }
