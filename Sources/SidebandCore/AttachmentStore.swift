@@ -31,6 +31,19 @@ public actor AttachmentStore {
         return Attachment(id: id, filename: safeName, mimeType: mimeType, byteCount: data.count, relativePath: storedName, state: .available, progress: 1, contentHash: Data(SHA256.hash(data: data)))
     }
 
+    public func restoreCloudAttachment(_ payload: CloudAttachmentPayload) throws -> Attachment {
+        guard payload.data.count <= ReticulumResourceLimits.maximumAttachmentBytes,
+              Data(SHA256.hash(data: payload.data)) == payload.contentHash else { throw AttachmentStoreError.integrityMismatch }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let safeName = URL(fileURLWithPath: payload.filename).lastPathComponent
+        let storedName = "\(payload.id.uuidString)-\(safeName)"
+        try payload.data.write(to: directory.appending(path: storedName), options: .atomic)
+        return Attachment(
+            id: payload.id, filename: safeName, mimeType: payload.mimeType, byteCount: payload.data.count,
+            relativePath: storedName, state: .available, progress: 1, contentHash: payload.contentHash
+        )
+    }
+
     public func url(for attachment: Attachment) -> URL { directory.appending(path: attachment.relativePath) }
     public func read(_ attachment: Attachment) throws -> Data {
         let data = try Data(contentsOf: url(for: attachment))

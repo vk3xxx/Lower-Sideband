@@ -620,6 +620,25 @@ import Testing
     catch AttachmentStoreError.integrityMismatch { }
 }
 
+@Test func attachmentStoreRestoresCloudAssetWithStableIdentity() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let data = Data("cloud image bytes".utf8)
+    let id = UUID()
+    let payload = CloudAttachmentPayload(
+        id: id, data: data, filename: "../photo.jpg", mimeType: "image/jpeg",
+        contentHash: ReticulumIdentity.fullHash(data)
+    )
+    let store = AttachmentStore(directory: root)
+    let attachment = try await store.restoreCloudAttachment(payload)
+
+    #expect(attachment.id == id)
+    #expect(attachment.filename == "photo.jpg")
+    #expect(attachment.state == .available)
+    #expect(attachment.progress == 1)
+    #expect(try await store.read(attachment) == data)
+}
+
 @Test func resourcePartsVerifyReassembleAndReportProgress() throws {
     let data = Data((0..<1_200).map { UInt8($0 % 251) })
     let manifest = try ReticulumResourceManifest(data: data, randomHash: Data([1, 2, 3, 4]))

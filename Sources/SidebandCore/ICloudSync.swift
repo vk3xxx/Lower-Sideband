@@ -35,10 +35,28 @@ public struct CloudSnapshotPayload: Sendable {
     }
 }
 
+public struct CloudAttachmentPayload: Sendable {
+    public let id: UUID
+    public let data: Data
+    public let filename: String
+    public let mimeType: String?
+    public let contentHash: Data
+
+    public init(id: UUID, data: Data, filename: String, mimeType: String?, contentHash: Data) {
+        self.id = id
+        self.data = data
+        self.filename = filename
+        self.mimeType = mimeType
+        self.contentHash = contentHash
+    }
+}
+
 public protocol CloudSnapshotSyncing: Sendable {
     func accountAvailable() async -> Bool
     func fetchSnapshot() async throws -> CloudSnapshotPayload?
     func saveSnapshot(_ payload: CloudSnapshotPayload) async throws
+    func fetchAttachment(id: UUID) async throws -> CloudAttachmentPayload?
+    func saveAttachment(_ payload: CloudAttachmentPayload) async throws
 }
 
 public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
@@ -79,6 +97,51 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
         record["modifiedAt"] = payload.modifiedAt as NSDate
         record["deviceID"] = payload.deviceID as NSString
         _ = try await database.save(record)
+    }
+
+    public func fetchAttachment(id: UUID) async throws -> CloudAttachmentPayload? {
+        let database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
+        let record: CKRecord
+        do { record = try await database.record(for: attachmentRecordID(id)) }
+        catch let error as CKError where error.code == .unknownItem { return nil }
+        guard let asset = record.encryptedValues["file"] as? CKAsset,
+              let fileURL = asset.fileURL,
+              let filename = record.encryptedValues["filename"] as? String,
+              let contentHash = record.encryptedValues["contentHash"] as? Data else { return nil }
+        return CloudAttachmentPayload(
+            id: id,
+            data: try Data(contentsOf: fileURL),
+            filename: filename,
+            mimeType: record.encryptedValues["mimeType"] as? String,
+            contentHash: contentHash
+        )
+    }
+
+    public func saveAttachment(_ payload: CloudAttachmentPayload) async throws {
+        let database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
+        let recordID = attachmentRecordID(payload.id)
+        let record: CKRecord
+        do {
+            let existing = try await database.record(for: recordID)
+            if existing.encryptedValues["contentHash"] as? Data == payload.contentHash { return }
+            record = existing
+        } catch let error as CKError where error.code == .unknownItem {
+            record = CKRecord(recordType: "SidebandAttachment", recordID: recordID)
+        }
+        let temporaryURL = FileManager.default.temporaryDirectory
+            .appending(path: "sideband-cloud-\(payload.id.uuidString)-\(UUID().uuidString)")
+        try payload.data.write(to: temporaryURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: temporaryURL) }
+        record.encryptedValues["file"] = CKAsset(fileURL: temporaryURL)
+        record.encryptedValues["filename"] = payload.filename as NSString
+        if let mimeType = payload.mimeType { record.encryptedValues["mimeType"] = mimeType as NSString }
+        else { record.encryptedValues["mimeType"] = nil }
+        record.encryptedValues["contentHash"] = payload.contentHash as NSData
+        _ = try await database.save(record)
+    }
+
+    private func attachmentRecordID(_ id: UUID) -> CKRecord.ID {
+        CKRecord.ID(recordName: "attachment-\(id.uuidString.lowercased())")
     }
 }
 

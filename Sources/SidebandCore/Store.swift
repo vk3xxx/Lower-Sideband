@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import CryptoKit
 
 @MainActor @Observable
 public final class SidebandStore {
@@ -596,13 +597,14 @@ public final class SidebandStore {
         do {
             let local = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts)
             let localData = try JSONEncoder.sideband.encode(local)
-            let merged: AppSnapshot
+            var merged: AppSnapshot
             if let payload = try await cloudSync.fetchSnapshot() {
                 let remote = try validatedSnapshot(from: payload.data)
                 merged = local.mergingCloudSnapshot(remote)
             } else {
                 merged = local
             }
+            merged = await synchronizeCloudAttachments(in: merged, local: local)
             let mergedData = try JSONEncoder.sideband.encode(merged)
             if mergedData != localData {
                 isApplyingCloudSnapshot = true
@@ -620,6 +622,35 @@ public final class SidebandStore {
             isApplyingCloudSnapshot = false
             iCloudSyncStatus = .failed(error.localizedDescription)
         }
+    }
+
+    private func synchronizeCloudAttachments(in snapshot: AppSnapshot, local: AppSnapshot) async -> AppSnapshot {
+        var uploaded = Set<UUID>()
+        for attachment in local.messages.flatMap(\.attachments) where uploaded.insert(attachment.id).inserted {
+            guard let data = try? await attachmentStore.read(attachment) else { continue }
+            let hash = attachment.contentHash ?? Data(SHA256.hash(data: data))
+            let payload = CloudAttachmentPayload(
+                id: attachment.id, data: data, filename: attachment.filename,
+                mimeType: attachment.mimeType, contentHash: hash
+            )
+            try? await cloudSync.saveAttachment(payload)
+        }
+
+        var result = snapshot
+        for messageIndex in result.messages.indices {
+            for attachmentIndex in result.messages[messageIndex].attachments.indices {
+                let attachment = result.messages[messageIndex].attachments[attachmentIndex]
+                if (try? await attachmentStore.read(attachment)) != nil { continue }
+                guard let payload = try? await cloudSync.fetchAttachment(id: attachment.id),
+                      let restored = try? await attachmentStore.restoreCloudAttachment(payload) else {
+                    result.messages[messageIndex].attachments[attachmentIndex].state = .queued
+                    result.messages[messageIndex].attachments[attachmentIndex].progress = 0
+                    continue
+                }
+                result.messages[messageIndex].attachments[attachmentIndex] = restored
+            }
+        }
+        return result
     }
 
     public func syncPropagationNow() async {
