@@ -151,7 +151,16 @@ struct ContentView: View {
                                     Text(discovery.announcedDisplayName ?? discovery.destinationHash).font(.caption.monospaced()).lineLimit(1)
                                     Text("\(discovery.hops) hops · \(discovery.isValidated ? "validated" : "unverified")").font(.caption2).foregroundStyle(.secondary)
                                 }
-                            }.buttonStyle(.plain)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button { copyToSystemClipboard(discovery.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+                                if let contactLink = SidebandContactLink(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName) {
+                                    Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
+                                    ShareLink(item: contactLink.url) { Label("Share Contact Link", systemImage: "square.and.arrow.up") }
+                                }
+                                Button { store.addConversation(from: discovery) } label: { Label("Start Conversation", systemImage: "message") }
+                            }
                         }
                     }
                 }
