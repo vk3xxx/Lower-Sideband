@@ -40,6 +40,17 @@ import Testing
     #expect(!DestinationHash.isValid("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
 }
 
+@Test func sidebandContactLinksRoundTripNameAndDestination() throws {
+    let hash = "0123456789abcdef0123456789abcdef"
+    let contact = try #require(SidebandContactLink(destinationHash: hash, displayName: "Mesh Peer"))
+    let decoded = try #require(SidebandContactLink(url: contact.url))
+
+    #expect(contact.url.absoluteString == "sideband://contact/0123456789abcdef0123456789abcdef?name=Mesh%20Peer")
+    #expect(decoded == contact)
+    #expect(SidebandContactLink(string: "https://example.com") == nil)
+    #expect(SidebandContactLink(destinationHash: "invalid") == nil)
+}
+
 @MainActor @Test func queuesMessagesWithoutClaimingDelivery() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
