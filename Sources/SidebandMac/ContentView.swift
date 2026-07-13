@@ -10,6 +10,7 @@ import AppKit
 private typealias PlatformImage = NSImage
 #else
 import UIKit
+import AVFoundation
 private typealias PlatformImage = UIImage
 #endif
 
@@ -1179,13 +1180,37 @@ private struct NewConversationView: View {
     @Bindable var store: SidebandStore
     @State private var address = ""
     @State private var name = ""
+    #if os(iOS)
+    @State private var showingContactScanner = false
+    #endif
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("New Conversation").font(.title2.bold())
             TextField("Display name (optional)", text: $name)
             TextField("LXMF destination or sideband:// contact link", text: $address).font(.body.monospaced())
+            #if os(iOS)
+            Button { showingContactScanner = true } label: {
+                Label("Scan contact QR code", systemImage: "qrcode.viewfinder")
+            }
+            #endif
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Create", action: create).buttonStyle(.borderedProminent) }
         }.textFieldStyle(.roundedBorder).padding(24).platformNewConversationSize()
+        #if os(iOS)
+        .sheet(isPresented: $showingContactScanner) {
+            ContactQRScannerSheet { scannedValue in
+                guard let contact = SidebandContactLink(string: scannedValue) else {
+                    store.lastError = "That QR code is not a valid Sideband contact."
+                    showingContactScanner = false
+                    return
+                }
+                address = contact.url.absoluteString
+                if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    name = contact.displayName ?? ""
+                }
+                showingContactScanner = false
+            }
+        }
+        #endif
     }
 
     private func create() {
@@ -1196,3 +1221,142 @@ private struct NewConversationView: View {
         if store.addConversation(destinationHash: destination, displayName: displayName) { dismiss() }
     }
 }
+
+#if os(iOS)
+private struct ContactQRScannerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let onScan: (String) -> Void
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                ContactQRScannerView(onScan: onScan, onError: { errorMessage = $0 })
+                    .ignoresSafeArea()
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(.white.opacity(0.9), lineWidth: 3)
+                    .frame(width: 250, height: 250)
+                    .shadow(color: .black.opacity(0.5), radius: 4)
+                VStack {
+                    Spacer()
+                    Text("Place a Sideband contact QR code inside the frame")
+                        .font(.callout.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                        .padding()
+                        .background(.black.opacity(0.65), in: Capsule())
+                        .padding(.bottom, 36)
+                }
+            }
+            .navigationTitle("Scan Contact")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .alert("Camera Unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("Close") { dismiss() }
+            } message: { Text(errorMessage ?? "") }
+        }
+    }
+}
+
+private struct ContactQRScannerView: UIViewControllerRepresentable {
+    let onScan: (String) -> Void
+    let onError: (String) -> Void
+
+    func makeUIViewController(context: Context) -> ContactQRScannerController {
+        ContactQRScannerController(onScan: onScan, onError: onError)
+    }
+
+    func updateUIViewController(_ uiViewController: ContactQRScannerController, context: Context) {}
+}
+
+private final class ContactQRScannerController: UIViewController, @preconcurrency AVCaptureMetadataOutputObjectsDelegate {
+    private let captureSession = AVCaptureSession()
+    private let onScan: (String) -> Void
+    private let onError: (String) -> Void
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var deliveredResult = false
+
+    init(onScan: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+        self.onScan = onScan
+        self.onError = onError
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        requestCameraAndStart()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        previewLayer?.frame = view.layer.bounds
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopCapture()
+    }
+
+    private func requestCameraAndStart() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            configureCapture()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted { self?.configureCapture() }
+                    else { self?.onError("Camera access is required to scan Sideband contact QR codes.") }
+                }
+            }
+        case .denied, .restricted:
+            onError("Camera access is disabled. Enable it for Sideband in Settings, or paste the contact link instead.")
+        @unknown default:
+            onError("The camera authorization state is unavailable.")
+        }
+    }
+
+    private func configureCapture() {
+        guard let camera = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: camera),
+              captureSession.canAddInput(input) else {
+            onError("No camera is available on this device.")
+            return
+        }
+        captureSession.addInput(input)
+        let output = AVCaptureMetadataOutput()
+        guard captureSession.canAddOutput(output) else {
+            onError("The camera cannot scan QR codes on this device.")
+            return
+        }
+        captureSession.addOutput(output)
+        output.setMetadataObjectsDelegate(self, queue: .main)
+        output.metadataObjectTypes = [.qr]
+
+        let layer = AVCaptureVideoPreviewLayer(session: captureSession)
+        layer.videoGravity = .resizeAspectFill
+        layer.frame = view.layer.bounds
+        view.layer.insertSublayer(layer, at: 0)
+        previewLayer = layer
+        DispatchQueue.global(qos: .userInitiated).async { [captureSession] in captureSession.startRunning() }
+    }
+
+    private func stopCapture() {
+        guard captureSession.isRunning else { return }
+        DispatchQueue.global(qos: .utility).async { [captureSession] in captureSession.stopRunning() }
+    }
+
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard !deliveredResult,
+              let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              object.type == .qr,
+              let value = object.stringValue else { return }
+        deliveredResult = true
+        stopCapture()
+        onScan(value)
+    }
+}
+#endif

@@ -27,6 +27,7 @@
         <string>_rns._tcp</string>
         <string>_sideband._tcp</string>
     </array>
+    <key>NSCameraUsageDescription</key><string>Sideband uses the camera only when you choose to scan a contact QR code.</string>
     <key>NSLocalNetworkUsageDescription</key><string>Sideband discovers and connects to Reticulum gateways and peers on your local network.</string>
     <key>NSLocationWhenInUseUsageDescription</key><string>Sideband uses your location only when you choose to share telemetry with a contact.</string>
     <key>UIApplicationSupportsIndirectInputEvents</key><true/>
