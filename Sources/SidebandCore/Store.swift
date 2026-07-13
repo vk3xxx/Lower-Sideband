@@ -45,7 +45,13 @@ public final class SidebandStore {
     public let resourceStagingStore: ReticulumResourceStagingStore
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
-    public var selectedConversationID: UUID?
+    public var selectedConversationID: UUID? {
+        didSet {
+            if selectedConversationID != oldValue, let selectedConversationID {
+                markConversationRead(selectedConversationID)
+            }
+        }
+    }
     public var lastError: String?
 
     private let transport: any MessageTransport
@@ -119,21 +125,27 @@ public final class SidebandStore {
     }
 
     @discardableResult
-    public func addConversation(destinationHash: String, displayName: String) -> Bool {
+    public func addConversation(destinationHash: String, displayName: String, select: Bool = true) -> Bool {
         let hash = destinationHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard DestinationHash.isValid(hash) else {
             lastError = "An LXMF destination must be a 32-character hexadecimal address."
             return false
         }
         if let existing = conversations.first(where: { $0.destinationHash == hash }) {
-            selectedConversationID = existing.id
+            if select { selectedConversationID = existing.id }
             return true
         }
         let conversation = Conversation(destinationHash: hash, displayName: displayName.isEmpty ? abbreviated(hash) : displayName)
         conversations.insert(conversation, at: 0)
-        selectedConversationID = conversation.id
+        if select { selectedConversationID = conversation.id }
         save()
         return true
+    }
+
+    public func markConversationRead(_ conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }), conversations[index].unreadCount > 0 else { return }
+        conversations[index].unreadCount = 0
+        save()
     }
 
     public func send(_ text: String) async {
@@ -702,10 +714,11 @@ public final class SidebandStore {
         let source = message.sourceHash.hex
         if !conversations.contains(where: { $0.destinationHash == source }) {
             let name = discoveries.first(where: { $0.destinationHash == source })?.announcedDisplayName ?? "Received \(source.prefix(8))"
-            _ = addConversation(destinationHash: source, displayName: name)
+            _ = addConversation(destinationHash: source, displayName: name, select: false)
         }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }), let body = String(data: message.content, encoding: .utf8) else { return false }
         messages.append(Message(conversationID: conversation.id, body: body, timestamp: Date(timeIntervalSince1970: message.timestamp), direction: .incoming, state: .delivered))
+        noteIncomingActivity(in: conversation.id)
         receivedLXMFIDs.insert(message.messageID.hex)
         UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
         save()
@@ -923,13 +936,14 @@ public final class SidebandStore {
         let source = envelope.sourceHash.hex
         if !conversations.contains(where: { $0.destinationHash == source }) {
             let name = discoveries.first(where: { $0.destinationHash == source })?.announcedDisplayName ?? "Received \(source.prefix(8))"
-            _ = addConversation(destinationHash: source, displayName: name)
+            _ = addConversation(destinationHash: source, displayName: name, select: false)
         }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }) else { return }
         if let index = messages.firstIndex(where: { $0.id == envelope.groupID && $0.conversationID == conversation.id }) {
             messages[index].attachments.append(attachment)
         } else {
             messages.append(Message(id: envelope.groupID, conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment]))
+            noteIncomingActivity(in: conversation.id)
         }
         incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
         save()
@@ -1051,6 +1065,14 @@ public final class SidebandStore {
         guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[index].updatedAt = .now
         conversations.sort { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func noteIncomingActivity(in conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        if selectedConversationID != conversationID {
+            conversations[index].unreadCount += 1
+        }
+        touch(conversationID)
     }
 
     private func updateMessage(_ id: UUID, state: Message.DeliveryState) {

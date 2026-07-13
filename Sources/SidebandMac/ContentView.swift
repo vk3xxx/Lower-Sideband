@@ -20,9 +20,21 @@ struct ContentView: View {
         NavigationSplitView {
             List(selection: $store.selectedConversationID) {
                 Section("Conversations") { ForEach(store.conversations) { conversation in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(conversation.displayName).font(.headline)
-                        Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(conversation.displayName).font(.headline)
+                            Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        if conversation.unreadCount > 0 {
+                            Text(conversation.unreadCount, format: .number)
+                                .font(.caption.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor, in: Capsule())
+                                .accessibilityLabel("\(conversation.unreadCount) unread messages")
+                        }
                     }.padding(.vertical, 4).tag(conversation.id)
                 } }
                 if !store.discoveries.isEmpty {

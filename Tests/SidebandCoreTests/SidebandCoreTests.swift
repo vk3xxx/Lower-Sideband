@@ -63,6 +63,34 @@ import Testing
     #expect(store.recoveredOutboundCount == 1)
 }
 
+@MainActor @Test func selectingConversationClearsPersistedUnreadCount() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let unread = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Unread", unreadCount: 3)
+    let selected = Conversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Selected")
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [selected, unread])).write(to: url)
+
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.conversations.first(where: { $0.id == unread.id })?.unreadCount == 3)
+    store.selectedConversationID = unread.id
+    #expect(store.conversations.first(where: { $0.id == unread.id })?.unreadCount == 0)
+
+    let reloaded = SidebandStore(persistenceURL: url)
+    #expect(reloaded.conversations.first(where: { $0.id == unread.id })?.unreadCount == 0)
+}
+
+@MainActor @Test func addingBackgroundConversationDoesNotReplaceSelection() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Selected"))
+    let selectedID = store.selectedConversationID
+
+    #expect(store.addConversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Background", select: false))
+    #expect(store.selectedConversationID == selectedID)
+}
+
 @Test func attachmentStoreImportsFilesAndReturnsDurableMetadata() async throws {
     let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
