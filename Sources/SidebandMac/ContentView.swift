@@ -10,7 +10,7 @@ import AppKit
 private typealias PlatformImage = NSImage
 #else
 import UIKit
-import AVFoundation
+@preconcurrency import AVFoundation
 private typealias PlatformImage = UIImage
 #endif
 
@@ -809,6 +809,7 @@ private struct ConversationView: View {
     @State private var pendingAttachments: [Attachment] = []
     @State private var showingFileImporter = false
     @State private var messageSearch = ""
+    @State private var draftSaveTask: Task<Void, Never>?
     @State private var previewAttachmentURL: URL?
     @State private var previewAttachment: Attachment?
     @State private var showingContactQR = false
@@ -1026,6 +1027,8 @@ private struct ConversationView: View {
             store.conversationDidAppear(conversation.id)
         }
         .onDisappear {
+            draftSaveTask?.cancel()
+            store.updateDraft(draft, for: conversation.id)
             voiceRecorder.cancel()
             store.conversationDidDisappear(conversation.id)
             if let previewAttachment {
@@ -1036,7 +1039,13 @@ private struct ConversationView: View {
             if value.count > SidebandMessageLimits.maximumTextCharacters {
                 draft = String(value.prefix(SidebandMessageLimits.maximumTextCharacters))
             } else {
-                store.updateDraft(value, for: conversation.id)
+                guard value != store.draft(for: conversation.id) else { return }
+                draftSaveTask?.cancel()
+                draftSaveTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    guard !Task.isCancelled else { return }
+                    store.updateDraft(value, for: conversation.id)
+                }
             }
         }
         .quickLookPreview($previewAttachmentURL)
@@ -1080,6 +1089,7 @@ private struct ConversationView: View {
     private func send() {
         let text = draft
         let attachments = pendingAttachments
+        draftSaveTask?.cancel()
         draft = ""
         store.updateDraft("", for: conversation.id)
         pendingAttachments = []

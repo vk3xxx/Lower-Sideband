@@ -481,6 +481,51 @@ import Testing
     #expect(store.messages.map(\.id) == [delivered.id])
 }
 
+@MainActor @Test func messageSummaryIndexesRefreshAfterMessageRemoval() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let delivered = Message(
+        conversationID: conversation.id,
+        body: "delivered",
+        timestamp: Date(timeIntervalSince1970: 100),
+        direction: .outgoing,
+        state: .delivered
+    )
+    let failed = Message(
+        conversationID: conversation.id,
+        body: "failed",
+        timestamp: Date(timeIntervalSince1970: 200),
+        direction: .outgoing,
+        state: .failed
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [delivered, failed])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(store.latestMessage(for: conversation.id)?.id == failed.id)
+    #expect(store.failedMessageCount(for: conversation.id) == 1)
+    await store.removeFailedMessage(failed.id)
+    #expect(store.latestMessage(for: conversation.id)?.id == delivered.id)
+    #expect(store.failedMessageCount(for: conversation.id) == 0)
+}
+
+@MainActor @Test func cachedConversationTranscriptRefreshesAfterRename() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Before")
+    let message = Message(conversationID: conversation.id, body: "hello", direction: .incoming, state: .delivered)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [message])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(store.conversationTranscript(conversation.id)?.contains("Conversation with Before") == true)
+    #expect(store.renameConversation(conversation.id, to: "After"))
+    #expect(store.conversationTranscript(conversation.id)?.contains("Conversation with After") == true)
+}
+
 @MainActor @Test func recoversUnprovedSentOutboxAcrossRelaunch() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")

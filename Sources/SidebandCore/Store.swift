@@ -5,7 +5,12 @@ import CryptoKit
 @MainActor @Observable
 public final class SidebandStore {
     public private(set) var conversations: [Conversation] = []
-    public private(set) var messages: [Message] = []
+    public private(set) var messages: [Message] = [] {
+        didSet {
+            messageIndexesAreDirty = true
+            transcriptCache.removeAll(keepingCapacity: true)
+        }
+    }
     public private(set) var drafts: [UUID: String] = [:]
     public private(set) var transportState: TransportState = .offline
     public private(set) var networkState: ReticulumTCPInterface.State = .stopped
@@ -74,6 +79,14 @@ public final class SidebandStore {
     private let syncDeviceID: String
     private var iCloudSyncTask: Task<Void, Never>?
     private var discoverySaveTask: Task<Void, Never>?
+    private var deferredSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var lastValidatedPersistenceData: Data?
+    @ObservationIgnored private var messageIndexesAreDirty = true
+    @ObservationIgnored private var messagesByConversation: [UUID: [Message]] = [:]
+    @ObservationIgnored private var latestMessageByConversation: [UUID: Message] = [:]
+    @ObservationIgnored private var failedMessageCountByConversation: [UUID: Int] = [:]
+    @ObservationIgnored private var latestMessageDateByConversation: [UUID: Date] = [:]
+    @ObservationIgnored private var transcriptCache: [UUID: String] = [:]
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
     private var networkInterfacePool: ReticulumTCPInterfacePool?
@@ -186,21 +199,26 @@ public final class SidebandStore {
     public var totalUnreadCount: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
 
     public func messages(for conversationID: UUID) -> [Message] {
-        messages.filter { $0.conversationID == conversationID }.sorted { $0.timestamp < $1.timestamp }
+        rebuildMessageIndexesIfNeeded()
+        return messagesByConversation[conversationID] ?? []
     }
 
     public func latestMessage(for conversationID: UUID) -> Message? {
-        messages.lazy.filter { $0.conversationID == conversationID }.max { $0.timestamp < $1.timestamp }
+        rebuildMessageIndexesIfNeeded()
+        return latestMessageByConversation[conversationID]
     }
 
     public func failedMessageCount(for conversationID: UUID) -> Int {
-        messages.count { $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .failed }
+        rebuildMessageIndexesIfNeeded()
+        return failedMessageCountByConversation[conversationID] ?? 0
     }
 
     public func conversationTranscript(_ conversationID: UUID) -> String? {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        rebuildMessageIndexesIfNeeded()
+        if let cached = transcriptCache[conversationID] { return cached }
         let formatter = ISO8601DateFormatter()
-        let lines = messages(for: conversationID).map { message in
+        let lines = (messagesByConversation[conversationID] ?? []).map { message in
             let sender = message.direction == .outgoing ? "Me" : conversation.displayName
             let attachments = message.attachments.map { "[Attachment: \($0.filename)]" }.joined(separator: " ")
             let telemetry = message.telemetry?.location.map {
@@ -208,7 +226,9 @@ public final class SidebandStore {
             } ?? ""
             return "[\(formatter.string(from: message.timestamp))] \(sender): \([message.body, attachments, telemetry].filter { !$0.isEmpty }.joined(separator: " "))"
         }
-        return (["Conversation with \(conversation.displayName)", "Destination: \(conversation.destinationHash)", ""] + lines).joined(separator: "\n")
+        let transcript = (["Conversation with \(conversation.displayName)", "Destination: \(conversation.destinationHash)", ""] + lines).joined(separator: "\n")
+        transcriptCache[conversationID] = transcript
+        return transcript
     }
 
     public func conversationContactCard(_ conversationID: UUID) -> String? {
@@ -298,6 +318,7 @@ public final class SidebandStore {
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return false }
         conversations[index].displayName = name
+        transcriptCache.removeValue(forKey: conversationID)
         save()
         return true
     }
@@ -630,6 +651,7 @@ public final class SidebandStore {
 
     public func applicationDidEnterBackground() {
         isApplicationActive = false
+        flushDeferredSave()
         stopPeriodicPropagationSync()
         backgroundRefresh.schedule()
     }
@@ -2077,10 +2099,15 @@ public final class SidebandStore {
     private func updateAttachment(messageID: UUID, attachmentID: UUID, state: Attachment.TransferState, progress: Double) {
         guard let messageIndex = messages.firstIndex(where: { $0.id == messageID }),
               let attachmentIndex = messages[messageIndex].attachments.firstIndex(where: { $0.id == attachmentID }) else { return }
+        let previousState = messages[messageIndex].attachments[attachmentIndex].state
         messages[messageIndex].attachments[attachmentIndex].state = state
         messages[messageIndex].attachments[attachmentIndex].progress = progress
         if state == .failed { messages[messageIndex].state = .failed }
-        save()
+        if state == .transferring, previousState == .transferring, progress < 1 {
+            scheduleDeferredSave()
+        } else {
+            save()
+        }
     }
 
     private func receiveDeliveryProof(_ packet: ReticulumPacket) {
@@ -2193,14 +2220,11 @@ public final class SidebandStore {
     }
 
     private func sortConversations() {
-        let latestMessageDates = Dictionary(grouping: messages, by: \.conversationID)
-            .mapValues { conversationMessages in
-                conversationMessages.map(\.timestamp).max() ?? .distantPast
-            }
+        rebuildMessageIndexesIfNeeded()
         conversations.sort {
             if $0.isPinned != $1.isPinned { return $0.isPinned && !$1.isPinned }
-            let leftActivity = max($0.updatedAt, latestMessageDates[$0.id] ?? .distantPast)
-            let rightActivity = max($1.updatedAt, latestMessageDates[$1.id] ?? .distantPast)
+            let leftActivity = max($0.updatedAt, latestMessageDateByConversation[$0.id] ?? .distantPast)
+            let rightActivity = max($1.updatedAt, latestMessageDateByConversation[$1.id] ?? .distantPast)
             if leftActivity != rightActivity { return leftActivity > rightActivity }
             return $0.id.uuidString < $1.id.uuidString
         }
@@ -2241,11 +2265,13 @@ public final class SidebandStore {
             if let backupData = try? Data(contentsOf: automaticBackupURL),
                let backupPlaintext = try? localDataCipher.open(backupData, context: "application-snapshot-v1"),
                let backup = try? validatedSnapshot(from: backupPlaintext) {
+                lastValidatedPersistenceData = backupData
                 applyLoadedSnapshot(backup)
                 save()
             }
             return
         }
+        lastValidatedPersistenceData = data
         applyLoadedSnapshot(snapshot)
         if recoveredOutboundCount > 0 || !localDataCipher.isEncrypted(data) { save() }
     }
@@ -2297,18 +2323,63 @@ public final class SidebandStore {
     }
 
     private func save() {
+        deferredSaveTask?.cancel()
+        deferredSaveTask = nil
         do {
             try FileManager.default.createDirectory(at: persistenceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if let existingData = try? Data(contentsOf: persistenceURL),
-               let existingPlaintext = try? localDataCipher.open(existingData, context: "application-snapshot-v1"),
-               (try? validatedSnapshot(from: existingPlaintext)) != nil {
+            if let lastValidatedPersistenceData {
+                try lastValidatedPersistenceData.write(to: automaticBackupURL, options: .atomic)
+            } else if let existingData = try? Data(contentsOf: persistenceURL),
+                      let existingPlaintext = try? localDataCipher.open(existingData, context: "application-snapshot-v1"),
+                      (try? validatedSnapshot(from: existingPlaintext)) != nil {
                 try existingData.write(to: automaticBackupURL, options: .atomic)
             }
             let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts))
             let encrypted = try localDataCipher.seal(plaintext, context: "application-snapshot-v1")
             try encrypted.write(to: persistenceURL, options: .atomic)
+            lastValidatedPersistenceData = encrypted
             if iCloudSyncEnabled, !isApplyingCloudSnapshot { scheduleICloudSync() }
         } catch { lastError = "Could not save local data: \(error.localizedDescription)" }
+    }
+
+    private func scheduleDeferredSave() {
+        deferredSaveTask?.cancel()
+        deferredSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.save()
+        }
+    }
+
+    private func flushDeferredSave() {
+        guard deferredSaveTask != nil else { return }
+        save()
+    }
+
+    private func rebuildMessageIndexesIfNeeded() {
+        guard messageIndexesAreDirty else { return }
+        var grouped: [UUID: [Message]] = [:]
+        var latest: [UUID: Message] = [:]
+        var failed: [UUID: Int] = [:]
+        var latestDates: [UUID: Date] = [:]
+        for message in messages {
+            grouped[message.conversationID, default: []].append(message)
+            if latestDates[message.conversationID, default: .distantPast] < message.timestamp {
+                latestDates[message.conversationID] = message.timestamp
+                latest[message.conversationID] = message
+            }
+            if message.direction == .outgoing, message.state == .failed {
+                failed[message.conversationID, default: 0] += 1
+            }
+        }
+        for conversationID in grouped.keys {
+            grouped[conversationID]?.sort { $0.timestamp < $1.timestamp }
+        }
+        messagesByConversation = grouped
+        latestMessageByConversation = latest
+        failedMessageCountByConversation = failed
+        latestMessageDateByConversation = latestDates
+        messageIndexesAreDirty = false
     }
 
     private func scheduleICloudSync() {
