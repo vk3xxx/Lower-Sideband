@@ -27,7 +27,7 @@ enum DeliverySoakRunner {
         guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return }
         store.removeDeliverySoakMessages()
         deliveryTimeoutBaseline = store.deliveryTimeoutCount
-        store.autoConnectEnabled = mode == "automatic"
+        store.autoConnectEnabled = mode == "automatic" || environment["SIDEBAND_SOAK_AUTOCONNECT"] == "1"
         store.internetOnlyEnabled = mode == "public"
         store.preferIPv6 = true
         store.networkPort = Int(environment["SIDEBAND_SOAK_PORT"] ?? "4242") ?? 4_242
