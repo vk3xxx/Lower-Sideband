@@ -558,6 +558,22 @@ import Testing
     #expect(store.conversations.first?.destinationHash == firstHash)
 }
 
+@MainActor @Test func startingAnArchivedDiscoveryRestoresAndSelectsConversation() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    let hash = "0123456789abcdef0123456789abcdef"
+    #expect(store.addConversation(destinationHash: hash, displayName: "Peer"))
+    let conversationID = store.conversations[0].id
+    store.setConversationArchived(true, conversationID: conversationID)
+    store.selectedConversationID = nil
+    let discovery = DiscoveredDestination(destinationHash: hash, hops: 1, isValidated: true)
+
+    #expect(store.addConversation(from: discovery))
+
+    #expect(store.selectedConversationID == conversationID)
+    #expect(store.conversations.first(where: { $0.id == conversationID })?.isArchived == false)
+}
+
 @MainActor @Test func renameConversationPersistsNonemptyName() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

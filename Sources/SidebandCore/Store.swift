@@ -228,6 +228,9 @@ public final class SidebandStore {
         }
         if let existing = conversations.first(where: { $0.destinationHash == hash }) {
             if select {
+                if let index = conversations.firstIndex(where: { $0.id == existing.id }) {
+                    conversations[index].isArchived = false
+                }
                 selectedConversationID = existing.id
                 touch(existing.id)
                 save()
@@ -846,8 +849,9 @@ public final class SidebandStore {
         await interface.start()
     }
 
-    public func addConversation(from discovery: DiscoveredDestination) {
-        _ = addConversation(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName ?? "Discovered \(discovery.destinationHash.prefix(8))")
+    @discardableResult
+    public func addConversation(from discovery: DiscoveredDestination) -> Bool {
+        addConversation(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName ?? "Discovered \(discovery.destinationHash.prefix(8))")
     }
 
     public func requestPath(to destinationHash: String) async {

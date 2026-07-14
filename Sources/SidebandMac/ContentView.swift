@@ -266,7 +266,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder private func discoveryRow(_ discovery: DiscoveredDestination) -> some View {
-        Button { store.addConversation(from: discovery) } label: {
+        Button { startConversation(with: discovery) } label: {
             DiscoveredDestinationRow(discovery: discovery)
         }
         .buttonStyle(.plain)
@@ -276,7 +276,18 @@ struct ContentView: View {
                 Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
                 ShareLink(item: contactLink.url) { Label("Share Contact Link", systemImage: "square.and.arrow.up") }
             }
-            Button { store.addConversation(from: discovery) } label: { Label("Start Conversation", systemImage: "message") }
+            Button { startConversation(with: discovery) } label: { Label("Start Conversation", systemImage: "message") }
+        }
+    }
+
+    private func startConversation(with discovery: DiscoveredDestination) {
+        conversationSearch = ""
+        showingArchived = false
+        guard store.addConversation(from: discovery),
+              let conversationID = store.conversations.first(where: { $0.destinationHash == discovery.destinationHash.lowercased() })?.id else { return }
+        Task { @MainActor in
+            await Task.yield()
+            store.selectedConversationID = conversationID
         }
     }
 
