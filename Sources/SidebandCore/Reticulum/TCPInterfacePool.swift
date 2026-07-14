@@ -14,16 +14,18 @@ public actor ReticulumTCPInterfacePool {
         public let endpoint: NWEndpoint
         public let host: String?
         public let port: UInt16?
+        public let isBootstrap: Bool
 
-        public init(id: String, name: String, host: String, port: UInt16) {
+        public init(id: String, name: String, host: String, port: UInt16, isBootstrap: Bool = false) {
             self.id = id
             self.name = name
             self.endpoint = .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
             self.host = host
             self.port = port
+            self.isBootstrap = isBootstrap
         }
 
-        public init(id: String, name: String, endpoint: NWEndpoint) {
+        public init(id: String, name: String, endpoint: NWEndpoint, isBootstrap: Bool = false) {
             self.id = id
             self.name = name
             self.endpoint = endpoint
@@ -34,6 +36,7 @@ public actor ReticulumTCPInterfacePool {
                 self.host = nil
                 self.port = nil
             }
+            self.isBootstrap = isBootstrap
         }
     }
 
@@ -45,6 +48,7 @@ public actor ReticulumTCPInterfacePool {
         public let state: ReticulumTCPInterface.State
         public let connectedAt: Date?
         public let lastPacketAt: Date?
+        public let isBootstrap: Bool
     }
 
     public enum PoolError: Error { case noReadyInterfaces }
@@ -74,16 +78,18 @@ public actor ReticulumTCPInterfacePool {
         await stop()
         guard !endpoints.isEmpty else { return }
 
-        for endpoint in endpoints {
-            let interface = ReticulumTCPInterface(endpoint: endpoint.endpoint) { [weak self] packet in
-                await self?.received(packet, on: endpoint.id)
-            } stateHandler: { [weak self] state in
-                await self?.stateChanged(state, on: endpoint.id)
-            }
-            entries[endpoint.id] = Entry(endpoint: endpoint, interface: interface, state: .connecting)
-        }
+        for endpoint in endpoints { insert(endpoint) }
         await publishState(force: true)
         for entry in entries.values { await entry.interface.start() }
+    }
+
+    /// Adds an authenticated interface discovered through Reticulum without
+    /// interrupting any existing paths or in-flight packets.
+    public func add(_ endpoint: Endpoint) async {
+        guard entries[endpoint.id] == nil else { return }
+        insert(endpoint)
+        await publishState(force: true)
+        await entries[endpoint.id]?.interface.start()
     }
 
     public func stop() async {
@@ -138,7 +144,28 @@ public actor ReticulumTCPInterfacePool {
         entry.state = state
         if state == .ready { entry.connectedAt = .now }
         entries[interfaceID] = entry
-        await publishState()
+        let bootstrapInterfaces = entries.values
+            .filter { $0.endpoint.isBootstrap }
+            .map(\.interface)
+        let shouldShedBootstrap = entries.values.count {
+            !$0.endpoint.isBootstrap && $0.state == .ready
+        } >= 2
+        if shouldShedBootstrap {
+            entries = entries.filter { !$0.value.endpoint.isBootstrap }
+        }
+        await publishState(force: true)
+        if shouldShedBootstrap {
+            for interface in bootstrapInterfaces { await interface.stop() }
+        }
+    }
+
+    private func insert(_ endpoint: Endpoint) {
+        let interface = ReticulumTCPInterface(endpoint: endpoint.endpoint) { [weak self] packet in
+            await self?.received(packet, on: endpoint.id)
+        } stateHandler: { [weak self] state in
+            await self?.stateChanged(state, on: endpoint.id)
+        }
+        entries[endpoint.id] = Entry(endpoint: endpoint, interface: interface, state: .connecting)
     }
 
     private func publishState(force: Bool = false) async {
@@ -169,7 +196,8 @@ public actor ReticulumTCPInterfacePool {
                 port: $0.endpoint.port,
                 state: $0.state,
                 connectedAt: $0.connectedAt,
-                lastPacketAt: $0.lastPacketAt
+                lastPacketAt: $0.lastPacketAt,
+                isBootstrap: $0.endpoint.isBootstrap
             )
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }

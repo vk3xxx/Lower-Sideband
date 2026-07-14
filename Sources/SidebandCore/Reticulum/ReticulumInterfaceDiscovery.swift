@@ -106,6 +106,30 @@ public enum ReticulumInterfaceDiscovery {
         return value
     }
 
+    /// Discovery announces are received from an untrusted global network. The
+    /// signature authenticates the announcing identity, not its operator, so
+    /// automatic public-mode connections must not be redirected to local or
+    /// special-use addresses.
+    public static func isSafeAutomaticPublicHost(_ host: String) -> Bool {
+        let normalized = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard validHost(normalized), normalized != "localhost", !normalized.hasSuffix(".local") else { return false }
+        if normalized.contains(":") {
+            guard !normalized.contains("%") else { return false }
+            return normalized.first == "2" || normalized.first == "3" // IPv6 global unicast 2000::/3
+        }
+        let parts = normalized.split(separator: ".")
+        let octets = parts.compactMap { UInt8($0) }
+        if parts.count == 4, octets.count == 4 {
+            let first = octets[0], second = octets[1]
+            return first != 0 && first != 10 && first != 127 && first < 224
+                && !(first == 100 && (64...127).contains(second))
+                && !(first == 169 && second == 254)
+                && !(first == 172 && (16...31).contains(second))
+                && !(first == 192 && second == 168)
+        }
+        return true
+    }
+
     private static func string(_ value: MessagePackValue?) -> String? {
         switch value {
         case let .string(string): string

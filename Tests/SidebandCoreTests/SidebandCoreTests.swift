@@ -1511,6 +1511,18 @@ import Testing
     ) == nil)
 }
 
+@Test func automaticInterfaceDiscoveryRejectsLocalAndSpecialUseHosts() {
+    #expect(ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("rns.beleth.net"))
+    #expect(ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("202.61.243.41"))
+    #expect(ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("2603:c020:401f:d7af::a1"))
+    #expect(!ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("127.0.0.1"))
+    #expect(!ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("10.20.20.133"))
+    #expect(!ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("192.168.1.10"))
+    #expect(!ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("fd20:20:20::133"))
+    #expect(!ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("fe80::1%en0"))
+    #expect(!ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("gateway.local"))
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
     init(hex: String) {

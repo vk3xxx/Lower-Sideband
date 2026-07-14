@@ -62,6 +62,7 @@ public final class SidebandStore {
     public private(set) var activeNetworkHost: String?
     public private(set) var activeNetworkPort: Int?
     public private(set) var networkInterfaces: [ReticulumTCPInterfacePool.Snapshot] = []
+    public private(set) var discoveredNetworkInterfaces: [DiscoveredReticulumInterface] = []
     public private(set) var lastQuarantinedPersistenceURL: URL?
     public var selectedConversationID: UUID?
     public var lastError: String?
@@ -76,6 +77,7 @@ public final class SidebandStore {
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
     private var networkInterfacePool: ReticulumTCPInterfacePool?
+    private var autoConnectedDiscoveredInterfaceIDs: Set<String> = []
     private var networkConnectionGeneration = UUID()
     private let pathTable = ReticulumPathTable()
     private var pendingLinks: [String: ReticulumLinkRequest] = [:]
@@ -542,6 +544,7 @@ public final class SidebandStore {
         intentionallyDisconnected = false
         activeGatewayID = nil
         activeInternetGatewayID = internetGatewayID
+        autoConnectedDiscoveredInterfaceIDs.removeAll()
         selectedGatewayName = nil
         UserDefaults.standard.set(networkHost, forKey: "reticulumHost")
         UserDefaults.standard.set(networkIPv6Host, forKey: "reticulumIPv6Host")
@@ -558,7 +561,7 @@ public final class SidebandStore {
                 preferredID: internetGatewayID
             )
             endpoints = Array(publicGateways.prefix(3)).map {
-                ReticulumTCPInterfacePool.Endpoint(id: $0.id, name: $0.name, host: $0.host, port: $0.port)
+                ReticulumTCPInterfacePool.Endpoint(id: $0.id, name: $0.name, host: $0.host, port: $0.port, isBootstrap: true)
             }
             activeNetworkHost = "\(endpoints.count) public gateways"
             activeNetworkPort = nil
@@ -587,6 +590,7 @@ public final class SidebandStore {
         await networkInterfacePool?.stop()
         networkInterfacePool = nil
         networkInterfaces = []
+        autoConnectedDiscoveredInterfaceIDs.removeAll()
         networkState = .stopped
         activeNetworkHost = nil
         activeNetworkPort = nil
@@ -1379,6 +1383,9 @@ public final class SidebandStore {
         let isValidated = announce?.validate() == true
         if isValidated, let announce {
             considerPropagationNode(announce, packet: packet)
+            if let interface = ReticulumInterfaceDiscovery.decode(announce, hops: packet.hops) {
+                considerDiscoveredNetworkInterface(interface)
+            }
             Task {
                 _ = await pathTable.ingest(announce, packet: packet, interfaceID: interfaceID)
                 await refreshPathState()
@@ -1415,6 +1422,49 @@ public final class SidebandStore {
         discoveries.sort { $0.lastSeen > $1.lastSeen }
         trimDiscoveryCache()
         scheduleDiscoverySave()
+    }
+
+    private func considerDiscoveredNetworkInterface(_ candidate: DiscoveredReticulumInterface) {
+        let expiry = Date.now.addingTimeInterval(-7 * 24 * 60 * 60)
+        discoveredNetworkInterfaces.removeAll { $0.lastSeen < expiry }
+        if let index = discoveredNetworkInterfaces.firstIndex(where: { $0.id == candidate.id }) {
+            let firstSeen = discoveredNetworkInterfaces[index].firstSeen
+            discoveredNetworkInterfaces[index] = DiscoveredReticulumInterface(
+                name: candidate.name,
+                host: candidate.host,
+                port: candidate.port,
+                transportID: candidate.transportID,
+                networkID: candidate.networkID,
+                hops: candidate.hops,
+                stampValue: candidate.stampValue,
+                firstSeen: firstSeen,
+                lastSeen: candidate.lastSeen
+            )
+        } else {
+            discoveredNetworkInterfaces.append(candidate)
+        }
+        discoveredNetworkInterfaces.sort {
+            if $0.hops != $1.hops { return $0.hops < $1.hops }
+            if $0.stampValue != $1.stampValue { return $0.stampValue > $1.stampValue }
+            return $0.lastSeen > $1.lastSeen
+        }
+        if discoveredNetworkInterfaces.count > 32 {
+            discoveredNetworkInterfaces.removeLast(discoveredNetworkInterfaces.count - 32)
+        }
+
+        guard activeInternetGatewayID != nil,
+              ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost(candidate.host),
+              autoConnectedDiscoveredInterfaceIDs.count < 3,
+              autoConnectedDiscoveredInterfaceIDs.insert(candidate.id).inserted,
+              let pool = networkInterfacePool
+        else { return }
+        let endpoint = ReticulumTCPInterfacePool.Endpoint(
+            id: "discovered:\(candidate.id)",
+            name: candidate.name,
+            host: candidate.host,
+            port: candidate.port
+        )
+        Task { await pool.add(endpoint) }
     }
 
     private func trimDiscoveryCache(limit: Int = 500) {
