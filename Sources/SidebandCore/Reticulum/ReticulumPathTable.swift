@@ -9,20 +9,23 @@ public struct ReticulumPath: Codable, Equatable, Sendable {
     public var publicKey: Data
     public var appData: Data
     public var ratchet: Data?
+    /// The concrete TCP reticule that supplied this route. Older persisted
+    /// paths decode as nil and remain usable by single-interface clients.
+    public var interfaceID: String?
 
     public var isExpired: Bool { expiresAt <= .now }
 }
 
 public actor ReticulumPathTable {
     public static let defaultLifetime: TimeInterval = 60 * 60 * 24 * 7
-    private var paths: [Data: ReticulumPath] = [:]
+    private var paths: [Data: [String: ReticulumPath]] = [:]
     private var pendingRequests: [Data: Date] = [:]
     private let lifetime: TimeInterval
 
     public init(lifetime: TimeInterval = defaultLifetime) { self.lifetime = lifetime }
 
     @discardableResult
-    public func ingest(_ announce: ReticulumAnnounce, packet: ReticulumPacket, now: Date = .now) -> Bool {
+    public func ingest(_ announce: ReticulumAnnounce, packet: ReticulumPacket, interfaceID: String? = nil, now: Date = .now) -> Bool {
         guard announce.validate() else { return false }
         let wasRequested = pendingRequests[announce.destinationHash] != nil
         let candidate = ReticulumPath(
@@ -33,25 +36,37 @@ public actor ReticulumPathTable {
             expiresAt: now.addingTimeInterval(lifetime),
             publicKey: announce.publicKey,
             appData: announce.appData,
-            ratchet: announce.ratchet
+            ratchet: announce.ratchet,
+            interfaceID: interfaceID
         )
-        if let existing = paths[announce.destinationHash], !existing.isExpired, existing.hops < candidate.hops, !wasRequested {
+        let routeKey = interfaceID ?? ""
+        if let existing = paths[announce.destinationHash]?[routeKey], !existing.isExpired, existing.hops < candidate.hops, !wasRequested {
             return false
         }
-        paths[announce.destinationHash] = candidate
+        paths[announce.destinationHash, default: [:]][routeKey] = candidate
         pendingRequests.removeValue(forKey: announce.destinationHash)
         return true
     }
 
     public func path(to destinationHash: Data, now: Date = .now) -> ReticulumPath? {
-        guard let path = paths[destinationHash] else { return nil }
-        if path.expiresAt <= now { paths.removeValue(forKey: destinationHash); return nil }
+        guard var routes = paths[destinationHash] else { return nil }
+        routes = routes.filter { $0.value.expiresAt > now }
+        if routes.isEmpty { paths.removeValue(forKey: destinationHash); return nil }
+        paths[destinationHash] = routes
+        return routes.values.sorted {
+            if $0.hops != $1.hops { return $0.hops < $1.hops }
+            return $0.updatedAt > $1.updatedAt
+        }.first
+    }
+
+    public func path(to destinationHash: Data, on interfaceID: String, now: Date = .now) -> ReticulumPath? {
+        guard let path = paths[destinationHash]?[interfaceID], path.expiresAt > now else { return nil }
         return path
     }
 
     public func all(now: Date = .now) -> [ReticulumPath] {
         prune(now: now)
-        return paths.values.sorted { $0.updatedAt > $1.updatedAt }
+        return paths.values.flatMap(\.values).sorted { $0.updatedAt > $1.updatedAt }
     }
 
     public func markRequested(_ destinationHash: Data, now: Date = .now) { pendingRequests[destinationHash] = now }
@@ -66,7 +81,10 @@ public actor ReticulumPathTable {
     }
 
     public func prune(now: Date = .now) {
-        paths = paths.filter { $0.value.expiresAt > now }
+        paths = paths.compactMapValues { routes in
+            let active = routes.filter { $0.value.expiresAt > now }
+            return active.isEmpty ? nil : active
+        }
         pendingRequests = pendingRequests.filter { now.timeIntervalSince($0.value) < 15 }
     }
 }

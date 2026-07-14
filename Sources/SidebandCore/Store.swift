@@ -59,6 +59,7 @@ public final class SidebandStore {
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
     public private(set) var activeNetworkPort: Int?
+    public private(set) var networkInterfaces: [ReticulumTCPInterfacePool.Snapshot] = []
     public private(set) var lastQuarantinedPersistenceURL: URL?
     public var selectedConversationID: UUID?
     public var lastError: String?
@@ -71,7 +72,7 @@ public final class SidebandStore {
     private var iCloudSyncTask: Task<Void, Never>?
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
-    private var networkInterface: ReticulumTCPInterface?
+    private var networkInterfacePool: ReticulumTCPInterfacePool?
     private var networkConnectionGeneration = UUID()
     private let pathTable = ReticulumPathTable()
     private var pendingLinks: [String: ReticulumLinkRequest] = [:]
@@ -79,6 +80,7 @@ public final class SidebandStore {
     private var deferredLinkRetryTokens: [String: UUID] = [:]
     private var activeLinks: [String: ReticulumLinkSession] = [:]
     private var linkRemoteDestinations: [String: String] = [:]
+    private var linkInterfaceIDs: [String: String] = [:]
     private enum ReceiptKind: Hashable { case direct, opportunistic, propagation }
     private struct PendingReceipt { let messageID: UUID; let kind: ReceiptKind; let destinationHash: String }
     private var pendingReceipts: [String: PendingReceipt] = [:]
@@ -530,7 +532,7 @@ public final class SidebandStore {
         networkState = .connecting
         let generation = UUID()
         networkConnectionGeneration = generation
-        await networkInterface?.stop()
+        await networkInterfacePool?.stop()
         reconnectTask?.cancel()
         reconnectTask = nil
         intentionallyDisconnected = false
@@ -544,15 +546,27 @@ public final class SidebandStore {
         UserDefaults.standard.set(networkPort, forKey: "reticulumPort")
         UserDefaults.standard.set(preferIPv6, forKey: "reticulumPreferIPv6")
         UserDefaults.standard.set(autoConnectEnabled, forKey: "reticulumAutoConnect")
-        activeNetworkHost = selectedHost
-        activeNetworkPort = Int(port)
-        let interface = ReticulumTCPInterface(host: selectedHost, port: port) { [weak self] packet in
-            await self?.receive(packet)
-        } stateHandler: { [weak self] state in
-            await self?.setNetworkState(state, generation: generation)
+        let endpoints: [ReticulumTCPInterfacePool.Endpoint]
+        if let internetGatewayID {
+            let publicGateways = PublicReticulumGateways.ordered(
+                customHost: networkInternetHost,
+                customPort: networkInternetPort,
+                preferredID: internetGatewayID
+            )
+            endpoints = Array(publicGateways.prefix(3)).map {
+                ReticulumTCPInterfacePool.Endpoint(id: $0.id, name: $0.name, host: $0.host, port: $0.port)
+            }
+            activeNetworkHost = "\(endpoints.count) public gateways"
+            activeNetworkPort = nil
+        } else {
+            let id = "\(selectedHost.lowercased()):\(port)"
+            endpoints = [ReticulumTCPInterfacePool.Endpoint(id: id, name: selectedHost, host: selectedHost, port: port)]
+            activeNetworkHost = selectedHost
+            activeNetworkPort = Int(port)
         }
-        networkInterface = interface
-        await interface.start()
+        let pool = makeInterfacePool(generation: generation)
+        networkInterfacePool = pool
+        await pool.start(endpoints)
     }
 
     public func disconnectNetwork() async {
@@ -566,8 +580,9 @@ public final class SidebandStore {
         automaticConnectionDescription = "Disconnected"
         stopPeriodicPropagationSync()
         resetLinkState()
-        await networkInterface?.stop()
-        networkInterface = nil
+        await networkInterfacePool?.stop()
+        networkInterfacePool = nil
+        networkInterfaces = []
         networkState = .stopped
         activeNetworkHost = nil
         activeNetworkPort = nil
@@ -858,20 +873,16 @@ public final class SidebandStore {
         networkState = .connecting
         let generation = UUID()
         networkConnectionGeneration = generation
-        await networkInterface?.stop()
+        await networkInterfacePool?.stop()
         selectedGatewayName = gateway.name
         activeGatewayID = gateway.id
         activeInternetGatewayID = nil
         activeNetworkHost = gateway.name
         activeNetworkPort = nil
         automaticConnectionDescription = "Trying discovered gateway \(gateway.name)"
-        let interface = ReticulumTCPInterface(endpoint: gateway.endpoint) { [weak self] packet in
-            await self?.receive(packet)
-        } stateHandler: { [weak self] state in
-            await self?.setNetworkState(state, generation: generation)
-        }
-        networkInterface = interface
-        await interface.start()
+        let pool = makeInterfacePool(generation: generation)
+        networkInterfacePool = pool
+        await pool.start([ReticulumTCPInterfacePool.Endpoint(id: gateway.id, name: gateway.name, endpoint: gateway.endpoint)])
     }
 
     @discardableResult
@@ -885,7 +896,7 @@ public final class SidebandStore {
             return
         }
         let normalized = destinationHash.lowercased()
-        guard networkState == .ready, let networkInterface else {
+        guard networkState == .ready, let networkInterfacePool else {
             deferredPathRequests.insert(normalized)
             pendingPathHashes.insert(normalized)
             switch networkState {
@@ -898,7 +909,7 @@ public final class SidebandStore {
         }
         do {
             let packet = try ReticulumPathRequest.packet(targetHash: target)
-            try await networkInterface.send(rawPacket: packet)
+            try await networkInterfacePool.send(rawPacket: packet)
             for peer in autoInterfaceDiscovery.peers { autoInterfaceDiscovery.send(rawPacket: packet, to: peer) }
             await pathTable.markRequested(target)
             pendingPathHashes.insert(destinationHash.lowercased())
@@ -954,7 +965,7 @@ public final class SidebandStore {
             deferLinkRequest(to: normalized)
             return
         }
-        guard networkState == .ready, networkInterface != nil else {
+        guard networkState == .ready, networkInterfacePool != nil else {
             deferLinkRequest(to: normalized)
             if networkState != .connecting { await startAutomaticConnection() }
             return
@@ -1047,6 +1058,7 @@ public final class SidebandStore {
         pendingLinkTimeoutTokens.removeAll()
         activeLinks.removeAll()
         linkRemoteDestinations.removeAll()
+        linkInterfaceIDs.removeAll()
         pendingLinkHashes.removeAll()
         activeLinkHashes.removeAll()
         inboundLinkIDs.removeAll()
@@ -1056,8 +1068,21 @@ public final class SidebandStore {
         UserDefaults.standard.removeObject(forKey: "reticulumLastActiveLink")
     }
 
-    private func setNetworkState(_ state: ReticulumTCPInterface.State, generation: UUID) {
+    private func makeInterfacePool(generation: UUID) -> ReticulumTCPInterfacePool {
+        ReticulumTCPInterfacePool { [weak self] interfaceID, packet in
+            await self?.receive(packet, interfaceID: interfaceID)
+        } stateHandler: { [weak self] state, snapshots in
+            await self?.setNetworkState(state, generation: generation, snapshots: snapshots)
+        }
+    }
+
+    private func setNetworkState(
+        _ state: ReticulumTCPInterface.State,
+        generation: UUID,
+        snapshots: [ReticulumTCPInterfacePool.Snapshot] = []
+    ) {
         guard generation == networkConnectionGeneration else { return }
+        networkInterfaces = snapshots
         networkState = state
         if state == .ready {
             lastNetworkReadyAt = .now
@@ -1066,7 +1091,9 @@ public final class SidebandStore {
             reconnectTask = nil
             reconnectAttempt = 0
             reconnectDelaySeconds = nil
-            automaticConnectionDescription = selectedGatewayName.map { "Connected automatically to \($0)" } ?? "Connected automatically to \(activeNetworkHost ?? networkHost)"
+            let readyCount = snapshots.count { $0.state == .ready }
+            automaticConnectionDescription = selectedGatewayName.map { "Connected automatically to \($0)" }
+                ?? (readyCount > 1 ? "Connected securely through \(readyCount) gateways" : "Connected automatically to \(activeNetworkHost ?? networkHost)")
             if let activeGatewayID {
                 preferredGatewayID = activeGatewayID
                 UserDefaults.standard.set(activeGatewayID, forKey: "reticulumPreferredGatewayID")
@@ -1230,16 +1257,11 @@ public final class SidebandStore {
 
     private func rotateToNextInternetGateway(for destinationHash: String) async {
         guard autoConnectEnabled, networkState == .ready, activeInternetGatewayID != nil else { return }
-        automaticConnectionDescription = "No route to \(abbreviated(destinationHash)); trying another public gateway"
-        networkConnectionGeneration = UUID()
-        await networkInterface?.stop()
-        networkInterface = nil
-        networkState = .stopped
-        activeInternetGatewayID = nil
-        activeNetworkHost = nil
-        activeNetworkPort = nil
-        resetLinkState()
-        await tryNextAutomaticConnection()
+        // Public interfaces are now connected concurrently. Reissue the path
+        // request across the pool instead of tearing down healthy reticules.
+        automaticConnectionDescription = "Searching all connected gateways for \(abbreviated(destinationHash))"
+        guard let target = Data(hexadecimal: destinationHash), let packet = try? ReticulumPathRequest.packet(targetHash: target) else { return }
+        _ = try? await networkInterfacePool?.send(rawPacket: packet)
     }
 
     private func reachabilityChanged(_ status: NetworkReachability.Status) {
@@ -1258,8 +1280,8 @@ public final class SidebandStore {
     }
 
     private func synthesizeTCPTunnel() async {
-        guard let networkInterface else { return }
-        do { try await networkInterface.send(rawPacket: ReticulumTunnelSynthesis.packet(identity: transportIdentity, interfaceHash: tcpInterfaceHash)) }
+        guard let networkInterfacePool else { return }
+        do { try await networkInterfacePool.send(rawPacket: ReticulumTunnelSynthesis.packet(identity: transportIdentity, interfaceHash: tcpInterfaceHash)) }
         catch { lastError = "TCP tunnel synthesis failed: \(error.localizedDescription)" }
     }
 
@@ -1274,10 +1296,10 @@ public final class SidebandStore {
         }
     }
 
-    private func receive(_ packet: ReticulumPacket) {
+    private func receive(_ packet: ReticulumPacket, interfaceID: String? = nil) {
         receivedPacketCount += 1
         if packet.packetType == .proof, packet.context == 0xff {
-            receiveLinkProof(packet)
+            receiveLinkProof(packet, interfaceID: interfaceID)
             return
         }
         if packet.packetType == .proof, packet.context == 0x05, packet.destinationType == .link {
@@ -1285,7 +1307,7 @@ public final class SidebandStore {
             return
         }
         if packet.packetType == .linkRequest, packet.destinationHash.hex == localDeliveryHash {
-            acceptIncomingLink(packet)
+            acceptIncomingLink(packet, interfaceID: interfaceID)
             return
         }
         if packet.packetType == .proof {
@@ -1306,7 +1328,7 @@ public final class SidebandStore {
         let isValidated = announce?.validate() == true
         if isValidated, let announce {
             Task {
-                _ = await pathTable.ingest(announce, packet: packet)
+                _ = await pathTable.ingest(announce, packet: packet, interfaceID: interfaceID)
                 await refreshPathState()
                 let hash = announce.destinationHash.hex
                 if hash == propagationNodeHash, !pendingLinkHashes.contains(hash), !activeLinkHashes.contains(hash) {
@@ -1332,13 +1354,14 @@ public final class SidebandStore {
         save()
     }
 
-    private func receiveLinkProof(_ packet: ReticulumPacket) {
+    private func receiveLinkProof(_ packet: ReticulumPacket, interfaceID: String?) {
         let linkID = packet.destinationHash.hex
         guard let request = pendingLinks[linkID],
               let discovery = discoveries.first(where: { $0.destinationHash == request.destinationHash.hex }),
               let publicKey = discovery.publicKey,
               let session = try? request.validateProof(packet, destinationPublicKey: publicKey) else { return }
         activeLinks[linkID] = session
+        if let interfaceID { linkInterfaceIDs[linkID] = interfaceID }
         pendingLinks.removeValue(forKey: linkID)
         pendingLinkTimeoutTokens.removeValue(forKey: linkID)
         let destination = request.destinationHash.hex
@@ -1394,9 +1417,10 @@ public final class SidebandStore {
         }
     }
 
-    private func acceptIncomingLink(_ packet: ReticulumPacket) {
+    private func acceptIncomingLink(_ packet: ReticulumPacket, interfaceID: String?) {
         guard let incoming = try? ReticulumIncomingLink(request: packet, localIdentity: messagingIdentity) else { return }
         activeLinks[incoming.session.linkID.hex] = incoming.session
+        if let interfaceID { linkInterfaceIDs[incoming.session.linkID.hex] = interfaceID }
         inboundLinkIDs.insert(incoming.session.linkID.hex)
         Task {
             do { try await transmitRawPacket(incoming.proofPacket); inboundLinksAccepted += 1 }
@@ -1566,8 +1590,13 @@ public final class SidebandStore {
 
     private func transmitRawPacket(_ packet: Data) async throws {
         var transmitted = false
-        if let networkInterface, networkState == .ready {
-            try await networkInterface.send(rawPacket: packet)
+        if let networkInterfacePool, networkState == .ready {
+            if let decoded = try? ReticulumPacket(raw: packet),
+               let interfaceID = linkInterfaceIDs[decoded.destinationHash.hex] {
+                try await networkInterfacePool.send(rawPacket: packet, on: interfaceID)
+            } else {
+                try await networkInterfacePool.send(rawPacket: packet)
+            }
             transmitted = true
         }
         for peer in autoInterfaceDiscovery.peers {
@@ -1579,15 +1608,24 @@ public final class SidebandStore {
 
     private func transmitDestinationPacket(_ packet: Data, destinationHash: Data) async throws {
         var transmitted = false
-        if let networkInterface, networkState == .ready {
-            let routedPacket: Data
-            if let nextHop = await pathTable.path(to: destinationHash)?.nextHop {
-                routedPacket = try ReticulumPacket(raw: packet).routed(via: nextHop)
-            } else {
-                routedPacket = packet
+        if let networkInterfacePool, networkState == .ready {
+            let interfaceIDs = await networkInterfacePool.readyInterfaceIDs()
+            var tcpSent = false
+            for interfaceID in interfaceIDs {
+                let routedPacket: Data
+                if let nextHop = await pathTable.path(to: destinationHash, on: interfaceID)?.nextHop {
+                    routedPacket = try ReticulumPacket(raw: packet).routed(via: nextHop)
+                } else {
+                    routedPacket = packet
+                }
+                do {
+                    try await networkInterfacePool.send(rawPacket: routedPacket, on: interfaceID)
+                    tcpSent = true
+                } catch {
+                    // A sibling interface can still carry the packet.
+                }
             }
-            try await networkInterface.send(rawPacket: routedPacket)
-            transmitted = true
+            transmitted = tcpSent
         }
         for peer in autoInterfaceDiscovery.peers {
             autoInterfaceDiscovery.send(rawPacket: packet, to: peer)
