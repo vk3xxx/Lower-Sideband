@@ -84,16 +84,6 @@ public actor ReticulumTCPInterfacePool {
         }
         await publishState(force: true)
         for entry in entries.values { await entry.interface.start() }
-
-        // Network.framework state callbacks can be delayed during macOS scene
-        // restoration even after the TCP socket is established. Reconcile the
-        // actor-owned interface state for a short bounded window so the pool
-        // cannot remain stuck in `.connecting` with usable live interfaces.
-        for _ in 0..<20 {
-            try? await Task.sleep(for: .milliseconds(250))
-            await reconcileInterfaceStates()
-            if aggregateState == .ready { break }
-        }
     }
 
     public func stop() async {
@@ -148,19 +138,6 @@ public actor ReticulumTCPInterfacePool {
         entry.state = state
         if state == .ready { entry.connectedAt = .now }
         entries[interfaceID] = entry
-        await publishState()
-    }
-
-    private func reconcileInterfaceStates() async {
-        for id in Array(entries.keys) {
-            guard let current = entries[id] else { continue }
-            let interfaceState = await current.interface.state
-            guard interfaceState != current.state else { continue }
-            var updated = current
-            updated.state = interfaceState
-            if interfaceState == .ready, updated.connectedAt == nil { updated.connectedAt = .now }
-            entries[id] = updated
-        }
         await publishState()
     }
 

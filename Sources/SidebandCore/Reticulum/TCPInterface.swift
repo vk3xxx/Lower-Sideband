@@ -75,24 +75,24 @@ public actor ReticulumTCPInterface {
         }
     }
 
-    private func handle(_ newState: NWConnection.State) {
+    private func handle(_ newState: NWConnection.State) async {
         switch newState {
-        case .ready: setState(.ready)
-        case .failed(let error): fail(error.localizedDescription)
-        case .cancelled: setState(.stopped)
+        case .ready: await setState(.ready)
+        case .failed(let error): await fail(error.localizedDescription)
+        case .cancelled: await setState(.stopped)
         default: break
         }
     }
 
-    private func fail(_ reason: String) {
-        setState(.failed(reason))
+    private func fail(_ reason: String) async {
+        await setState(.failed(reason))
         connection?.cancel()
         connection = nil
     }
 
-    private func setState(_ newState: State) {
+    private func setState(_ newState: State) async {
         state = newState
-        Task { await stateHandler(newState) }
+        await stateHandler(newState)
     }
 
     public enum InterfaceError: Error { case notConnected }
