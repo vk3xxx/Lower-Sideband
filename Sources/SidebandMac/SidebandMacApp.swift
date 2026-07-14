@@ -1,9 +1,15 @@
 import SwiftUI
 import SidebandCore
+#if os(iOS)
+import UIKit
+#endif
 
 @main
 struct SidebandApp: App {
     @State private var store = SidebandStore()
+#if os(iOS)
+    @UIApplicationDelegateAdaptor(SidebandAppDelegate.self) private var appDelegate
+#endif
 
     @SceneBuilder
     var body: some Scene {
@@ -11,10 +17,58 @@ struct SidebandApp: App {
         WindowGroup("Sideband") { ContentView(store: store).frame(minWidth: 850, minHeight: 560) }
         .defaultSize(width: 1080, height: 720)
         #else
-        WindowGroup("Sideband") { ContentView(store: store) }
+        WindowGroup("Sideband") {
+            ContentView(store: store)
+                .task {
+                    RemoteWakeBridge.shared.install { [store] in await store.performRemoteWakeSync() }
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+        }
         #endif
     }
 }
+
+#if os(iOS)
+@MainActor
+private final class RemoteWakeBridge {
+    static let shared = RemoteWakeBridge()
+    private var handler: (@MainActor () async -> Bool)?
+
+    func install(_ handler: @escaping @MainActor () async -> Bool) { self.handler = handler }
+    func perform() async -> Bool { await handler?() ?? false }
+}
+
+@MainActor
+final class SidebandAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        application.registerForRemoteNotifications()
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        UserDefaults.standard.set(deviceToken.map { String(format: "%02x", $0) }.joined(), forKey: "sidebandAPNsDeviceToken")
+        UserDefaults.standard.removeObject(forKey: "sidebandAPNsRegistrationError")
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        UserDefaults.standard.set(error.localizedDescription, forKey: "sidebandAPNsRegistrationError")
+    }
+
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task { @MainActor in
+            let success = await RemoteWakeBridge.shared.perform()
+            completionHandler(success ? .newData : .failed)
+        }
+    }
+}
+#endif
 
 #if DEBUG
 @MainActor

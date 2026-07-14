@@ -622,6 +622,40 @@ public final class SidebandStore {
         if iCloudSyncEnabled { await syncICloudNow() }
     }
 
+    /// Performs the bounded work allowed after an iOS silent wake. The push
+    /// contains no message data; it only prompts a Reticulum reconnect and an
+    /// end-to-end encrypted LXMF propagation sync.
+    @discardableResult
+    public func performRemoteWakeSync() async -> Bool {
+        if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
+        let networkDeadline = ContinuousClock.now + .seconds(12)
+        while networkState != .ready, ContinuousClock.now < networkDeadline {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        guard networkState == .ready else {
+            backgroundRefresh.schedule()
+            return false
+        }
+
+        await announceLocalDeliveryDestination()
+        if DestinationHash.isValid(propagationNodeHash) {
+            if !propagationNodeHasPath { await requestPropagationNodePath() }
+            if propagationNodeHasPath,
+               !pendingLinkHashes.contains(propagationNodeHash),
+               !activeLinkHashes.contains(propagationNodeHash) {
+                await requestLink(to: propagationNodeHash)
+            }
+        }
+        await syncPropagationNow()
+        for conversation in conversations {
+            await attemptDelivery(for: conversation.id)
+            await propagateQueued(for: conversation.id)
+        }
+        if iCloudSyncEnabled { await syncICloudNow() }
+        backgroundRefresh.schedule()
+        return true
+    }
+
     public func setICloudSyncEnabled(_ enabled: Bool) async {
         iCloudSyncEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "iCloudSyncEnabled")
@@ -815,7 +849,7 @@ public final class SidebandStore {
             "Local name: \(localDisplayName)",
             "Local destination: \(localDeliveryHash)",
             "Network state: \(state)",
-            "TCP endpoints: \(networkInterfaces.map { "\($0.name)=\($0.state)" }.joined(separator: ", "))",
+            "TCP endpoint: \(networkInterfaces.map { "\($0.name)=\($0.state)" }.joined(separator: ", "))",
             "Prefer IPv6: \(preferIPv6)",
             "System interface: \(reachability.interfaceSummary)",
             "Packets received: \(receivedPacketCount)",
@@ -824,6 +858,7 @@ public final class SidebandStore {
             "Links: \(activeLinkCount) active, \(pendingLinkCount) pending",
             "Messages: \(messages.count) total, \(messages.count(where: { $0.state == .queued })) queued, \(messages.count(where: { $0.state == .failed })) failed",
             "Propagation node: \(propagationNodeHash.isEmpty ? "not discovered" : propagationNodeHash) (\(propagationNodeIsAutomatic ? "automatic" : "manual"))",
+            "Remote wake token: \(UserDefaults.standard.string(forKey: "sidebandAPNsDeviceToken") == nil ? "not registered" : "registered")",
             "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")"
         ].joined(separator: "\n")
     }
