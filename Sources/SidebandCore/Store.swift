@@ -908,7 +908,10 @@ public final class SidebandStore {
                         await rotateToNextInternetGateway(for: normalized)
                         return
                     }
-                    if let conversation = conversations.first(where: { $0.destinationHash == destinationHash }) { await propagateQueued(for: conversation.id) }
+                    if let conversation = conversations.first(where: { $0.destinationHash == destinationHash }) {
+                        await attemptDelivery(for: conversation.id)
+                        await propagateQueued(for: conversation.id)
+                    }
                 }
             }
         } catch {
