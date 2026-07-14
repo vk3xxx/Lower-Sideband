@@ -47,6 +47,13 @@ enum DeliverySoakRunner {
         default:
             break
         }
+        UserDefaults.standard.set(store.autoConnectEnabled, forKey: "reticulumAutoConnect")
+        UserDefaults.standard.set(store.networkHost, forKey: "reticulumHost")
+        UserDefaults.standard.set(store.networkIPv6Host, forKey: "reticulumIPv6Host")
+        UserDefaults.standard.set(store.networkInternetHost, forKey: "reticulumInternetHost")
+        UserDefaults.standard.set(store.networkInternetPort, forKey: "reticulumInternetPort")
+        UserDefaults.standard.set(store.networkPort, forKey: "reticulumPort")
+        UserDefaults.standard.set(store.preferIPv6, forKey: "reticulumPreferIPv6")
     }
 
     static func startNetworkIfRequested(_ store: SidebandStore) async -> Bool {
