@@ -134,10 +134,16 @@ struct ContentView: View {
             Text("Current conversations, messages, discoveries, and drafts will be replaced with the validated backup contents.")
         }
         .task {
+            #if DEBUG
+            DeliverySoakRunner.configureNetworkIfRequested(store)
+            #endif
             await store.startTransport()
             if store.autoConnectEnabled { await store.startAutomaticConnection() }
             if store.autoInterfaceEnabled { store.startAutoInterfaceDiscovery() }
             if store.iCloudSyncEnabled { await store.syncICloudNow() }
+            #if DEBUG
+            await DeliverySoakRunner.runIfRequested(store)
+            #endif
         }
         .onOpenURL { url in
             _ = store.openContactLink(url)
