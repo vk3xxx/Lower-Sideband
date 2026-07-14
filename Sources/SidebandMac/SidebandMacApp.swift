@@ -28,6 +28,7 @@ enum DeliverySoakRunner {
         store.removeDeliverySoakMessages()
         deliveryTimeoutBaseline = store.deliveryTimeoutCount
         store.autoConnectEnabled = mode == "automatic"
+        store.internetOnlyEnabled = mode == "public"
         store.preferIPv6 = true
         store.networkPort = Int(environment["SIDEBAND_SOAK_PORT"] ?? "4242") ?? 4_242
         store.networkInternetPort = Int(environment["SIDEBAND_SOAK_INTERNET_PORT"] ?? "4242") ?? 4_242
@@ -48,6 +49,7 @@ enum DeliverySoakRunner {
             break
         }
         UserDefaults.standard.set(store.autoConnectEnabled, forKey: "reticulumAutoConnect")
+        UserDefaults.standard.set(store.internetOnlyEnabled, forKey: "reticulumInternetOnly")
         UserDefaults.standard.set(store.networkHost, forKey: "reticulumHost")
         UserDefaults.standard.set(store.networkIPv6Host, forKey: "reticulumIPv6Host")
         UserDefaults.standard.set(store.networkInternetHost, forKey: "reticulumInternetHost")

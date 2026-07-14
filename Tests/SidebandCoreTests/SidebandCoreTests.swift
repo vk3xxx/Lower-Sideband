@@ -116,6 +116,28 @@ import Testing
     #expect(LXMFAnnounceInfo(appData: store.localAnnounceAppData)?.displayName == "Native iPhone")
 }
 
+@MainActor @Test func internetOnlyConnectionPolicyPersists() {
+    let defaults = UserDefaults.standard
+    let previousInternetOnly = defaults.object(forKey: "reticulumInternetOnly")
+    let previousAutoConnect = defaults.object(forKey: "reticulumAutoConnect")
+    defer {
+        if let previousInternetOnly { defaults.set(previousInternetOnly, forKey: "reticulumInternetOnly") }
+        else { defaults.removeObject(forKey: "reticulumInternetOnly") }
+        if let previousAutoConnect { defaults.set(previousAutoConnect, forKey: "reticulumAutoConnect") }
+        else { defaults.removeObject(forKey: "reticulumAutoConnect") }
+    }
+    defaults.set(false, forKey: "reticulumInternetOnly")
+    defaults.set(false, forKey: "reticulumAutoConnect")
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+
+    store.setInternetOnly(true)
+
+    #expect(store.internetOnlyEnabled)
+    #expect(defaults.bool(forKey: "reticulumInternetOnly"))
+    #expect(SidebandStore(persistenceURL: url).internetOnlyEnabled)
+}
+
 @MainActor @Test func localContactLinkContainsDeliveryDestination() {
     let defaults = UserDefaults.standard
     let previous = defaults.string(forKey: "lxmfLocalDisplayName")

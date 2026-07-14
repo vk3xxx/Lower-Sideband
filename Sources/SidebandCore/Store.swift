@@ -45,6 +45,7 @@ public final class SidebandStore {
     public var networkPort: Int
     public var preferIPv6: Bool
     public var autoConnectEnabled: Bool
+    public var internetOnlyEnabled: Bool
     public var autoInterfaceEnabled: Bool
     public var propagationNodeHash: String
     public private(set) var localDisplayName: String
@@ -148,6 +149,7 @@ public final class SidebandStore {
         networkPort = savedPort == 0 ? 4242 : savedPort
         preferIPv6 = UserDefaults.standard.object(forKey: "reticulumPreferIPv6") as? Bool ?? true
         autoConnectEnabled = UserDefaults.standard.object(forKey: "reticulumAutoConnect") as? Bool ?? true
+        internetOnlyEnabled = UserDefaults.standard.bool(forKey: "reticulumInternetOnly")
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
         localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Sideband Swift"
@@ -732,6 +734,16 @@ public final class SidebandStore {
         UserDefaults.standard.set(enabled, forKey: "reticulumPreferIPv6")
     }
 
+    public func setInternetOnly(_ enabled: Bool) {
+        internetOnlyEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "reticulumInternetOnly")
+        if enabled {
+            lanDiscovery.stop()
+            pendingLANGatewaySwitchID = nil
+        }
+        if autoConnectEnabled { Task { await reconnectNetwork() } }
+    }
+
     public func setPropagationNode(_ hash: String) {
         propagationNodeHash = hash.trimmingCharacters(in: CharacterSet(charactersIn: "<> ").union(.whitespacesAndNewlines)).lowercased()
         UserDefaults.standard.set(propagationNodeHash, forKey: "lxmfPropagationNode")
@@ -1115,7 +1127,8 @@ public final class SidebandStore {
     public func startAutomaticConnection() async {
         guard autoConnectEnabled, !intentionallyDisconnected || networkState == .stopped else { return }
         intentionallyDisconnected = false
-        lanDiscovery.start()
+        if internetOnlyEnabled { lanDiscovery.stop() }
+        else { lanDiscovery.start() }
         guard networkState != .ready, networkState != .connecting else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -1135,39 +1148,41 @@ public final class SidebandStore {
         }
         guard networkState != .ready, networkState != .connecting else { return }
 
-        let configuredCandidates = ConfiguredReticulumGateways.ordered(
-            ipv4Host: networkHost,
-            ipv6Host: networkIPv6Host,
-            port: networkPort,
-            preferIPv6: preferIPv6,
-            supportsIPv6: reachability.supportsIPv6,
-            excluding: attemptedConfiguredGatewayIDs
-        )
-        if let gateway = configuredCandidates.first {
-            attemptedConfiguredGatewayIDs.insert(gateway.id)
-            automaticConnectionDescription = "Trying \(gateway.name.lowercased())"
-            await connectNetwork(explicitHost: gateway.host, explicitPort: gateway.port)
-            return
-        }
+        if !internetOnlyEnabled {
+            let configuredCandidates = ConfiguredReticulumGateways.ordered(
+                ipv4Host: networkHost,
+                ipv6Host: networkIPv6Host,
+                port: networkPort,
+                preferIPv6: preferIPv6,
+                supportsIPv6: reachability.supportsIPv6,
+                excluding: attemptedConfiguredGatewayIDs
+            )
+            if let gateway = configuredCandidates.first {
+                attemptedConfiguredGatewayIDs.insert(gateway.id)
+                automaticConnectionDescription = "Trying \(gateway.name.lowercased())"
+                await connectNetwork(explicitHost: gateway.host, explicitPort: gateway.port)
+                return
+            }
 
-        let candidates = AutomaticGatewaySelector.ordered(
-            lanDiscovery.gateways,
-            preferredID: preferredGatewayID,
-            excluding: attemptedGatewayIDs
-        )
-        if let gateway = candidates.first {
-            attemptedGatewayIDs.insert(gateway.id)
-            await connect(to: gateway)
-            return
-        }
+            let candidates = AutomaticGatewaySelector.ordered(
+                lanDiscovery.gateways,
+                preferredID: preferredGatewayID,
+                excluding: attemptedGatewayIDs
+            )
+            if let gateway = candidates.first {
+                attemptedGatewayIDs.insert(gateway.id)
+                await connect(to: gateway)
+                return
+            }
 
-        if lanDiscovery.isSearching, !observedLANDiscoveryGrace {
-            observedLANDiscoveryGrace = true
-            automaticConnectionDescription = "Looking for a local Reticulum gateway"
-            try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled else { return }
-            await tryNextAutomaticConnection()
-            return
+            if lanDiscovery.isSearching, !observedLANDiscoveryGrace {
+                observedLANDiscoveryGrace = true
+                automaticConnectionDescription = "Looking for a local Reticulum gateway"
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { return }
+                await tryNextAutomaticConnection()
+                return
+            }
         }
 
         let internetCandidates = PublicReticulumGateways.ordered(
@@ -1190,7 +1205,7 @@ public final class SidebandStore {
     }
 
     private func gatewayResultsChanged(_ gateways: [LANGateway]) {
-        guard autoConnectEnabled, !gateways.isEmpty else { return }
+        guard autoConnectEnabled, !internetOnlyEnabled, !gateways.isEmpty else { return }
         if networkState == .ready,
            AutomaticGatewayFailoverPolicy.shouldPreferDiscoveredLAN(
                activeInternetGatewayID: activeInternetGatewayID,
