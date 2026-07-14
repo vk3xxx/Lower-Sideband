@@ -1867,12 +1867,14 @@ public final class SidebandStore {
         switch receipt.kind {
         case .opportunistic:
             updateMessage(receipt.messageID, state: .queued)
-            if let destination = Data(hexadecimal: receipt.destinationHash) {
-                await pathTable.invalidate(destination)
-                await refreshPathState()
+            if !isPathPending(to: receipt.destinationHash) {
+                if let destination = Data(hexadecimal: receipt.destinationHash) {
+                    await pathTable.invalidate(destination)
+                    await refreshPathState()
+                }
+                pendingPathHashes.remove(receipt.destinationHash)
+                await requestPath(to: receipt.destinationHash)
             }
-            pendingPathHashes.remove(receipt.destinationHash)
-            await requestPath(to: receipt.destinationHash)
         case .direct:
             updateMessage(receipt.messageID, state: .queued)
             if let conversation = conversations.first(where: { $0.destinationHash == receipt.destinationHash }) {
