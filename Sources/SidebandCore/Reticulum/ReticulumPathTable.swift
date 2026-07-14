@@ -24,6 +24,7 @@ public actor ReticulumPathTable {
     @discardableResult
     public func ingest(_ announce: ReticulumAnnounce, packet: ReticulumPacket, now: Date = .now) -> Bool {
         guard announce.validate() else { return false }
+        let wasRequested = pendingRequests[announce.destinationHash] != nil
         let candidate = ReticulumPath(
             destinationHash: announce.destinationHash,
             nextHop: packet.transportID,
@@ -34,7 +35,7 @@ public actor ReticulumPathTable {
             appData: announce.appData,
             ratchet: announce.ratchet
         )
-        if let existing = paths[announce.destinationHash], !existing.isExpired, existing.hops < candidate.hops {
+        if let existing = paths[announce.destinationHash], !existing.isExpired, existing.hops < candidate.hops, !wasRequested {
             return false
         }
         paths[announce.destinationHash] = candidate
@@ -54,6 +55,10 @@ public actor ReticulumPathTable {
     }
 
     public func markRequested(_ destinationHash: Data, now: Date = .now) { pendingRequests[destinationHash] = now }
+    public func invalidate(_ destinationHash: Data) {
+        paths.removeValue(forKey: destinationHash)
+        pendingRequests.removeValue(forKey: destinationHash)
+    }
     public func isPending(_ destinationHash: Data, timeout: TimeInterval = 15, now: Date = .now) -> Bool {
         guard let requested = pendingRequests[destinationHash] else { return false }
         if now.timeIntervalSince(requested) >= timeout { pendingRequests.removeValue(forKey: destinationHash); return false }

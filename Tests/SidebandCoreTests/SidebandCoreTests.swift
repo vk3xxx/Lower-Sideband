@@ -1039,6 +1039,37 @@ import Testing
     #expect(await !table.isPending(announce.destinationHash))
 }
 
+@Test func requestedPathCanReplaceAStaleLowerHopRoute() async throws {
+    let raw = Data(hex: "0100fae321c442e3c9bdcd7a3e79d850e03c008f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd76ec60bc318e2c0f0d90800010203040506070809347836c9e884f6714ddbdf1e58cdafcc3f6e7354301ef80373b1238f9ae1b8ffd550e9a0d12c0478d6c17d29ae71fd0b2c8f39ad0868532ce4fd00e20ef0cf0853776966742050656572")
+    let directPacket = try ReticulumPacket(raw: raw)
+    let announce = try ReticulumAnnounce(packet: directPacket)
+    let table = ReticulumPathTable(lifetime: 60)
+    #expect(await table.ingest(announce, packet: directPacket))
+
+    var routedRaw = try directPacket.routed(via: Data(repeating: 0x44, count: 16))
+    routedRaw[routedRaw.startIndex + 1] = 7
+    let routedPacket = try ReticulumPacket(raw: routedRaw)
+    #expect(!(await table.ingest(announce, packet: routedPacket)))
+    #expect(await table.path(to: announce.destinationHash)?.hops == 0)
+
+    await table.markRequested(announce.destinationHash)
+    #expect(await table.ingest(announce, packet: routedPacket))
+    #expect(await table.path(to: announce.destinationHash)?.hops == 7)
+    #expect(await table.path(to: announce.destinationHash)?.nextHop == Data(repeating: 0x44, count: 16))
+}
+
+@Test func invalidatingPathRemovesFailedRoute() async throws {
+    let raw = Data(hex: "0100fae321c442e3c9bdcd7a3e79d850e03c008f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd76ec60bc318e2c0f0d90800010203040506070809347836c9e884f6714ddbdf1e58cdafcc3f6e7354301ef80373b1238f9ae1b8ffd550e9a0d12c0478d6c17d29ae71fd0b2c8f39ad0868532ce4fd00e20ef0cf0853776966742050656572")
+    let packet = try ReticulumPacket(raw: raw)
+    let announce = try ReticulumAnnounce(packet: packet)
+    let table = ReticulumPathTable()
+    #expect(await table.ingest(announce, packet: packet))
+
+    await table.invalidate(announce.destinationHash)
+
+    #expect(await table.path(to: announce.destinationHash) == nil)
+}
+
 @Test func pathTableExpiresRoutes() async throws {
     let raw = Data(hex: "0100fae321c442e3c9bdcd7a3e79d850e03c008f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd76ec60bc318e2c0f0d90800010203040506070809347836c9e884f6714ddbdf1e58cdafcc3f6e7354301ef80373b1238f9ae1b8ffd550e9a0d12c0478d6c17d29ae71fd0b2c8f39ad0868532ce4fd00e20ef0cf0853776966742050656572")
     let packet = try ReticulumPacket(raw: raw)

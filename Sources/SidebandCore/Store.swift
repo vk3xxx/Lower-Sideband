@@ -980,8 +980,11 @@ public final class SidebandStore {
             UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
         }
         guard networkState == .ready else { return }
+        if let destination = Data(hexadecimal: destinationHash) {
+            await pathTable.invalidate(destination)
+            await refreshPathState()
+        }
         await requestPath(to: destinationHash)
-        if hasPath(to: destinationHash) { await requestLink(to: destinationHash) }
     }
 
     private func clearPendingLinks(to destinationHash: String) {
@@ -1799,7 +1802,12 @@ public final class SidebandStore {
         switch receipt.kind {
         case .opportunistic:
             updateMessage(receipt.messageID, state: .queued)
-            await requestLink(to: receipt.destinationHash)
+            if let destination = Data(hexadecimal: receipt.destinationHash) {
+                await pathTable.invalidate(destination)
+                await refreshPathState()
+            }
+            pendingPathHashes.remove(receipt.destinationHash)
+            await requestPath(to: receipt.destinationHash)
         case .direct:
             updateMessage(receipt.messageID, state: .queued)
             if let conversation = conversations.first(where: { $0.destinationHash == receipt.destinationHash }) {
