@@ -20,6 +20,7 @@ struct SidebandApp: App {
 @MainActor
 enum DeliverySoakRunner {
     private static let environment = ProcessInfo.processInfo.environment
+    private static var hasStarted = false
 
     static func configureNetworkIfRequested(_ store: SidebandStore) {
         guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return }
@@ -46,6 +47,7 @@ enum DeliverySoakRunner {
     }
 
     static func runIfRequested(_ store: SidebandStore) async {
+        guard !hasStarted else { return }
         guard
             let destination = environment["SIDEBAND_SOAK_DESTINATION"],
             let outboundPrefix = environment["SIDEBAND_SOAK_OUTBOUND_PREFIX"],
@@ -53,6 +55,7 @@ enum DeliverySoakRunner {
             let count = Int(environment["SIDEBAND_SOAK_COUNT"] ?? ""), count > 0,
             let reportName = environment["SIDEBAND_SOAK_REPORT"]
         else { return }
+        hasStarted = true
 
         let reportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appending(path: "SidebandSwift", directoryHint: .isDirectory)
