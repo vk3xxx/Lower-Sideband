@@ -72,6 +72,7 @@ public final class SidebandStore {
     private let cloudSync: any CloudSnapshotSyncing
     private let syncDeviceID: String
     private var iCloudSyncTask: Task<Void, Never>?
+    private var discoverySaveTask: Task<Void, Never>?
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
     private var networkInterfacePool: ReticulumTCPInterfacePool?
@@ -1388,9 +1389,19 @@ public final class SidebandStore {
                 if let conversation = conversations.first(where: { $0.destinationHash == hash }) { await attemptDelivery(for: conversation.id) }
             }
         }
+        let now = Date.now
         if let index = discoveries.firstIndex(where: { $0.destinationHash == hash }) {
+            let existing = discoveries[index]
+            let identityChanged = isValidated && (
+                !existing.isValidated
+                || existing.publicKey != announce?.publicKey
+                || existing.appData != announce?.appData
+                || existing.ratchet != announce?.ratchet
+            )
+            let routeChanged = existing.hops != packet.hops
+            guard identityChanged || routeChanged || now.timeIntervalSince(existing.lastSeen) >= 2 else { return }
             discoveries[index].hops = packet.hops
-            discoveries[index].lastSeen = .now
+            discoveries[index].lastSeen = now
             discoveries[index].packetCount += 1
             if isValidated, let announce {
                 discoveries[index].isValidated = true
@@ -1402,7 +1413,26 @@ public final class SidebandStore {
             discoveries.insert(DiscoveredDestination(destinationHash: hash, hops: packet.hops, isValidated: isValidated, publicKey: announce?.publicKey, appData: announce?.appData, ratchet: announce?.ratchet), at: 0)
         }
         discoveries.sort { $0.lastSeen > $1.lastSeen }
-        save()
+        trimDiscoveryCache()
+        scheduleDiscoverySave()
+    }
+
+    private func trimDiscoveryCache(limit: Int = 500) {
+        guard discoveries.count > limit else { return }
+        let protected = Set(conversations.map(\.destinationHash)).union([localDeliveryHash, propagationNodeHash])
+        while discoveries.count > limit,
+              let index = discoveries.lastIndex(where: { !protected.contains($0.destinationHash) }) {
+            discoveries.remove(at: index)
+        }
+    }
+
+    private func scheduleDiscoverySave() {
+        discoverySaveTask?.cancel()
+        discoverySaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            self?.save()
+        }
     }
 
     private func considerPropagationNode(_ announce: ReticulumAnnounce, packet: ReticulumPacket) {
@@ -2068,8 +2098,10 @@ public final class SidebandStore {
 
     private func refreshPathState() async {
         let paths = await pathTable.all()
-        knownPathHashes = Set(paths.map { $0.destinationHash.hex })
-        pendingPathHashes.subtract(knownPathHashes)
+        let currentPaths = Set(paths.map { $0.destinationHash.hex })
+        if currentPaths != knownPathHashes { knownPathHashes = currentPaths }
+        let resolvedPending = pendingPathHashes.intersection(currentPaths)
+        if !resolvedPending.isEmpty { pendingPathHashes.subtract(resolvedPending) }
     }
 
     private func lxmfFields(for message: Message) -> [UInt64: Data] {
