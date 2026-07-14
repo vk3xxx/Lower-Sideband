@@ -1,8 +1,13 @@
 import Foundation
 
 public enum LXMFPropagation {
+    public static let destinationNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.propagation".utf8)).prefix(10))
     public static let messageGetPath = "/get"
     public static let messageGetPathHash = ReticulumIdentity.truncatedHash(Data(messageGetPath.utf8))
+
+    public static func isPropagationAnnounce(_ announce: ReticulumAnnounce) -> Bool {
+        announce.validate() && announce.nameHash == destinationNameHash
+    }
 
     public static func messageListRequest(timestamp: Double = Date().timeIntervalSince1970) -> Data {
         MessagePack.array([

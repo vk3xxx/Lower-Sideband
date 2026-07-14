@@ -48,6 +48,8 @@ public final class SidebandStore {
     public var internetOnlyEnabled: Bool
     public var autoInterfaceEnabled: Bool
     public var propagationNodeHash: String
+    public private(set) var propagationNodeIsAutomatic: Bool
+    public private(set) var discoveredPropagationNodeCount = 0
     public private(set) var localDisplayName: String
     public let lanDiscovery = LANGatewayDiscovery()
     public let autoInterfaceDiscovery = AutoInterfaceDiscovery()
@@ -154,6 +156,7 @@ public final class SidebandStore {
         internetOnlyEnabled = UserDefaults.standard.bool(forKey: "reticulumInternetOnly")
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
+        propagationNodeIsAutomatic = UserDefaults.standard.object(forKey: "lxmfPropagationNodeAutomatic") as? Bool ?? true
         localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Sideband Swift"
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
@@ -762,6 +765,18 @@ public final class SidebandStore {
     public func setPropagationNode(_ hash: String) {
         propagationNodeHash = hash.trimmingCharacters(in: CharacterSet(charactersIn: "<> ").union(.whitespacesAndNewlines)).lowercased()
         UserDefaults.standard.set(propagationNodeHash, forKey: "lxmfPropagationNode")
+        propagationNodeIsAutomatic = propagationNodeHash.isEmpty
+        UserDefaults.standard.set(propagationNodeIsAutomatic, forKey: "lxmfPropagationNodeAutomatic")
+    }
+
+    public func setAutomaticPropagationNode(_ enabled: Bool) {
+        propagationNodeIsAutomatic = enabled
+        UserDefaults.standard.set(enabled, forKey: "lxmfPropagationNodeAutomatic")
+        if enabled {
+            propagationNodeHash = ""
+            UserDefaults.standard.removeObject(forKey: "lxmfPropagationNode")
+            Task { await announceLocalDeliveryDestination() }
+        }
     }
 
     public func setLocalDisplayName(_ displayName: String) {
@@ -1327,6 +1342,7 @@ public final class SidebandStore {
         let announce = try? ReticulumAnnounce(packet: packet)
         let isValidated = announce?.validate() == true
         if isValidated, let announce {
+            considerPropagationNode(announce, packet: packet)
             Task {
                 _ = await pathTable.ingest(announce, packet: packet, interfaceID: interfaceID)
                 await refreshPathState()
@@ -1352,6 +1368,36 @@ public final class SidebandStore {
         }
         discoveries.sort { $0.lastSeen > $1.lastSeen }
         save()
+    }
+
+    private func considerPropagationNode(_ announce: ReticulumAnnounce, packet: ReticulumPacket) {
+        let propagationNameHash = LXMFPropagation.destinationNameHash
+        guard LXMFPropagation.isPropagationAnnounce(announce) else { return }
+        let hash = announce.destinationHash.hex
+        let knownPropagationHashes = Set(discoveries.compactMap { discovery -> String? in
+            guard let publicKey = discovery.publicKey else { return nil }
+            let identityHash = ReticulumIdentity.truncatedHash(publicKey)
+            return ReticulumIdentity.truncatedHash(propagationNameHash + identityHash).hex == discovery.destinationHash
+                ? discovery.destinationHash : nil
+        }).union([hash])
+        discoveredPropagationNodeCount = knownPropagationHashes.count
+        guard propagationNodeIsAutomatic else { return }
+
+        let currentHops = discoveries.first(where: { $0.destinationHash == propagationNodeHash })?.hops
+        let shouldSelect = !DestinationHash.isValid(propagationNodeHash)
+            || propagationNodeHash == hash
+            || currentHops == nil
+            || packet.hops < (currentHops ?? .max)
+        guard shouldSelect else { return }
+        let changed = propagationNodeHash != hash
+        propagationNodeHash = hash
+        UserDefaults.standard.set(hash, forKey: "lxmfPropagationNode")
+        if changed {
+            Task {
+                await requestPath(to: hash)
+                if hasPath(to: hash) { await requestLink(to: hash) }
+            }
+        }
     }
 
     private func receiveLinkProof(_ packet: ReticulumPacket, interfaceID: String?) {
@@ -1505,6 +1551,7 @@ public final class SidebandStore {
             try await transmitRawPacket(try session.encryptedPacket(identifyData, context: 0xfb))
             linkIdentificationsSent += 1
             await syncPropagationNow()
+            for conversation in conversations { await propagateQueued(for: conversation.id) }
             await sendKeepalive(on: session)
         } catch { lastError = "Propagation request failed: \(error.localizedDescription)" }
     }
@@ -1950,6 +1997,10 @@ public final class SidebandStore {
             }
             pendingPathHashes.remove(destinationHash)
             await requestPath(to: destinationHash)
+            if DestinationHash.isValid(propagationNodeHash),
+               let conversation = conversations.first(where: { $0.destinationHash == destinationHash }) {
+                await propagateQueued(for: conversation.id)
+            }
         }
         if kinds.contains(.direct),
            let conversation = conversations.first(where: { $0.destinationHash == destinationHash }) {

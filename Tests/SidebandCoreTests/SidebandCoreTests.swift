@@ -1382,6 +1382,21 @@ import Testing
     #expect(ReticulumIdentity.truncatedHash(request).hex == "4e14dd881d3528a02a08e9a2802d05bc")
 }
 
+@Test func propagationAnnouncesAreRecognizedCryptographically() throws {
+    let identity = ReticulumIdentity()
+    let raw = try ReticulumAnnounceBuilder.packet(
+        identity: identity,
+        destinationName: "lxmf.propagation",
+        appData: MessagePack.array([MessagePack.bool(true)])
+    )
+    let announce = try ReticulumAnnounce(packet: ReticulumPacket(raw: raw))
+    #expect(LXMFPropagation.isPropagationAnnounce(announce))
+
+    let deliveryRaw = try ReticulumAnnounceBuilder.packet(identity: identity, destinationName: "lxmf.delivery")
+    let delivery = try ReticulumAnnounce(packet: ReticulumPacket(raw: deliveryRaw))
+    #expect(!LXMFPropagation.isPropagationAnnounce(delivery))
+}
+
 @Test func decodesLivePropagationResponseShape() throws {
     let value = try MessagePackDecoder.decode(Data(hex: "92c410465325777278df3c52630da81dd6b56f90"))
     guard case let .array(parts) = value, parts.count == 2, case let .array(messages) = parts[1] else { Issue.record("Unexpected response shape"); return }
