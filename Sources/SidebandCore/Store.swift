@@ -504,6 +504,15 @@ public final class SidebandStore {
 
     public func clearError() { lastError = nil }
 
+    #if DEBUG
+    public func removeDeliverySoakMessages() {
+        let soakConversationIDs = Set(messages.filter { $0.body.hasPrefix("SOAK-") }.map(\.conversationID))
+        messages.removeAll { $0.body.hasPrefix("SOAK-") }
+        for conversationID in soakConversationIDs { touch(conversationID) }
+        save()
+    }
+    #endif
+
     public func connectNetwork(forceIPv4: Bool = false, explicitHost: String? = nil, explicitPort: UInt16? = nil, internetGatewayID: String? = nil) async {
         guard networkState != .connecting, networkState != .ready else { return }
         let useIPv6 = !forceIPv4 && preferIPv6 && reachability.supportsIPv6 && !networkIPv6Host.isEmpty

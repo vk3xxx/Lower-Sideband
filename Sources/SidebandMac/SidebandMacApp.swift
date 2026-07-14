@@ -21,9 +21,12 @@ struct SidebandApp: App {
 enum DeliverySoakRunner {
     private static let environment = ProcessInfo.processInfo.environment
     private static var hasStarted = false
+    private static var deliveryTimeoutBaseline = 0
 
     static func configureNetworkIfRequested(_ store: SidebandStore) {
         guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return }
+        store.removeDeliverySoakMessages()
+        deliveryTimeoutBaseline = store.deliveryTimeoutCount
         store.autoConnectEnabled = mode == "automatic"
         store.preferIPv6 = true
         store.networkPort = Int(environment["SIDEBAND_SOAK_PORT"] ?? "4242") ?? 4_242
@@ -163,7 +166,7 @@ enum DeliverySoakRunner {
             duplicateInbound: duplicateInbound,
             inboundInOrder: receivedInOrder == expectedInbound,
             knownPath: store.hasPath(to: destination),
-            deliveryTimeouts: store.deliveryTimeoutCount,
+            deliveryTimeouts: max(0, store.deliveryTimeoutCount - deliveryTimeoutBaseline),
             lastError: store.lastError
         )
     }
