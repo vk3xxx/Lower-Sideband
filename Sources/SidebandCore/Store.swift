@@ -78,9 +78,12 @@ public final class SidebandStore {
     private var deferredLinkRetryTokens: [String: UUID] = [:]
     private var activeLinks: [String: ReticulumLinkSession] = [:]
     private var linkRemoteDestinations: [String: String] = [:]
-    private enum ReceiptKind { case direct, opportunistic, propagation }
+    private enum ReceiptKind: Hashable { case direct, opportunistic, propagation }
     private struct PendingReceipt { let messageID: UUID; let kind: ReceiptKind; let destinationHash: String }
     private var pendingReceipts: [String: PendingReceipt] = [:]
+    private var receiptTimeoutTasks: [String: Task<Void, Never>] = [:]
+    private var receiptRetryTasks: [String: Task<Void, Never>] = [:]
+    private var pendingReceiptRetryKinds: [String: Set<ReceiptKind>] = [:]
     private struct OutgoingResource {
         let manifest: ReticulumResourceManifest; let parts: [Data]; let expectedProof: Data
         let messageID: UUID; let attachmentID: UUID; let linkID: String
@@ -1846,6 +1849,7 @@ public final class SidebandStore {
               let identity = try? ReticulumIdentity(publicKey: publicKey),
               identity.validate(signature: Data(packet.data.suffix(64)), message: provedHash) else { return }
         pendingReceipts.removeValue(forKey: provedHash.hex)
+        receiptTimeoutTasks.removeValue(forKey: provedHash.hex)?.cancel()
         updateMessage(receipt.messageID, state: receipt.kind == .propagation ? .sent : .delivered)
         if receipt.kind == .propagation {
             propagationUploadsAccepted += 1
@@ -1854,7 +1858,8 @@ public final class SidebandStore {
     }
 
     private func scheduleReceiptTimeout(_ packetHash: String) {
-        Task { [weak self] in
+        receiptTimeoutTasks.removeValue(forKey: packetHash)?.cancel()
+        receiptTimeoutTasks[packetHash] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled else { return }
             await self?.expireReceipt(packetHash)
@@ -1862,26 +1867,40 @@ public final class SidebandStore {
     }
 
     private func expireReceipt(_ packetHash: String) async {
+        receiptTimeoutTasks.removeValue(forKey: packetHash)
         guard let receipt = pendingReceipts.removeValue(forKey: packetHash) else { return }
         deliveryTimeoutCount += 1
-        switch receipt.kind {
-        case .opportunistic:
-            updateMessage(receipt.messageID, state: .queued)
-            if !isPathPending(to: receipt.destinationHash) {
-                if let destination = Data(hexadecimal: receipt.destinationHash) {
-                    await pathTable.invalidate(destination)
-                    await refreshPathState()
-                }
-                pendingPathHashes.remove(receipt.destinationHash)
-                await requestPath(to: receipt.destinationHash)
+        if let index = messages.firstIndex(where: { $0.id == receipt.messageID }) {
+            messages[index].state = .queued
+        }
+        pendingReceiptRetryKinds[receipt.destinationHash, default: []].insert(receipt.kind)
+        scheduleReceiptRetry(for: receipt.destinationHash)
+    }
+
+    private func scheduleReceiptRetry(for destinationHash: String) {
+        guard receiptRetryTasks[destinationHash] == nil else { return }
+        receiptRetryTasks[destinationHash] = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            await self?.performReceiptRetry(for: destinationHash)
+        }
+    }
+
+    private func performReceiptRetry(for destinationHash: String) async {
+        receiptRetryTasks.removeValue(forKey: destinationHash)
+        let kinds = pendingReceiptRetryKinds.removeValue(forKey: destinationHash) ?? []
+        save()
+        if kinds.contains(.opportunistic), !isPathPending(to: destinationHash) {
+            if let destination = Data(hexadecimal: destinationHash) {
+                await pathTable.invalidate(destination)
+                await refreshPathState()
             }
-        case .direct:
-            updateMessage(receipt.messageID, state: .queued)
-            if let conversation = conversations.first(where: { $0.destinationHash == receipt.destinationHash }) {
-                await propagateQueued(for: conversation.id)
-            }
-        case .propagation:
-            updateMessage(receipt.messageID, state: .queued)
+            pendingPathHashes.remove(destinationHash)
+            await requestPath(to: destinationHash)
+        }
+        if kinds.contains(.direct),
+           let conversation = conversations.first(where: { $0.destinationHash == destinationHash }) {
+            await propagateQueued(for: conversation.id)
         }
     }
 
