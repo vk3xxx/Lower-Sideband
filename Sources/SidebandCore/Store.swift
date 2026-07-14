@@ -1389,7 +1389,8 @@ public final class SidebandStore {
         let remoteIdentity = inboundRemoteIdentities[session.linkID.hex] ?? discoveries.first(where: { $0.destinationHash == message.sourceHash.hex }).flatMap { $0.publicKey }.flatMap { try? ReticulumIdentity(publicKey: $0) }
         guard let remoteIdentity, message.validate(with: remoteIdentity) else { return }
         bind(session: session, to: remoteIdentity)
-        guard importReceivedMessage(message, sourceIdentity: remoteIdentity) else { return }
+        let wasPreviouslyReceived = receivedLXMFIDs.contains(message.messageID.hex)
+        guard wasPreviouslyReceived || importReceivedMessage(message, sourceIdentity: remoteIdentity) else { return }
         Task {
             do {
                 let hash = packet.packetHash
@@ -1424,9 +1425,10 @@ public final class SidebandStore {
               let discovery = discoveries.first(where: { $0.destinationHash == message.sourceHash.hex }),
               let publicKey = discovery.publicKey,
               let sourceIdentity = try? ReticulumIdentity(publicKey: publicKey),
-              message.validate(with: sourceIdentity),
-              importReceivedMessage(message, sourceIdentity: sourceIdentity) else { return }
-        opportunisticDeliveriesReceived += 1
+              message.validate(with: sourceIdentity) else { return }
+        let wasPreviouslyReceived = receivedLXMFIDs.contains(message.messageID.hex)
+        guard wasPreviouslyReceived || importReceivedMessage(message, sourceIdentity: sourceIdentity) else { return }
+        if !wasPreviouslyReceived { opportunisticDeliveriesReceived += 1 }
         Task {
             do { try await transmitRawPacket(try ReticulumProof.packet(for: packet, identity: messagingIdentity)) }
             catch { lastError = "Opportunistic delivery proof failed: \(error.localizedDescription)" }
@@ -1585,7 +1587,7 @@ public final class SidebandStore {
         var requiresLink = !attachmentMessages.isEmpty
         for item in queued {
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8), fields: lxmfFields(for: item))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item))
                 let raw = try lxmf.opportunisticPacket(recipientIdentity: recipient, ratchet: discovery.ratchet)
                 guard raw.count <= 500 else { requiresLink = true; continue }
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
@@ -1604,7 +1606,7 @@ public final class SidebandStore {
         for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0) }) {
             guard item.attachments.isEmpty else { continue }
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8), fields: lxmfFields(for: item))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item))
                 let raw = try session.encryptedPacket(lxmf.packed)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
@@ -1878,7 +1880,7 @@ public final class SidebandStore {
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
         for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0) }) {
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, content: Data(item.body.utf8), fields: lxmfFields(for: item))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item))
                 let envelope = try lxmf.propagatedEnvelope(recipientIdentity: recipient, ratchet: discovery.ratchet)
                 let raw = try propagationSession.encryptedPacket(envelope)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex

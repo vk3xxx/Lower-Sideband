@@ -1295,6 +1295,18 @@ import Testing
     #expect(incoming.validate(with: identity))
 }
 
+@Test func lxmfRetryKeepsStableMessageIdentity() throws {
+    let identity = try ReticulumIdentity(privateKey: Data(repeating: 0x31, count: 64))
+    let destination = Data(hex: "cf0b2a4a8d2a0b6978b71290da7cc80e")
+    let source = Data(hex: "fae321c442e3c9bdcd7a3e79d850e03c")
+    let timestamp = 1_700_000_000.25
+    let first = try LXMFMessage(destinationHash: destination, sourceHash: source, sourceIdentity: identity, timestamp: timestamp, content: Data("retry me".utf8))
+    let retry = try LXMFMessage(destinationHash: destination, sourceHash: source, sourceIdentity: identity, timestamp: timestamp, content: Data("retry me".utf8))
+    let differentMessage = try LXMFMessage(destinationHash: destination, sourceHash: source, sourceIdentity: identity, timestamp: timestamp + 1, content: Data("retry me".utf8))
+    #expect(first.messageID == retry.messageID)
+    #expect(first.messageID != differentMessage.messageID)
+}
+
 @Test func lxmfTelemetryFieldRoundTripsAndRemainsSigned() throws {
     let identity = try ReticulumIdentity(privateKey: Data(0..<64))
     let telemetry = SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_000), location: .init(latitude: -37.8136, longitude: 144.9631, updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
