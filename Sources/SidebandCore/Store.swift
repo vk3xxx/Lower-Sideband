@@ -227,7 +227,11 @@ public final class SidebandStore {
             return false
         }
         if let existing = conversations.first(where: { $0.destinationHash == hash }) {
-            if select { selectedConversationID = existing.id }
+            if select {
+                selectedConversationID = existing.id
+                touch(existing.id)
+                save()
+            }
             return true
         }
         let conversation = Conversation(destinationHash: hash, displayName: displayName.isEmpty ? abbreviated(hash) : displayName)
@@ -798,8 +802,8 @@ public final class SidebandStore {
     public func restoreSnapshotData(_ data: Data) throws {
         let snapshot = try validatedSnapshot(from: data)
         conversations = snapshot.conversations
-        sortConversations()
         messages = snapshot.messages
+        sortConversations()
         discoveries = snapshot.discoveries
         drafts = snapshot.drafts
         selectedConversationID = conversations.first?.id
@@ -1842,9 +1846,16 @@ public final class SidebandStore {
     }
 
     private func sortConversations() {
+        let latestMessageDates = Dictionary(grouping: messages, by: \.conversationID)
+            .mapValues { conversationMessages in
+                conversationMessages.map(\.timestamp).max() ?? .distantPast
+            }
         conversations.sort {
             if $0.isPinned != $1.isPinned { return $0.isPinned && !$1.isPinned }
-            return $0.updatedAt > $1.updatedAt
+            let leftActivity = max($0.updatedAt, latestMessageDates[$0.id] ?? .distantPast)
+            let rightActivity = max($1.updatedAt, latestMessageDates[$1.id] ?? .distantPast)
+            if leftActivity != rightActivity { return leftActivity > rightActivity }
+            return $0.id.uuidString < $1.id.uuidString
         }
     }
 
@@ -1894,8 +1905,8 @@ public final class SidebandStore {
 
     private func applyLoadedSnapshot(_ snapshot: AppSnapshot) {
         conversations = snapshot.conversations
-        sortConversations()
         messages = snapshot.messages
+        sortConversations()
         for index in messages.indices where messages[index].direction == .outgoing && messages[index].state == .sent {
             messages[index].state = .queued
             recoveredOutboundCount += 1
@@ -1917,8 +1928,8 @@ public final class SidebandStore {
     private func applyCloudSnapshot(_ snapshot: AppSnapshot) {
         let selectedDestination = selectedConversation?.destinationHash
         conversations = snapshot.conversations
-        sortConversations()
         messages = snapshot.messages
+        sortConversations()
         discoveries = snapshot.discoveries
         let conversationIDs = Set(conversations.map(\.id))
         drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }

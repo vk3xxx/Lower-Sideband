@@ -515,6 +515,49 @@ import Testing
     #expect(store.selectedConversationID == selectedID)
 }
 
+@MainActor @Test func latestMessageActivitySurfacesConversationAfterRelaunch() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let staleRecord = Conversation(
+        destinationHash: "0123456789abcdef0123456789abcdef",
+        displayName: "Recently active",
+        updatedAt: Date(timeIntervalSince1970: 100)
+    )
+    let newerRecord = Conversation(
+        destinationHash: "fedcba9876543210fedcba9876543210",
+        displayName: "Stale chat",
+        updatedAt: Date(timeIntervalSince1970: 200)
+    )
+    let latestMessage = Message(
+        conversationID: staleRecord.id,
+        body: "Newest activity",
+        timestamp: Date(timeIntervalSince1970: 300),
+        direction: .incoming,
+        state: .delivered
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [newerRecord, staleRecord], messages: [latestMessage])).write(to: url)
+
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(store.conversations.first?.id == staleRecord.id)
+}
+
+@MainActor @Test func startingAnExistingConversationSurfacesItAgain() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    let firstHash = "0123456789abcdef0123456789abcdef"
+    let secondHash = "fedcba9876543210fedcba9876543210"
+    #expect(store.addConversation(destinationHash: firstHash, displayName: "First"))
+    #expect(store.addConversation(destinationHash: secondHash, displayName: "Second"))
+    #expect(store.conversations.first?.destinationHash == secondHash)
+
+    #expect(store.addConversation(destinationHash: firstHash, displayName: "First"))
+
+    #expect(store.conversations.first?.destinationHash == firstHash)
+}
+
 @MainActor @Test func renameConversationPersistsNonemptyName() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
