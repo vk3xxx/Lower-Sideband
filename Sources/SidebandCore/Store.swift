@@ -268,10 +268,22 @@ public final class SidebandStore {
     }
 
     public func markConversationRead(_ conversationID: UUID) {
-        guard let index = conversations.firstIndex(where: { $0.id == conversationID }), conversations[index].unreadCount > 0 else { return }
-        conversations[index].unreadCount = 0
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        if conversations[index].unreadCount > 0 {
+            conversations[index].unreadCount = 0
+            save()
+            syncUnreadBadge()
+        }
+        Task { await notifications.removeNotifications(for: conversationID) }
+    }
+
+    public func openConversationFromNotification(_ conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].isArchived = false
+        selectedConversationID = conversationID
+        touch(conversationID)
+        markConversationRead(conversationID)
         save()
-        syncUnreadBadge()
     }
 
     public func markConversationUnread(_ conversationID: UUID) {
@@ -355,7 +367,8 @@ public final class SidebandStore {
     }
 
     public func shouldNotifyIncoming(for conversationID: UUID) -> Bool {
-        conversations.first(where: { $0.id == conversationID })?.notificationsMuted == false
+        guard conversations.first(where: { $0.id == conversationID })?.notificationsMuted == false else { return false }
+        return !isApplicationActive || visibleConversationID != conversationID
     }
 
     public func isSourceBlocked(_ destinationHash: String) -> Bool {
@@ -1740,13 +1753,21 @@ public final class SidebandStore {
         }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }), let body = String(data: message.content, encoding: .utf8) else { return false }
         let telemetry = message.binaryField(0x02).flatMap { try? SidebandTelemetry(packed: $0) }
-        messages.append(Message(conversationID: conversation.id, body: body, timestamp: Date(timeIntervalSince1970: message.timestamp), direction: .incoming, state: .delivered, telemetry: telemetry))
+        let incomingMessage = Message(conversationID: conversation.id, body: body, timestamp: Date(timeIntervalSince1970: message.timestamp), direction: .incoming, state: .delivered, telemetry: telemetry)
+        messages.append(incomingMessage)
         noteIncomingActivity(in: conversation.id)
         receivedLXMFIDs.insert(message.messageID.hex)
         UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
         save()
         if shouldNotifyIncoming(for: conversation.id) {
-            Task { await notifications.notifyIncoming(title: conversation.displayName, body: body) }
+            Task {
+                await notifications.notifyIncoming(
+                    conversationID: conversation.id,
+                    messageID: incomingMessage.id,
+                    title: conversation.displayName,
+                    body: body
+                )
+            }
         }
         return true
     }
@@ -2010,7 +2031,13 @@ public final class SidebandStore {
         incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
         save()
         if shouldNotifyIncoming(for: conversation.id) {
-            await notifications.notifyIncoming(title: conversation.displayName, body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody)
+            await notifications.notifyIncoming(
+                conversationID: conversation.id,
+                messageID: envelope.groupID,
+                title: conversation.displayName,
+                body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody,
+                isAttachment: true
+            )
         }
     }
 

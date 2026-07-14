@@ -527,6 +527,43 @@ import Testing
     #expect(SidebandStore(persistenceURL: url).conversations[0].unreadCount == 1)
 }
 
+@MainActor @Test func notificationSelectionRestoresOpensAndReadsConversation() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(
+        destinationHash: "0123456789abcdef0123456789abcdef",
+        displayName: "Notification peer",
+        isArchived: true,
+        unreadCount: 2
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+    store.selectedConversationID = nil
+
+    store.openConversationFromNotification(conversation.id)
+
+    #expect(store.selectedConversationID == conversation.id)
+    #expect(store.selectedConversation?.isArchived == false)
+    #expect(store.selectedConversation?.unreadCount == 0)
+}
+
+@MainActor @Test func notificationPolicySuppressesMutedAndVisibleActiveConversations() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let conversationID = store.conversations[0].id
+
+    #expect(store.shouldNotifyIncoming(for: conversationID))
+    store.conversationDidAppear(conversationID)
+    #expect(!store.shouldNotifyIncoming(for: conversationID))
+    store.applicationDidBecomeInactive()
+    #expect(store.shouldNotifyIncoming(for: conversationID))
+    store.setConversationNotificationsMuted(true, conversationID: conversationID)
+    #expect(!store.shouldNotifyIncoming(for: conversationID))
+}
+
 @MainActor @Test func addingBackgroundConversationDoesNotReplaceSelection() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

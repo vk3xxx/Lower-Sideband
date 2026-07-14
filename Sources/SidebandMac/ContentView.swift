@@ -578,13 +578,33 @@ private struct NetworkView: View {
                 }.padding(6)
             }
             GroupBox("Notifications") {
-                HStack {
-                    Toggle("Notify for verified incoming messages", isOn: Binding(
-                        get: { store.notifications.isEnabled },
-                        set: { enabled in Task { await store.notifications.setEnabled(enabled) } }
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Toggle("Notify for verified incoming messages", isOn: Binding(
+                            get: { store.notifications.isEnabled },
+                            set: { enabled in Task { await store.notifications.setEnabled(enabled) } }
+                        ))
+                        Spacer()
+                        Text(store.notifications.authorizationDescription).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Toggle("Show sender and message previews", isOn: Binding(
+                        get: { store.notifications.showPreviews },
+                        set: { store.notifications.setShowPreviews($0) }
                     ))
-                    Spacer()
-                    Text(store.notifications.authorizationDescription).font(.caption).foregroundStyle(.secondary)
+                    .disabled(!store.notifications.isEnabled)
+                    Toggle("Play notification sounds", isOn: Binding(
+                        get: { store.notifications.playSounds },
+                        set: { store.notifications.setPlaySounds($0) }
+                    ))
+                    .disabled(!store.notifications.isEnabled)
+                    Text("Notification taps open the matching conversation. Muted conversations and the conversation currently on screen do not produce alerts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let error = store.notifications.lastError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }.padding(6)
             }
             if !store.incomingResourceProgress.isEmpty {

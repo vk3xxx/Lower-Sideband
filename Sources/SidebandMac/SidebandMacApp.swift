@@ -1,5 +1,6 @@
 import SwiftUI
 import SidebandCore
+@preconcurrency import UserNotifications
 #if os(iOS)
 import UIKit
 #endif
@@ -11,20 +12,91 @@ struct SidebandApp: App {
     @UIApplicationDelegateAdaptor(SidebandAppDelegate.self) private var appDelegate
 #endif
 
+    init() {
+        NotificationInteractionBridge.shared.activate()
+    }
+
     @SceneBuilder
     var body: some Scene {
         #if os(macOS)
-        WindowGroup("Sideband") { ContentView(store: store).frame(minWidth: 850, minHeight: 560) }
+        WindowGroup("Sideband") {
+            ContentView(store: store)
+                .frame(minWidth: 850, minHeight: 560)
+                .task {
+                    NotificationInteractionBridge.shared.install(store: store)
+                    await store.notifications.prepare()
+                }
+        }
         .defaultSize(width: 1080, height: 720)
         #else
         WindowGroup("Sideband") {
             ContentView(store: store)
                 .task {
+                    NotificationInteractionBridge.shared.install(store: store)
+                    await store.notifications.prepare()
                     RemoteWakeBridge.shared.install { [store] in await store.performRemoteWakeSync() }
                     UIApplication.shared.registerForRemoteNotifications()
                 }
         }
         #endif
+    }
+}
+
+@MainActor
+private final class NotificationInteractionBridge: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = NotificationInteractionBridge()
+    private weak var store: SidebandStore?
+    private var pendingResponse: (conversationID: UUID, markReadOnly: Bool)?
+
+    func activate() {
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    func install(store: SidebandStore) {
+        self.store = store
+        activate()
+        if let pendingResponse {
+            route(pendingResponse.conversationID, markReadOnly: pendingResponse.markReadOnly)
+            self.pendingResponse = nil
+        }
+    }
+
+    private func route(_ conversationID: UUID, markReadOnly: Bool) {
+        guard let store else {
+            pendingResponse = (conversationID, markReadOnly)
+            return
+        }
+        if markReadOnly {
+            store.markConversationRead(conversationID)
+        } else {
+            store.openConversationFromNotification(conversationID)
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list, .sound, .badge])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let value = response.notification.request.content.userInfo[LocalNotificationManager.conversationIDUserInfoKey] as? String
+        let conversationID = value.flatMap(UUID.init(uuidString:))
+        completionHandler()
+        Task { @MainActor [weak self] in
+            if let conversationID {
+                self?.route(
+                    conversationID,
+                    markReadOnly: response.actionIdentifier == LocalNotificationManager.markReadActionIdentifier
+                )
+            }
+        }
     }
 }
 
