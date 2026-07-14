@@ -483,7 +483,14 @@ private struct NetworkView: View {
                 GridRow { Text("Connection policy"); Toggle("Internet only — disable LAN gateways", isOn: Binding(get: { store.internetOnlyEnabled }, set: { store.setInternetOnly($0) })) }
                 GridRow { Text("Reconnect"); Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) })) }
                 GridRow { Text("Automatic connection"); Text(store.automaticConnectionDescription).foregroundStyle(.secondary) }
-                GridRow { Text("Transport"); Text("TCP · HDLC" + (store.activeNetworkHost.map { " · \($0):\(store.activeNetworkPort ?? store.networkPort)" } ?? "")).foregroundStyle(.secondary) }
+                GridRow { Text("Transport"); Text(transportSummary).foregroundStyle(.secondary) }
+                ForEach(store.networkInterfaces) { interface in
+                    GridRow {
+                        Text(interface.name).font(.caption)
+                        Label(interfaceStateText(interface.state), systemImage: interfaceStateIcon(interface.state))
+                            .font(.caption).foregroundStyle(interface.state == .ready ? Color.green : Color.secondary)
+                    }
+                }
                 GridRow { Text("System network"); Text(reachabilityText).foregroundStyle(.secondary) }
                 GridRow {
                     Text("Last connected")
@@ -511,6 +518,12 @@ private struct NetworkView: View {
             }
             GroupBox("LXMF propagation") {
                 VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Select a propagation node automatically", isOn: Binding(
+                        get: { store.propagationNodeIsAutomatic },
+                        set: { store.setAutomaticPropagationNode($0) }
+                    ))
+                    Text("\(store.discoveredPropagationNodeCount) propagation node\(store.discoveredPropagationNodeCount == 1 ? "" : "s") discovered")
+                        .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Text("Local address")
                         Text(store.localDeliveryHash).font(.body.monospaced()).textSelection(.enabled)
@@ -525,6 +538,7 @@ private struct NetworkView: View {
                     HStack {
                         TextField("Propagation-node destination", text: Binding(get: { store.propagationNodeHash }, set: { store.setPropagationNode($0) }))
                             .font(.body.monospaced()).textFieldStyle(.roundedBorder)
+                            .disabled(store.propagationNodeIsAutomatic)
                         Button("Request path") { Task { await store.requestPropagationNodePath() } }
                             .disabled(store.networkState != .ready || store.propagationNodePathPending)
                     }
@@ -720,6 +734,32 @@ private struct NetworkView: View {
         let protocols = [store.reachability.supportsIPv4 ? "IPv4" : nil, store.reachability.supportsIPv6 ? "IPv6" : nil].compactMap { $0 }.joined(separator: "/")
         let flags = [store.reachability.isExpensive ? "metered" : nil, store.reachability.isConstrained ? "constrained" : nil].compactMap { $0 }
         return ([store.reachability.interfaceSummary, protocols] + flags).filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+    private var transportSummary: String {
+        var value = "TCP · HDLC"
+        if store.networkInterfaces.count > 1 {
+            value += " · \(store.networkInterfaces.count) concurrent gateways"
+        } else if let host = store.activeNetworkHost {
+            value += " · \(host)"
+            if let port = store.activeNetworkPort { value += ":\(port)" }
+        }
+        return value
+    }
+    private func interfaceStateText(_ state: ReticulumTCPInterface.State) -> String {
+        switch state {
+        case .stopped: "Stopped"
+        case .connecting: "Connecting"
+        case .ready: "Ready"
+        case .failed(let reason): "Unavailable · \(reason)"
+        }
+    }
+    private func interfaceStateIcon(_ state: ReticulumTCPInterface.State) -> String {
+        switch state {
+        case .stopped: "circle"
+        case .connecting: "arrow.triangle.2.circlepath"
+        case .ready: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle"
+        }
     }
     private var statusText: String {
         switch store.networkState {

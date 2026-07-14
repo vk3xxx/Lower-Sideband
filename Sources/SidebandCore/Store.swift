@@ -815,7 +815,7 @@ public final class SidebandStore {
             "Local name: \(localDisplayName)",
             "Local destination: \(localDeliveryHash)",
             "Network state: \(state)",
-            "TCP endpoint: \(activeNetworkHost ?? networkHost):\(activeNetworkPort ?? networkPort)",
+            "TCP endpoints: \(networkInterfaces.map { "\($0.name)=\($0.state)" }.joined(separator: ", "))",
             "Prefer IPv6: \(preferIPv6)",
             "System interface: \(reachability.interfaceSummary)",
             "Packets received: \(receivedPacketCount)",
@@ -823,7 +823,7 @@ public final class SidebandStore {
             "Discoveries: \(discoveries.count) (\(validatedDiscoveryCount) validated)",
             "Links: \(activeLinkCount) active, \(pendingLinkCount) pending",
             "Messages: \(messages.count) total, \(messages.count(where: { $0.state == .queued })) queued, \(messages.count(where: { $0.state == .failed })) failed",
-            "Propagation node: \(propagationNodeHash.isEmpty ? "not configured" : propagationNodeHash)",
+            "Propagation node: \(propagationNodeHash.isEmpty ? "not discovered" : propagationNodeHash) (\(propagationNodeIsAutomatic ? "automatic" : "manual"))",
             "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")"
         ].joined(separator: "\n")
     }
