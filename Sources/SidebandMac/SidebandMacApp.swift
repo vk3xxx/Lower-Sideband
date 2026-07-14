@@ -74,11 +74,15 @@ final class SidebandAppDelegate: NSObject, UIApplicationDelegate {
 @MainActor
 enum DeliverySoakRunner {
     private static let environment = ProcessInfo.processInfo.environment
+    private static var hasConfiguredNetwork = false
+    private static var hasStartedNetwork = false
     private static var hasStarted = false
     private static var deliveryTimeoutBaseline = 0
 
     static func configureNetworkIfRequested(_ store: SidebandStore) {
         guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return }
+        guard !hasConfiguredNetwork else { return }
+        hasConfiguredNetwork = true
         store.removeDeliverySoakMessages()
         deliveryTimeoutBaseline = store.deliveryTimeoutCount
         store.autoConnectEnabled = mode == "automatic" || environment["SIDEBAND_SOAK_AUTOCONNECT"] == "1"
@@ -114,6 +118,8 @@ enum DeliverySoakRunner {
 
     static func startNetworkIfRequested(_ store: SidebandStore) async -> Bool {
         guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return false }
+        guard !hasStartedNetwork else { return true }
+        hasStartedNetwork = true
         // Scene restoration can start the normal automatic connector before
         // this DEBUG-only acceptance runner is invoked on macOS. Reset that
         // in-flight attempt so the requested test topology is deterministic.
