@@ -486,12 +486,17 @@ private struct NetworkView: View {
                 GridRow { Text("Transport"); Text(transportSummary).foregroundStyle(.secondary) }
                 ForEach(store.networkInterfaces) { interface in
                     GridRow {
-                        Text(interface.name).font(.caption)
+                        Text(interface.name + (interface.isBootstrap ? " (bootstrap)" : "")).font(.caption)
                         Label(interfaceStateText(interface.state), systemImage: interfaceStateIcon(interface.state))
                             .font(.caption).foregroundStyle(interface.state == .ready ? Color.green : Color.secondary)
                     }
                 }
                 GridRow { Text("System network"); Text(reachabilityText).foregroundStyle(.secondary) }
+                GridRow {
+                    Text("Discovered interfaces")
+                    Text("\(store.discoveredNetworkInterfaces.count) authenticated")
+                        .foregroundStyle(.secondary)
+                }
                 GridRow {
                     Text("Last connected")
                     Text(store.lastNetworkReadyAt?.formatted(date: .abbreviated, time: .standard) ?? "Never")

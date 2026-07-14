@@ -146,9 +146,14 @@ public enum ConfiguredReticulumGateways {
 }
 
 public enum PublicReticulumGateways {
+    /// Public nodes are only bootstrap/fallback entrypoints. Once authenticated
+    /// on-network discovery yields two healthy interfaces, the live pool sheds
+    /// these sockets and routes through the discovered Reticulum topology.
     public static let defaults: [InternetGateway] = [
+        InternetGateway(name: "Beleth RNS (dual-stack)", host: "rns.beleth.net", port: 4_242),
         InternetGateway(name: "Sydney RNS", host: "sydney.reticulum.au", port: 4_242),
-        InternetGateway(name: "Melbourne RNS", host: "mel.reticulum.net.nz", port: 4_242),
+        InternetGateway(name: "Inertia RNS", host: "use.inertia.chat", port: 4_242),
+        InternetGateway(name: "RMAP World", host: "rmap.world", port: 4_242),
         InternetGateway(name: "Dismail RNS", host: "rns.dismail.de", port: 7_822),
         InternetGateway(name: "MobileFabrik", host: "phantom.mobilefabrik.com", port: 4_242)
     ]

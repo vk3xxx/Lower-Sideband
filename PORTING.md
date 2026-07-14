@@ -11,7 +11,8 @@
 | Announce parsing, signatures and destination derivation | `ReticulumAnnounce` | Implemented, Python-vector tested |
 | Path-request packet generation | `ReticulumPathRequest` | Implemented, Python-layout tested |
 | Validated route selection, pending requests and expiry | `ReticulumPathTable` | Implemented per interface for concurrent reticules |
-| Automatic LAN and internet gateway selection | `LANGatewayDiscovery`, `ReticulumTCPInterfacePool`, `SidebandStore` | Implemented local-first with Bonjour, dual-stack configuration and three concurrent public community fallbacks |
+| Automatic LAN and internet gateway selection | `LANGatewayDiscovery`, `ReticulumTCPInterfacePool`, `SidebandStore` | Implemented local-first with Bonjour, dual-stack configuration, three concurrent public community bootstraps and automatic fallback |
+| Authenticated Reticulum interface discovery | `ReticulumInterfaceDiscovery`, `ReticulumTCPInterfacePool`, `SidebandStore` | Implemented signed announce parsing, LXMF stamp validation, safe dynamic TCP paths and bootstrap shedding |
 | AutoInterface group, authenticated beacons, multicast listener and peer expiry | `AutoInterfaceDiscovery` | Implemented |
 | AutoInterface UDP packet receive/send | `AutoInterfaceDiscovery` data listener | Implemented on port 42671 |
 | Link request, link ID and X25519/HKDF key derivation | `ReticulumLinkRequest` | Implemented, Python-vector tested |

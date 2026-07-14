@@ -90,6 +90,8 @@
 		CC91D3028934158569A65B56 /* ReticulumPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */; };
 		CE7D380C74F290A15E0883F4 /* ICloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDA34BD01D0B7839C37388F /* ICloudSync.swift */; };
 		D12CA1E59042A522571C47CC /* ReticulumResourceLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */; };
+		D15C0A000000000000000002 /* ReticulumInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0A000000000000000001 /* ReticulumInterfaceDiscovery.swift */; };
+		D15C0A000000000000000003 /* ReticulumInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0A000000000000000001 /* ReticulumInterfaceDiscovery.swift */; };
 		D1E4A2CCEE53DAE8DB98144F /* SidebandCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */; };
 		D365CFC7A7FE5E7B2E4B8846 /* LXMFReceivedMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */; };
 		D50FB43808FE2928541B76B0 /* ReticulumPathTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */; };
@@ -164,6 +166,7 @@
 		A0B1C2D3E4F5061728394050 /* TCPInterfacePool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPInterfacePool.swift; sourceTree = "<group>"; };
 		1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshCoordinator.swift; sourceTree = "<group>"; };
 		2189201B52F69C0DED35D9FB /* ReticulumAnnounce.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumAnnounce.swift; sourceTree = "<group>"; };
+		D15C0A000000000000000001 /* ReticulumInterfaceDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumInterfaceDiscovery.swift; sourceTree = "<group>"; };
 		27404DC34CE9457F57AA67B7 /* ReticulumResourceHashMapUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceHashMapUpdate.swift; sourceTree = "<group>"; };
 		2CE179CF749411718317DA9F /* ReticulumResourceSegments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceSegments.swift; sourceTree = "<group>"; };
 		2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFReceivedMessage.swift; sourceTree = "<group>"; };
@@ -253,6 +256,7 @@
 				2189201B52F69C0DED35D9FB /* ReticulumAnnounce.swift */,
 				FF78A5D135DF2BC78CB1A0E0 /* ReticulumAnnounceBuilder.swift */,
 				6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */,
+				D15C0A000000000000000001 /* ReticulumInterfaceDiscovery.swift */,
 				EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */,
 				725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */,
 				C93625631542290E7226AC8E /* ReticulumPathRequest.swift */,
@@ -546,6 +550,7 @@
 				E5C8139C7113B1DF74C89137 /* ReticulumAnnounce.swift in Sources */,
 				ABB92F5EE86F97F500711D5D /* ReticulumAnnounceBuilder.swift in Sources */,
 				01E564776CA9E776B55ED75B /* ReticulumIdentity.swift in Sources */,
+				D15C0A000000000000000002 /* ReticulumInterfaceDiscovery.swift in Sources */,
 				9E76355F8F75B02C6F1CDE91 /* ReticulumLink.swift in Sources */,
 				59F1229EDE718AE45B3B46C3 /* ReticulumPacket.swift in Sources */,
 				3A2164719C2EA62006BFB32A /* ReticulumPathRequest.swift in Sources */,
@@ -620,6 +625,7 @@
 				E35C71D013C8108DAB131267 /* ReticulumAnnounce.swift in Sources */,
 				5D51EEAE800511140DAE506D /* ReticulumAnnounceBuilder.swift in Sources */,
 				546ACC976EBECA0507AB7E61 /* ReticulumIdentity.swift in Sources */,
+				D15C0A000000000000000003 /* ReticulumInterfaceDiscovery.swift in Sources */,
 				DEB899191F6F97302FEDF1CF /* ReticulumLink.swift in Sources */,
 				CC91D3028934158569A65B56 /* ReticulumPacket.swift in Sources */,
 				087FB0F3F6480890ADFB6944 /* ReticulumPathRequest.swift in Sources */,

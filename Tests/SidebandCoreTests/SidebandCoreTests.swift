@@ -1169,6 +1169,9 @@ import Testing
     let ordered = PublicReticulumGateways.ordered(customHost: custom.host, customPort: Int(custom.port), preferredID: nil)
     #expect(ordered.first?.id == custom.id)
     #expect(ordered.count == PublicReticulumGateways.defaults.count + 1)
+    #expect(PublicReticulumGateways.defaults.first?.host == "rns.beleth.net")
+    #expect(PublicReticulumGateways.defaults.first?.port == 4_242)
+    #expect(PublicReticulumGateways.defaults.count >= 5)
 
     let preferred = PublicReticulumGateways.defaults[2]
     let preferredOrder = PublicReticulumGateways.ordered(customHost: nil, customPort: 4_242, preferredID: preferred.id)
