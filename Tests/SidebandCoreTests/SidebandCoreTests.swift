@@ -1104,6 +1104,27 @@ import Testing
     #expect(AutomaticGatewaySelector.ordered([first, preferred], preferredID: preferred.id, excluding: [preferred.id]).map(\.id) == [first.id])
 }
 
+@Test func automaticGatewayFailoverPrefersLANAndRotatesUnreachablePublicGateways() {
+    #expect(AutomaticGatewayFailoverPolicy.shouldPreferDiscoveredLAN(
+        activeInternetGatewayID: "public.example:4242",
+        discoveredGatewayCount: 1
+    ))
+    #expect(!AutomaticGatewayFailoverPolicy.shouldPreferDiscoveredLAN(
+        activeInternetGatewayID: nil,
+        discoveredGatewayCount: 1
+    ))
+    #expect(AutomaticGatewayFailoverPolicy.shouldRotateInternetGateway(
+        activeInternetGatewayID: "public.example:4242",
+        hasPath: false,
+        hasQueuedMessages: true
+    ))
+    #expect(!AutomaticGatewayFailoverPolicy.shouldRotateInternetGateway(
+        activeInternetGatewayID: "public.example:4242",
+        hasPath: true,
+        hasQueuedMessages: true
+    ))
+}
+
 @Test func publicGatewaySelectionUsesCustomThenRotatesVerifiedDefaults() {
     let custom = InternetGateway(name: "Configured internet gateway", host: "gateway.example", port: 5_000)
     let ordered = PublicReticulumGateways.ordered(customHost: custom.host, customPort: Int(custom.port), preferredID: nil)

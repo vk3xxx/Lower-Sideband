@@ -95,6 +95,16 @@ public enum AutomaticGatewaySelector {
     }
 }
 
+public enum AutomaticGatewayFailoverPolicy {
+    public static func shouldPreferDiscoveredLAN(activeInternetGatewayID: String?, discoveredGatewayCount: Int) -> Bool {
+        activeInternetGatewayID != nil && discoveredGatewayCount > 0
+    }
+
+    public static func shouldRotateInternetGateway(activeInternetGatewayID: String?, hasPath: Bool, hasQueuedMessages: Bool) -> Bool {
+        activeInternetGatewayID != nil && !hasPath && hasQueuedMessages
+    }
+}
+
 public struct InternetGateway: Identifiable, Hashable, Sendable {
     public var id: String { "\(host.lowercased()):\(port)" }
     public let name: String

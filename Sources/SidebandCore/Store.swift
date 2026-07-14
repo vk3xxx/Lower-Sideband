@@ -105,6 +105,7 @@ public final class SidebandStore {
     private var observedLANDiscoveryGrace = false
     private var activeGatewayID: String?
     private var activeInternetGatewayID: String?
+    private var pendingLANGatewaySwitchID: String?
     private var preferredGatewayID: String?
     private var preferredInternetGatewayID: String?
     private var deferredPathRequests: Set<String> = []
@@ -881,6 +882,23 @@ public final class SidebandStore {
                 try? await Task.sleep(for: .seconds(16))
                 if await !pathTable.isPending(target), !hasPath(to: destinationHash) {
                     pendingPathHashes.remove(destinationHash.lowercased())
+                    let hasQueuedMessages = conversations
+                        .first(where: { $0.destinationHash == normalized })
+                        .map { conversation in
+                            messages.contains {
+                                $0.conversationID == conversation.id
+                                    && $0.direction == .outgoing
+                                    && $0.state == .queued
+                            }
+                        } ?? false
+                    if AutomaticGatewayFailoverPolicy.shouldRotateInternetGateway(
+                        activeInternetGatewayID: activeInternetGatewayID,
+                        hasPath: false,
+                        hasQueuedMessages: hasQueuedMessages
+                    ) {
+                        await rotateToNextInternetGateway(for: normalized)
+                        return
+                    }
                     if let conversation = conversations.first(where: { $0.destinationHash == destinationHash }) { await propagateQueued(for: conversation.id) }
                 }
             }
@@ -1131,7 +1149,7 @@ public final class SidebandStore {
         if lanDiscovery.isSearching, !observedLANDiscoveryGrace {
             observedLANDiscoveryGrace = true
             automaticConnectionDescription = "Looking for a local Reticulum gateway"
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(5))
             guard !Task.isCancelled else { return }
             await tryNextAutomaticConnection()
             return
@@ -1157,10 +1175,41 @@ public final class SidebandStore {
     }
 
     private func gatewayResultsChanged(_ gateways: [LANGateway]) {
-        guard autoConnectEnabled, !gateways.isEmpty, networkState != .ready, networkState != .connecting else { return }
+        guard autoConnectEnabled, !gateways.isEmpty else { return }
+        if networkState == .ready,
+           AutomaticGatewayFailoverPolicy.shouldPreferDiscoveredLAN(
+               activeInternetGatewayID: activeInternetGatewayID,
+               discoveredGatewayCount: gateways.count
+           ),
+           let gateway = AutomaticGatewaySelector.ordered(gateways, preferredID: preferredGatewayID).first,
+           pendingLANGatewaySwitchID != gateway.id {
+            pendingLANGatewaySwitchID = gateway.id
+            attemptedGatewayIDs.insert(gateway.id)
+            automaticConnectionDescription = "Switching to local gateway \(gateway.name)"
+            Task {
+                await connect(to: gateway)
+                pendingLANGatewaySwitchID = nil
+            }
+            return
+        }
+        guard networkState != .ready, networkState != .connecting else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
         Task { await tryNextAutomaticConnection() }
+    }
+
+    private func rotateToNextInternetGateway(for destinationHash: String) async {
+        guard autoConnectEnabled, networkState == .ready, activeInternetGatewayID != nil else { return }
+        automaticConnectionDescription = "No route to \(abbreviated(destinationHash)); trying another public gateway"
+        networkConnectionGeneration = UUID()
+        await networkInterface?.stop()
+        networkInterface = nil
+        networkState = .stopped
+        activeInternetGatewayID = nil
+        activeNetworkHost = nil
+        activeNetworkPort = nil
+        resetLinkState()
+        await tryNextAutomaticConnection()
     }
 
     private func reachabilityChanged(_ status: NetworkReachability.Status) {
