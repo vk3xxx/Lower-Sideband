@@ -1583,14 +1583,16 @@ public final class SidebandStore {
         guard !pending.isEmpty else { return }
         let queued = pending.filter { $0.attachments.isEmpty }
         let attachmentMessages = pending.filter { !$0.attachments.isEmpty }
-        if !hasPath(to: conversation.destinationHash) {
+        guard let destination = Data(hexadecimal: conversation.destinationHash),
+              let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated }),
+              let publicKey = discovery.publicKey,
+              let recipient = try? ReticulumIdentity(publicKey: publicKey) else {
             if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash) }
             return
         }
-        guard let destination = Data(hexadecimal: conversation.destinationHash),
-              let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash }),
-              let publicKey = discovery.publicKey,
-              let recipient = try? ReticulumIdentity(publicKey: publicKey) else { return }
+        if !hasPath(to: conversation.destinationHash) {
+            if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash) }
+        }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
         var requiresLink = !attachmentMessages.isEmpty
