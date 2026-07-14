@@ -10,8 +10,8 @@
 | TCP configuration, packet counters and announce capture | Network panel and `SidebandStore` | Implemented |
 | Announce parsing, signatures and destination derivation | `ReticulumAnnounce` | Implemented, Python-vector tested |
 | Path-request packet generation | `ReticulumPathRequest` | Implemented, Python-layout tested |
-| Validated route selection, pending requests and expiry | `ReticulumPathTable` | Implemented |
-| Automatic LAN and internet gateway selection | `LANGatewayDiscovery`, `SidebandStore` | Implemented local-first with Bonjour, dual-stack configuration and rotating public community fallbacks |
+| Validated route selection, pending requests and expiry | `ReticulumPathTable` | Implemented per interface for concurrent reticules |
+| Automatic LAN and internet gateway selection | `LANGatewayDiscovery`, `ReticulumTCPInterfacePool`, `SidebandStore` | Implemented local-first with Bonjour, dual-stack configuration and three concurrent public community fallbacks |
 | AutoInterface group, authenticated beacons, multicast listener and peer expiry | `AutoInterfaceDiscovery` | Implemented |
 | AutoInterface UDP packet receive/send | `AutoInterfaceDiscovery` data listener | Implemented on port 42671 |
 | Link request, link ID and X25519/HKDF key derivation | `ReticulumLinkRequest` | Implemented, Python-vector tested |
@@ -27,7 +27,7 @@
 | LXMF link identification and propagation list request | `LXMFPropagation` | Implemented, Python-vector tested |
 | MessagePack response decoding | `MessagePackDecoder` | Implemented for LXMF response types |
 | Recipient identity encryption for propagated LXMF | `ReticulumIdentity.encrypt` | Implemented, Python-vector tested |
-| Propagation upload envelope and queued fallback | `LXMFMessage.propagatedEnvelope` | Implemented |
+| Propagation upload envelope, automatic node discovery and queued fallback | `LXMFMessage.propagatedEnvelope`, `LXMFPropagation`, `SidebandStore` | Implemented |
 | Propagation download, decrypt, validate, import and acknowledge | `SidebandStore` sync pipeline | Implemented |
 | Signed `lxmf.delivery` announce | `ReticulumAnnounceBuilder` | Implemented |
 | Incoming link request acceptance and proof | `ReticulumIncomingLink` | Implemented, Python-vector tested |
@@ -39,7 +39,7 @@
 | Relaunch-safe outbound recovery | Codable snapshot recovery | Implemented, tested |
 | LXMF announce display names | `LXMFAnnounceInfo` | Implemented, tested |
 | Verified incoming local notifications | `LocalNotificationManager` | Implemented, opt-in |
-| iOS background propagation refresh | `BackgroundRefreshCoordinator` | Implemented |
+| iOS background propagation refresh and silent APNs wake handling | `BackgroundRefreshCoordinator`, `SidebandAppDelegate` | Client implemented; production APNs provider deployment required |
 | Installable iPhone/iPad application target | `MacSideband.xcodeproj`, `SidebandIOS` | Implemented and simulator launched |
 | App Store privacy required-reason declarations | `Support/PrivacyInfo.xcprivacy` | Implemented for the app and embedded framework |
 | TestFlight archive and upload configuration | `Support/ExportOptions-TestFlight.plist` | Implemented for the Individual team |
@@ -64,7 +64,7 @@
 1. Complete live attachment, telemetry and large-Resource interoperability testing against upstream Sideband and Reticulum.
 2. Add per-contact telemetry policies, requests, collectors, and additional Sideband sensor types.
 3. Add migration/import support for existing Sideband SQLite data.
-4. Harden iOS background delivery, power use, and network-transition behavior through TestFlight testing on physical devices.
+4. Deploy redundant public gateway/propagation infrastructure and an APNs wake provider, then harden background delivery, power use, and network-transition behavior through TestFlight testing on physical devices.
 5. Add camera QR scanning, audio/voice, LXST, hardware interfaces, and plugin replacements incrementally.
 
 Avoid embedding Python in the product target: it would make the macOS prototype quick but would create a dead end for iOS sandboxing and distribution.
