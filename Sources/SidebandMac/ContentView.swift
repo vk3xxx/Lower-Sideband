@@ -138,7 +138,12 @@ struct ContentView: View {
             DeliverySoakRunner.configureNetworkIfRequested(store)
             #endif
             await store.startTransport()
-            if store.autoConnectEnabled { await store.startAutomaticConnection() }
+            #if DEBUG
+            let startedSoakNetwork = await DeliverySoakRunner.startNetworkIfRequested(store)
+            #else
+            let startedSoakNetwork = false
+            #endif
+            if !startedSoakNetwork, store.autoConnectEnabled { await store.startAutomaticConnection() }
             if store.autoInterfaceEnabled { store.startAutoInterfaceDiscovery() }
             if store.iCloudSyncEnabled { await store.syncICloudNow() }
             #if DEBUG

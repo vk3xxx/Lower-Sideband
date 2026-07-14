@@ -24,7 +24,7 @@ enum DeliverySoakRunner {
 
     static func configureNetworkIfRequested(_ store: SidebandStore) {
         guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return }
-        store.autoConnectEnabled = true
+        store.autoConnectEnabled = mode == "automatic"
         store.preferIPv6 = true
         store.networkPort = Int(environment["SIDEBAND_SOAK_PORT"] ?? "4242") ?? 4_242
         store.networkInternetPort = Int(environment["SIDEBAND_SOAK_INTERNET_PORT"] ?? "4242") ?? 4_242
@@ -44,6 +44,26 @@ enum DeliverySoakRunner {
         default:
             break
         }
+    }
+
+    static func startNetworkIfRequested(_ store: SidebandStore) async -> Bool {
+        guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return false }
+        switch mode {
+        case "local":
+            await store.connectNetwork(
+                explicitHost: environment["SIDEBAND_SOAK_HOST"] ?? "10.20.20.133",
+                explicitPort: UInt16(environment["SIDEBAND_SOAK_PORT"] ?? "4242") ?? 4_242
+            )
+        case "public":
+            let host = environment["SIDEBAND_SOAK_INTERNET_HOST"] ?? "sydney.reticulum.au"
+            let port = UInt16(environment["SIDEBAND_SOAK_INTERNET_PORT"] ?? "4242") ?? 4_242
+            await store.connectNetwork(explicitHost: host, explicitPort: port, internetGatewayID: "\(host.lowercased()):\(port)")
+        case "automatic":
+            await store.startAutomaticConnection()
+        default:
+            return false
+        }
+        return true
     }
 
     static func runIfRequested(_ store: SidebandStore) async {
