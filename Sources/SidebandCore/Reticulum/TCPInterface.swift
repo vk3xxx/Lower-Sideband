@@ -38,7 +38,6 @@ public actor ReticulumTCPInterface {
             Task { await self?.handle(newState) }
         }
         connection.start(queue: DispatchQueue(label: "sideband.reticulum.tcp"))
-        receive(on: connection)
     }
 
     public func stop() {
@@ -77,7 +76,9 @@ public actor ReticulumTCPInterface {
 
     private func handle(_ newState: NWConnection.State) async {
         switch newState {
-        case .ready: await setState(.ready)
+        case .ready:
+            await setState(.ready)
+            if let connection { receive(on: connection) }
         case .failed(let error): await fail(error.localizedDescription)
         case .cancelled: await setState(.stopped)
         default: break
