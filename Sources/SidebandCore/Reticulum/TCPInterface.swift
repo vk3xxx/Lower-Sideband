@@ -8,6 +8,7 @@ public actor ReticulumTCPInterface {
     private let host: NWEndpoint.Host
     private let port: NWEndpoint.Port
     private let endpoint: NWEndpoint
+    private let connectionQueue = DispatchQueue(label: "sideband.reticulum.tcp")
     private var connection: NWConnection?
     private var decoder = HDLCDecoder()
     private let packetHandler: @Sendable (ReticulumPacket) async -> Void
@@ -37,7 +38,7 @@ public actor ReticulumTCPInterface {
         connection.stateUpdateHandler = { [weak self] newState in
             Task { await self?.handle(newState) }
         }
-        connection.start(queue: DispatchQueue(label: "sideband.reticulum.tcp"))
+        connection.start(queue: connectionQueue)
     }
 
     public func stop() {
