@@ -1483,6 +1483,34 @@ import Testing
     #expect(first.count == 64)
 }
 
+@Test func decodesAuthenticatedReticulumInterfaceDiscoveryFixture() {
+    let appData = Data(hex: "008900b14261636b626f6e65496e7465726661636501c3ccfec41000112233445566778899aabbccddeeffccffaf5379646e6579204261636b626f6e6503cbc040ef34d6a161e504cb4062e6b295e9e1b105cb404500000000000002af726e732e6578616d706c652e6e657406cd10929fbbbec43a8031ce376d1afbf43ad843726731ee7623c9f32a6217a9252c7059")
+    let networkID = Data(hex: "ffeeddccbbaa99887766554433221100")
+    let seen = Date(timeIntervalSince1970: 1_700_000_000)
+
+    let discovered = ReticulumInterfaceDiscovery.decode(appData: appData, networkID: networkID, hops: 2, now: seen)
+
+    #expect(discovered?.name == "Sydney Backbone")
+    #expect(discovered?.host == "rns.example.net")
+    #expect(discovered?.port == 4_242)
+    #expect(discovered?.transportID == Data(hex: "00112233445566778899aabbccddeeff"))
+    #expect(discovered?.networkID == networkID)
+    #expect(discovered?.hops == 2)
+    #expect(discovered?.stampValue == 14)
+    #expect(discovered?.lastSeen == seen)
+}
+
+@Test func rejectsTamperedReticulumInterfaceDiscoveryStamp() {
+    var appData = Data(hex: "008900b14261636b626f6e65496e7465726661636501c3ccfec41000112233445566778899aabbccddeeffccffaf5379646e6579204261636b626f6e6503cbc040ef34d6a161e504cb4062e6b295e9e1b105cb404500000000000002af726e732e6578616d706c652e6e657406cd10929fbbbec43a8031ce376d1afbf43ad843726731ee7623c9f32a6217a9252c7059")
+    appData[appData.index(before: appData.endIndex)] ^= 0x01
+
+    #expect(ReticulumInterfaceDiscovery.decode(
+        appData: appData,
+        networkID: Data(hex: "ffeeddccbbaa99887766554433221100"),
+        hops: 1
+    ) == nil)
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
     init(hex: String) {
