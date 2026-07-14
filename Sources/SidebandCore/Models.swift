@@ -123,15 +123,17 @@ public struct AppSnapshot: Codable, Sendable {
     public var messages: [Message]
     public var discoveries: [DiscoveredDestination]
     public var drafts: [UUID: String]
-    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:]) {
+    public var voiceCallHistory: [VoiceCall]
+    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:], voiceCallHistory: [VoiceCall] = []) {
         self.schemaVersion = schemaVersion
         self.conversations = conversations
         self.messages = messages
         self.discoveries = discoveries
         self.drafts = drafts
+        self.voiceCallHistory = voiceCallHistory
     }
 
-    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts, voiceCallHistory }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
@@ -139,6 +141,7 @@ public struct AppSnapshot: Codable, Sendable {
         messages = try values.decodeIfPresent([Message].self, forKey: .messages) ?? []
         discoveries = try values.decodeIfPresent([DiscoveredDestination].self, forKey: .discoveries) ?? []
         drafts = try values.decodeIfPresent([UUID: String].self, forKey: .drafts) ?? [:]
+        voiceCallHistory = try values.decodeIfPresent([VoiceCall].self, forKey: .voiceCallHistory) ?? []
     }
 }
 
@@ -164,6 +167,10 @@ public struct DiscoveredDestination: Identifiable, Codable, Hashable, Sendable {
     public var appData: Data?
     public var ratchet: Data?
     public var announcedDisplayName: String? { appData.flatMap { LXMFAnnounceInfo(appData: $0)?.displayName } }
+    public var isLXSTVoiceDestination: Bool {
+        guard let publicKey, let identity = try? ReticulumIdentity(publicKey: publicKey) else { return false }
+        return LXSTVoice.destinationHash(for: identity).map { String(format: "%02x", $0) }.joined() == destinationHash
+    }
 
     public init(destinationHash: String, hops: UInt8, lastSeen: Date = .now, packetCount: Int = 1, isValidated: Bool = false, publicKey: Data? = nil, appData: Data? = nil, ratchet: Data? = nil) {
         self.destinationHash = destinationHash

@@ -1,6 +1,17 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import Observation
+
+private final class AudioConverterInputBox: @unchecked Sendable {
+    private var buffer: AVAudioBuffer?
+    init(_ buffer: AVAudioBuffer) { self.buffer = buffer }
+    func next(_ status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+        guard let buffer else { status.pointee = .noDataNow; return nil }
+        self.buffer = nil
+        status.pointee = .haveData
+        return buffer
+    }
+}
 
 enum VoiceMessageAudioError: LocalizedError {
     case microphoneDenied
@@ -168,5 +179,148 @@ final class AudioAttachmentPlayer {
                 try? await Task.sleep(for: .milliseconds(200))
             }
         }
+    }
+}
+
+@MainActor
+@Observable
+final class LiveVoiceAudioEngine {
+    private(set) var isRunning = false
+    var isMuted = false
+    var onEncodedFrame: ((Data) -> Void)?
+
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private var captureConverter: AVAudioConverter?
+    private var encoder: AVAudioConverter?
+    private var decoder: AVAudioConverter?
+    private var pendingSamples: [Float] = []
+    private let sampleRate = 24_000.0
+    private let frameLength = 1_440 // 60 ms, matching LXST's default profile.
+    private let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!
+    @ObservationIgnored private var opusFormat: AVAudioFormat? {
+        AVAudioFormat(settings: [
+            AVFormatIDKey: kAudioFormatOpus,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 8_000
+        ])
+    }
+
+    func start() async throws {
+        guard !isRunning else { return }
+        guard await microphonePermissionGranted() else { throw VoiceMessageAudioError.microphoneDenied }
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try session.setPreferredSampleRate(sampleRate)
+        try session.setPreferredIOBufferDuration(0.02)
+        try session.setActive(true)
+        #endif
+        guard let opusFormat,
+              let encoder = AVAudioConverter(from: pcmFormat, to: opusFormat),
+              let decoder = AVAudioConverter(from: opusFormat, to: pcmFormat) else {
+            throw VoiceMessageAudioError.recordingUnavailable
+        }
+        self.encoder = encoder
+        self.decoder = decoder
+        let input = engine.inputNode
+        let inputFormat = input.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, let captureConverter = AVAudioConverter(from: inputFormat, to: pcmFormat) else {
+            throw VoiceMessageAudioError.recordingUnavailable
+        }
+        self.captureConverter = captureConverter
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: pcmFormat)
+        let requestedFrames = AVAudioFrameCount(max(256, inputFormat.sampleRate * 0.02))
+        input.installTap(onBus: 0, bufferSize: requestedFrames, format: inputFormat) { [weak self] buffer, _ in
+            Task { @MainActor [weak self] in self?.consumeInput(buffer) }
+        }
+        engine.prepare()
+        try engine.start()
+        player.play()
+        isRunning = true
+    }
+
+    func stop() {
+        guard isRunning else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        player.stop()
+        engine.stop()
+        engine.disconnectNodeOutput(player)
+        engine.detach(player)
+        captureConverter = nil
+        encoder = nil
+        decoder = nil
+        pendingSamples.removeAll(keepingCapacity: false)
+        isRunning = false
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        #endif
+    }
+
+    func play(opus payload: Data) {
+        guard isRunning, !payload.isEmpty, let opusFormat, let decoder else { return }
+        let compressed = AVAudioCompressedBuffer(format: opusFormat, packetCapacity: 1, maximumPacketSize: max(1_275, payload.count))
+        payload.copyBytes(to: compressed.data.assumingMemoryBound(to: UInt8.self), count: payload.count)
+        compressed.byteLength = UInt32(payload.count)
+        compressed.packetCount = 1
+        compressed.packetDescriptions?[0] = AudioStreamPacketDescription(mStartOffset: 0, mVariableFramesInPacket: UInt32(frameLength), mDataByteSize: UInt32(payload.count))
+        guard let output = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(frameLength)) else { return }
+        let inputBox = AudioConverterInputBox(compressed)
+        var error: NSError?
+        let status = decoder.convert(to: output, error: &error) { _, inputStatus in
+            inputBox.next(inputStatus)
+        }
+        guard status != .error, output.frameLength > 0 else { return }
+        player.scheduleBuffer(output)
+        if !player.isPlaying { player.play() }
+    }
+
+    private func consumeInput(_ input: AVAudioPCMBuffer) {
+        guard isRunning, !isMuted, let captureConverter else { return }
+        let capacity = AVAudioFrameCount(ceil(Double(input.frameLength) * sampleRate / input.format.sampleRate)) + 8
+        guard let converted = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: capacity) else { return }
+        let inputBox = AudioConverterInputBox(input)
+        var error: NSError?
+        let status = captureConverter.convert(to: converted, error: &error) { _, inputStatus in
+            inputBox.next(inputStatus)
+        }
+        guard status != .error, let samples = converted.floatChannelData?[0] else { return }
+        pendingSamples.append(contentsOf: UnsafeBufferPointer(start: samples, count: Int(converted.frameLength)))
+        while pendingSamples.count >= frameLength {
+            let frame = Array(pendingSamples.prefix(frameLength))
+            pendingSamples.removeFirst(frameLength)
+            if let encoded = encode(frame) { onEncodedFrame?(encoded) }
+        }
+    }
+
+    private func encode(_ samples: [Float]) -> Data? {
+        guard let encoder, let opusFormat,
+              let input = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(frameLength)),
+              let channel = input.floatChannelData?[0] else { return nil }
+        samples.withUnsafeBufferPointer { source in channel.update(from: source.baseAddress!, count: frameLength) }
+        input.frameLength = AVAudioFrameCount(frameLength)
+        let output = AVAudioCompressedBuffer(format: opusFormat, packetCapacity: 1, maximumPacketSize: 1_275)
+        let inputBox = AudioConverterInputBox(input)
+        var error: NSError?
+        let status = encoder.convert(to: output, error: &error) { _, inputStatus in
+            inputBox.next(inputStatus)
+        }
+        guard status != .error, output.byteLength > 0 else { return nil }
+        return Data(bytes: output.data, count: Int(output.byteLength))
+    }
+
+    private func microphonePermissionGranted() async -> Bool {
+        #if os(iOS)
+        await AVAudioApplication.requestRecordPermission()
+        #else
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: true
+        case .notDetermined: await AVCaptureDevice.requestAccess(for: .audio)
+        case .denied, .restricted: false
+        @unknown default: false
+        }
+        #endif
     }
 }

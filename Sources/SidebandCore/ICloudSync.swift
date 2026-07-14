@@ -290,12 +290,23 @@ public extension AppSnapshot {
             if let canonical = conversationIDMap[id], !draft.isEmpty { mergedDrafts[canonical] = draft }
         }
 
+        var callsByID: [UUID: VoiceCall] = [:]
+        for call in remote.voiceCallHistory + voiceCallHistory {
+            guard let conversationID = conversationIDMap[call.conversationID] else { continue }
+            callsByID[call.id] = VoiceCall(
+                id: call.id, conversationID: conversationID, direction: call.direction,
+                state: call.state, profile: call.profile, startedAt: call.startedAt,
+                connectedAt: call.connectedAt, endedAt: call.endedAt, failureReason: call.failureReason
+            )
+        }
+
         return AppSnapshot(
             schemaVersion: max(schemaVersion, remote.schemaVersion),
             conversations: canonicalByDestination.values.sorted { $0.updatedAt > $1.updatedAt },
             messages: messagesByID.values.sorted { $0.timestamp < $1.timestamp },
             discoveries: discoveries,
-            drafts: mergedDrafts
+            drafts: mergedDrafts,
+            voiceCallHistory: Array(callsByID.values.sorted { $0.startedAt > $1.startedAt }.prefix(100))
         )
     }
 

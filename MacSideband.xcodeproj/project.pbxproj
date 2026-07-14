@@ -35,13 +35,16 @@
 		3DD2069FCD7E5B6C6984B204 /* ReticulumProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5D406BCA1BD18C778F10EA3 /* ReticulumProof.swift */; };
 		3DDCAB680F41D01BD199D3CF /* LXMFReceivedMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */; };
 		3F17F52D6CC7281CCF48B0B6 /* DestinationHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E194B906C9B4844994C97C4 /* DestinationHash.swift */; };
+		4650D6CF49D128F715B1DA71 /* TCPInterfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86112D77CDCADA7E50D74361 /* TCPInterfacePool.swift */; };
 		48EB119C7D1716383DA637A8 /* AutoInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DF5C1B40489424F54A1262 /* AutoInterfaceDiscovery.swift */; };
+		495B0523C383F827EAE01364 /* TCPInterfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86112D77CDCADA7E50D74361 /* TCPInterfacePool.swift */; };
 		497181C45EB7BB7F8F7636C0 /* ReticulumResourceStagingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE27F948D0A3FD75DD885F4 /* ReticulumResourceStagingStore.swift */; };
 		4C5AF38C07933D8E47C61E81 /* SidebandCoreMac.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EA647CF9E030E282C0470932 /* SidebandCoreMac.framework */; };
 		4C6D92567B29F2299CA5A83F /* SecureIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9FEEDAB91A5EF3AFFE1A83D /* SecureIdentityStore.swift */; };
 		5172AE1D7DC5CDCEA5796FAA /* ReticulumResourceSegmentAccumulator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F6D4D9FBA74520C1EBCA068 /* ReticulumResourceSegmentAccumulator.swift */; };
 		51B0151D071F7725BA9175CE /* LXMFResourceEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 708748E83168C209AE467E40 /* LXMFResourceEnvelope.swift */; };
 		53CD728908BE9D3759810415 /* ReticulumResourceAdvertisement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55215B7B5B59B3CB768518A8 /* ReticulumResourceAdvertisement.swift */; };
+		53FFF458F7EBC28E78C2B5D6 /* LXSTVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = A53687F740076786DCD030DA /* LXSTVoice.swift */; };
 		546ACC976EBECA0507AB7E61 /* ReticulumIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */; };
 		59F1229EDE718AE45B3B46C3 /* ReticulumPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */; };
 		5BD2BF82DCE8844E91F17A71 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7578FB43B7F741FB5254EEFB /* ContentView.swift */; };
@@ -49,6 +52,7 @@
 		612902045745242AA9383C85 /* TelemetryCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E44F1ED72FA00F40609E0F2B /* TelemetryCapture.swift */; };
 		62D4F301A54BA2A4640C447A /* ReticulumResourceSegments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CE179CF749411718317DA9F /* ReticulumResourceSegments.swift */; };
 		641C2F0810172EA27D060CA0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
+		64F1F71910FCFD6E601FB636 /* LXSTVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = A53687F740076786DCD030DA /* LXSTVoice.swift */; };
 		693916E438F815BA883FF42C /* ICloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDA34BD01D0B7839C37388F /* ICloudSync.swift */; };
 		6B7A84167E78768E7CC346AD /* ReticulumResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */; };
 		713D4949BAEA41D5A295658D /* ReticulumProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5D406BCA1BD18C778F10EA3 /* ReticulumProof.swift */; };
@@ -61,6 +65,7 @@
 		7D54E947F32D589336652761 /* LANGatewayDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F13B8BEBEA5AFB84C7EA08E /* LANGatewayDiscovery.swift */; };
 		851A3DB3680E62E8B3785D4E /* BackgroundRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */; };
 		8720EDA95D88DC8395026DA6 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57A7BD924C6049E6C5DAA4A /* Models.swift */; };
+		87A9BD2E46DBF8A5543767B6 /* ReticulumInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F4AAB0397E43618F7B00EA0 /* ReticulumInterfaceDiscovery.swift */; };
 		8ED850A22B9378E5707933E1 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57A7BD924C6049E6C5DAA4A /* Models.swift */; };
 		8F943D1FE999971659BC8A0B /* LXMFPropagation.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFCE24619EAC858E5E6395B0 /* LXMFPropagation.swift */; };
 		91FD929272BA3B900D30332E /* SidebandMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F48887EC9B5C518D3AFB7565 /* SidebandMacApp.swift */; };
@@ -68,7 +73,6 @@
 		98C2C3D02CE6C20EDFA20EA6 /* AttachmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */; };
 		9B392826C889BCB3B7307C2E /* ReticulumResourceStagingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE27F948D0A3FD75DD885F4 /* ReticulumResourceStagingStore.swift */; };
 		9C59B45CE2681A3FD5A52084 /* TCPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */; };
-		A0B1C2D3E4F5061728394051 /* TCPInterfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5061728394050 /* TCPInterfacePool.swift */; };
 		9E76355F8F75B02C6F1CDE91 /* ReticulumLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */; };
 		A83D7EC7462B1CF15D836889 /* LocalDataCipher.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDEEF093B6A8C7DCC94F90AB /* LocalDataCipher.swift */; };
 		AB52501C356FF499722A17A8 /* LocalNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3454611B1022AF6027538880 /* LocalNotificationManager.swift */; };
@@ -80,18 +84,16 @@
 		B1953693F82C6624593511AF /* ReticulumPathTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */; };
 		B31676CD7B03C14A3D71B4C9 /* ReticulumTunnel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */; };
 		B4B677734B7E8E37A7E34D50 /* LocalNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3454611B1022AF6027538880 /* LocalNotificationManager.swift */; };
+		BA2BD538FEDAF72815F69195 /* ReticulumInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F4AAB0397E43618F7B00EA0 /* ReticulumInterfaceDiscovery.swift */; };
 		BAFB440028458EDA8F3DF0C8 /* ReticulumResource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */; };
 		BFCC9E8D2B1B6F34169A774D /* TelemetryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC7290C1251DFC249932DBC0 /* TelemetryViews.swift */; };
 		C3AED9F45A9A29D7881185E2 /* DestinationHash.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E194B906C9B4844994C97C4 /* DestinationHash.swift */; };
 		C6A7F579F12508B84057AE05 /* TCPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */; };
-		A0B1C2D3E4F5061728394052 /* TCPInterfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B1C2D3E4F5061728394050 /* TCPInterfacePool.swift */; };
 		C809B013C94747039EE73030 /* LXMFResourceEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 708748E83168C209AE467E40 /* LXMFResourceEnvelope.swift */; };
 		C9FBBAFC8455CCB2B8D43735 /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668FFE37826A8100E1CA09FF /* Store.swift */; };
 		CC91D3028934158569A65B56 /* ReticulumPacket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */; };
 		CE7D380C74F290A15E0883F4 /* ICloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDA34BD01D0B7839C37388F /* ICloudSync.swift */; };
 		D12CA1E59042A522571C47CC /* ReticulumResourceLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */; };
-		D15C0A000000000000000002 /* ReticulumInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0A000000000000000001 /* ReticulumInterfaceDiscovery.swift */; };
-		D15C0A000000000000000003 /* ReticulumInterfaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15C0A000000000000000001 /* ReticulumInterfaceDiscovery.swift */; };
 		D1E4A2CCEE53DAE8DB98144F /* SidebandCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E0E1E87B375EB248BC6AA343 /* SidebandCore.framework */; };
 		D365CFC7A7FE5E7B2E4B8846 /* LXMFReceivedMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */; };
 		D50FB43808FE2928541B76B0 /* ReticulumPathTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */; };
@@ -163,10 +165,8 @@
 		0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPathTable.swift; sourceTree = "<group>"; };
 		0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResource.swift; sourceTree = "<group>"; };
 		148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPInterface.swift; sourceTree = "<group>"; };
-		A0B1C2D3E4F5061728394050 /* TCPInterfacePool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPInterfacePool.swift; sourceTree = "<group>"; };
 		1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshCoordinator.swift; sourceTree = "<group>"; };
 		2189201B52F69C0DED35D9FB /* ReticulumAnnounce.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumAnnounce.swift; sourceTree = "<group>"; };
-		D15C0A000000000000000001 /* ReticulumInterfaceDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumInterfaceDiscovery.swift; sourceTree = "<group>"; };
 		27404DC34CE9457F57AA67B7 /* ReticulumResourceHashMapUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceHashMapUpdate.swift; sourceTree = "<group>"; };
 		2CE179CF749411718317DA9F /* ReticulumResourceSegments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceSegments.swift; sourceTree = "<group>"; };
 		2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFReceivedMessage.swift; sourceTree = "<group>"; };
@@ -183,12 +183,15 @@
 		668FFE37826A8100E1CA09FF /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
 		6800FA947758CF319790C30A /* HDLC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDLC.swift; sourceTree = "<group>"; };
 		6AE27F948D0A3FD75DD885F4 /* ReticulumResourceStagingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceStagingStore.swift; sourceTree = "<group>"; };
+		6F4AAB0397E43618F7B00EA0 /* ReticulumInterfaceDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumInterfaceDiscovery.swift; sourceTree = "<group>"; };
 		708748E83168C209AE467E40 /* LXMFResourceEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFResourceEnvelope.swift; sourceTree = "<group>"; };
 		725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPacket.swift; sourceTree = "<group>"; };
 		7578FB43B7F741FB5254EEFB /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		7AD802CD72884DC504AE787A /* NetworkReachability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkReachability.swift; sourceTree = "<group>"; };
+		86112D77CDCADA7E50D74361 /* TCPInterfacePool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPInterfacePool.swift; sourceTree = "<group>"; };
 		8FDA34BD01D0B7839C37388F /* ICloudSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudSync.swift; sourceTree = "<group>"; };
 		A4EE409D3195CBCE25E43E03 /* MessagePack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePack.swift; sourceTree = "<group>"; };
+		A53687F740076786DCD030DA /* LXSTVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXSTVoice.swift; sourceTree = "<group>"; };
 		A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebandContactLink.swift; sourceTree = "<group>"; };
 		A94DB2EEB1FF3081E4531FA8 /* LXMFMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFMessage.swift; sourceTree = "<group>"; };
 		AC4BE63D9AEF49C54142C2AA /* ReticulumResourceLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResourceLimits.swift; sourceTree = "<group>"; };
@@ -256,7 +259,7 @@
 				2189201B52F69C0DED35D9FB /* ReticulumAnnounce.swift */,
 				FF78A5D135DF2BC78CB1A0E0 /* ReticulumAnnounceBuilder.swift */,
 				6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */,
-				D15C0A000000000000000001 /* ReticulumInterfaceDiscovery.swift */,
+				6F4AAB0397E43618F7B00EA0 /* ReticulumInterfaceDiscovery.swift */,
 				EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */,
 				725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */,
 				C93625631542290E7226AC8E /* ReticulumPathRequest.swift */,
@@ -274,7 +277,7 @@
 				DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */,
 				F9FEEDAB91A5EF3AFFE1A83D /* SecureIdentityStore.swift */,
 				148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */,
-				A0B1C2D3E4F5061728394050 /* TCPInterfacePool.swift */,
+				86112D77CDCADA7E50D74361 /* TCPInterfacePool.swift */,
 			);
 			path = Reticulum;
 			sourceTree = "<group>";
@@ -335,9 +338,18 @@
 				FBFAFB919BC8DFC5E6E3360E /* Telemetry.swift */,
 				5CF805D6403CA445FE139DFE /* Transport.swift */,
 				EB5D5C73D750F905B6A2C23D /* LXMF */,
+				C9DC58A56348AEC0549D1EC9 /* LXST */,
 				0E02937824A4F088692D025F /* Reticulum */,
 			);
 			path = SidebandCore;
+			sourceTree = "<group>";
+		};
+		C9DC58A56348AEC0549D1EC9 /* LXST */ = {
+			isa = PBXGroup;
+			children = (
+				A53687F740076786DCD030DA /* LXSTVoice.swift */,
+			);
+			path = LXST;
 			sourceTree = "<group>";
 		};
 		EB5D5C73D750F905B6A2C23D /* LXMF */ = {
@@ -541,6 +553,7 @@
 				DC474C973A9C53F74A80A8C1 /* LXMFPropagation.swift in Sources */,
 				D365CFC7A7FE5E7B2E4B8846 /* LXMFReceivedMessage.swift in Sources */,
 				51B0151D071F7725BA9175CE /* LXMFResourceEnvelope.swift in Sources */,
+				64F1F71910FCFD6E601FB636 /* LXSTVoice.swift in Sources */,
 				1AE1850BEC0224B1412A5A77 /* LocalDataCipher.swift in Sources */,
 				B4B677734B7E8E37A7E34D50 /* LocalNotificationManager.swift in Sources */,
 				FB0E65FC7859C8DD3CA6F281 /* MessagePack.swift in Sources */,
@@ -550,7 +563,7 @@
 				E5C8139C7113B1DF74C89137 /* ReticulumAnnounce.swift in Sources */,
 				ABB92F5EE86F97F500711D5D /* ReticulumAnnounceBuilder.swift in Sources */,
 				01E564776CA9E776B55ED75B /* ReticulumIdentity.swift in Sources */,
-				D15C0A000000000000000002 /* ReticulumInterfaceDiscovery.swift in Sources */,
+				BA2BD538FEDAF72815F69195 /* ReticulumInterfaceDiscovery.swift in Sources */,
 				9E76355F8F75B02C6F1CDE91 /* ReticulumLink.swift in Sources */,
 				59F1229EDE718AE45B3B46C3 /* ReticulumPacket.swift in Sources */,
 				3A2164719C2EA62006BFB32A /* ReticulumPathRequest.swift in Sources */,
@@ -570,7 +583,7 @@
 				03301265781053B5497105C0 /* SidebandContactLink.swift in Sources */,
 				C9FBBAFC8455CCB2B8D43735 /* Store.swift in Sources */,
 				C6A7F579F12508B84057AE05 /* TCPInterface.swift in Sources */,
-				A0B1C2D3E4F5061728394052 /* TCPInterfacePool.swift in Sources */,
+				495B0523C383F827EAE01364 /* TCPInterfacePool.swift in Sources */,
 				EDA8E97C8A88FA9DFBE7C787 /* Telemetry.swift in Sources */,
 				17580709C25AC62A5C4728AC /* Transport.swift in Sources */,
 			);
@@ -616,6 +629,7 @@
 				8F943D1FE999971659BC8A0B /* LXMFPropagation.swift in Sources */,
 				3DDCAB680F41D01BD199D3CF /* LXMFReceivedMessage.swift in Sources */,
 				C809B013C94747039EE73030 /* LXMFResourceEnvelope.swift in Sources */,
+				53FFF458F7EBC28E78C2B5D6 /* LXSTVoice.swift in Sources */,
 				A83D7EC7462B1CF15D836889 /* LocalDataCipher.swift in Sources */,
 				AB52501C356FF499722A17A8 /* LocalNotificationManager.swift in Sources */,
 				DEE742D31B993537112B18FA /* MessagePack.swift in Sources */,
@@ -625,7 +639,7 @@
 				E35C71D013C8108DAB131267 /* ReticulumAnnounce.swift in Sources */,
 				5D51EEAE800511140DAE506D /* ReticulumAnnounceBuilder.swift in Sources */,
 				546ACC976EBECA0507AB7E61 /* ReticulumIdentity.swift in Sources */,
-				D15C0A000000000000000003 /* ReticulumInterfaceDiscovery.swift in Sources */,
+				87A9BD2E46DBF8A5543767B6 /* ReticulumInterfaceDiscovery.swift in Sources */,
 				DEB899191F6F97302FEDF1CF /* ReticulumLink.swift in Sources */,
 				CC91D3028934158569A65B56 /* ReticulumPacket.swift in Sources */,
 				087FB0F3F6480890ADFB6944 /* ReticulumPathRequest.swift in Sources */,
@@ -645,7 +659,7 @@
 				641C2F0810172EA27D060CA0 /* SidebandContactLink.swift in Sources */,
 				ECAB3611BA189FA907EA3AF8 /* Store.swift in Sources */,
 				9C59B45CE2681A3FD5A52084 /* TCPInterface.swift in Sources */,
-				A0B1C2D3E4F5061728394051 /* TCPInterfacePool.swift in Sources */,
+				4650D6CF49D128F715B1DA71 /* TCPInterfacePool.swift in Sources */,
 				7824B1F81353C4CAD197E090 /* Telemetry.swift in Sources */,
 				72718B102EE0F9523D6EC7BD /* Transport.swift in Sources */,
 			);

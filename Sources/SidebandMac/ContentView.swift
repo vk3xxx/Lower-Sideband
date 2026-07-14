@@ -85,6 +85,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
         .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
+        .sheet(isPresented: Binding(
+            get: { store.voiceCall != nil },
+            set: { presented in if !presented, store.voiceCall != nil { Task { await store.hangUpVoiceCall() } } }
+        )) { VoiceCallView(store: store) }
         .fileExporter(isPresented: $showingBackupExporter, document: backupDocument, contentType: .json, defaultFilename: "Sideband-Backup") { result in
             if case let .failure(error) = result { store.lastError = "Could not export backup: \(error.localizedDescription)" }
         }
@@ -371,8 +375,9 @@ struct ContentView: View {
 
     private var filteredDiscoveries: [DiscoveredDestination] {
         let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return store.discoveries }
-        return store.discoveries.filter {
+        let messageDestinations = store.discoveries.filter { !$0.isLXSTVoiceDestination }
+        guard !query.isEmpty else { return messageDestinations }
+        return messageDestinations.filter {
             $0.destinationHash.localizedCaseInsensitiveContains(query)
                 || ($0.announcedDisplayName?.localizedCaseInsensitiveContains(query) ?? false)
         }
@@ -607,6 +612,44 @@ private struct NetworkView: View {
                     }
                 }.padding(6)
             }
+            GroupBox("Secure voice calls") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Accept calls from trusted contacts only", isOn: Binding(
+                        get: { store.voiceTrustedOnly },
+                        set: { store.setVoiceTrustedOnly($0) }
+                    ))
+                    Picker("Voice profile", selection: Binding(
+                        get: { store.preferredVoiceProfile },
+                        set: { store.setPreferredVoiceProfile($0) }
+                    )) {
+                        ForEach(LXSTVoice.Profile.allCases.filter(\.isLocallySupported), id: \.self) { profile in
+                            Text(profile.displayName).tag(profile)
+                        }
+                    }
+                    HStack {
+                        Text("LXST address")
+                        Text(store.localVoiceHash).font(.caption.monospaced()).textSelection(.enabled)
+                        Spacer()
+                        Button { copyToSystemClipboard(store.localVoiceHash) } label: { Image(systemName: "doc.on.doc") }
+                            .help("Copy LXST voice address")
+                    }
+                    Text("Calls use the messaging identity and an end-to-end encrypted Reticulum link. The medium-quality Opus profile is compatible with Python Sideband/LXST.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !store.voiceCallHistory.isEmpty {
+                        Divider()
+                        Text("Recent calls").font(.caption.bold())
+                        ForEach(store.voiceCallHistory.prefix(5)) { call in
+                            HStack {
+                                Image(systemName: call.direction == .incoming ? "phone.arrow.down.left" : "phone.arrow.up.right")
+                                Text(store.conversations.first(where: { $0.id == call.conversationID })?.displayName ?? "Unknown contact")
+                                Spacer()
+                                Text(call.startedAt, style: .relative).foregroundStyle(.secondary)
+                                if call.failureReason != nil { Image(systemName: "exclamationmark.circle").foregroundStyle(.orange) }
+                            }.font(.caption)
+                        }
+                    }
+                }.padding(6)
+            }
             if !store.incomingResourceProgress.isEmpty {
                 GroupBox("Incoming Resources") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -692,6 +735,7 @@ private struct NetworkView: View {
                     capability("AutoInterface discovery and UDP data plane", complete: true)
                     capability("Encrypted links and resources", complete: true)
                     capability("LXMF message delivery", complete: true)
+                    capability("LXST encrypted voice calls", complete: true)
                 }.padding(6).frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
@@ -862,6 +906,12 @@ private struct ConversationView: View {
                     }
                     .help("Export conversation transcript")
                 }
+                Button { Task { await store.startVoiceCall(conversationID: conversation.id) } } label: {
+                    Image(systemName: "phone.fill")
+                }
+                .buttonStyle(.plain)
+                .disabled(store.voiceCall != nil || conversation.isBlocked || store.networkState != .ready)
+                .help(conversation.isBlocked ? "Unblock this contact before calling" : "Start encrypted voice call")
                 Label(routingStatus, systemImage: routingIcon)
                     .font(.caption).foregroundStyle(.secondary)
             }.padding()
@@ -1265,6 +1315,102 @@ private struct ConversationView: View {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
         if store.networkState == .ready { return "network" }
         return "arrow.triangle.2.circlepath"
+    }
+}
+
+private struct VoiceCallView: View {
+    @Bindable var store: SidebandStore
+    @State private var audio = LiveVoiceAudioEngine()
+    @State private var elapsed = 0
+    @State private var timerTask: Task<Void, Never>?
+
+    private var call: VoiceCall? { store.voiceCall }
+    private var conversation: Conversation? {
+        guard let call else { return nil }
+        return store.conversations.first { $0.id == call.conversationID }
+    }
+
+    var body: some View {
+        VStack(spacing: 22) {
+            Image(systemName: call?.direction == .incoming && call?.state == .incoming ? "phone.arrow.down.left.fill" : "waveform.circle.fill")
+                .font(.system(size: 54))
+                .foregroundStyle(call?.state == .active ? .green : Color.accentColor)
+            VStack(spacing: 6) {
+                Text(conversation?.displayName ?? "Voice Call").font(.title2.bold())
+                Text(statusText).foregroundStyle(.secondary)
+                if call?.state == .active {
+                    Text(callDuration).font(.title3.monospacedDigit())
+                }
+                Label("End-to-end encrypted LXST call", systemImage: "lock.shield.fill")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if call?.direction == .incoming, call?.state == .incoming {
+                HStack(spacing: 26) {
+                    callButton("Decline", systemImage: "phone.down.fill", color: .red) { Task { await store.declineVoiceCall() } }
+                    callButton("Answer", systemImage: "phone.fill", color: .green) { Task { await store.answerVoiceCall() } }
+                }
+            } else {
+                HStack(spacing: 26) {
+                    callButton(audio.isMuted ? "Unmute" : "Mute", systemImage: audio.isMuted ? "mic.slash.fill" : "mic.fill", color: .secondary) {
+                        audio.isMuted.toggle()
+                    }
+                    callButton("Hang Up", systemImage: "phone.down.fill", color: .red) { Task { await store.hangUpVoiceCall() } }
+                }
+            }
+        }
+        .padding(36)
+        .frame(minWidth: 340, minHeight: 390)
+        .interactiveDismissDisabled(call != nil)
+        .onAppear { configureAudio(for: call?.state) }
+        .onChange(of: call?.state) { _, state in configureAudio(for: state) }
+        .onDisappear {
+            timerTask?.cancel()
+            audio.stop()
+            store.setVoiceFrameHandler(nil)
+        }
+    }
+
+    @ViewBuilder private func callButton(_ title: String, systemImage: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: systemImage).font(.title2).frame(width: 54, height: 54).background(color, in: Circle()).foregroundStyle(.white)
+                Text(title).font(.caption)
+            }
+        }.buttonStyle(.plain)
+    }
+
+    private var statusText: String {
+        switch call?.state {
+        case .findingRoute: "Finding a secure route…"
+        case .connecting: "Connecting securely…"
+        case .ringing: "Ringing…"
+        case .incoming: "Incoming encrypted call"
+        case .active: call?.profile.displayName ?? "Connected"
+        case .ending: "Ending call…"
+        case .failed: "Call failed"
+        case .idle, nil: "Call ended"
+        }
+    }
+
+    private var callDuration: String {
+        String(format: "%02d:%02d", elapsed / 60, elapsed % 60)
+    }
+
+    private func configureAudio(for state: VoiceCallState?) {
+        guard state == .active, !audio.isRunning else { return }
+        audio.onEncodedFrame = { payload in Task { await store.sendVoiceFrame(payload) } }
+        store.setVoiceFrameHandler { payload in audio.play(opus: payload) }
+        timerTask?.cancel()
+        timerTask = Task { @MainActor in
+            while !Task.isCancelled {
+                elapsed = Int(Date.now.timeIntervalSince(call?.connectedAt ?? .now))
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        Task {
+            do { try await audio.start() }
+            catch { store.lastError = error.localizedDescription; await store.hangUpVoiceCall() }
+        }
     }
 }
 

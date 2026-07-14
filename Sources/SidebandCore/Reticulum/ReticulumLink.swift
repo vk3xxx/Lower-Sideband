@@ -89,6 +89,10 @@ public struct ReticulumLinkSession: Sendable {
         Data([0x0c, 0x00]) + linkID + Data([0xfa, 0xff])
     }
 
+    public func closePacket() throws -> Data {
+        try encryptedPacket(linkID, context: 0xfc)
+    }
+
     public func resourceAdvertisementPacket(_ advertisement: ReticulumResourceAdvertisement, hashMapSegment: Int = 0, iv: Data? = nil) throws -> Data {
         try encryptedPacket(advertisement.encode(hashMapSegment: hashMapSegment), context: 0x02, iv: iv)
     }

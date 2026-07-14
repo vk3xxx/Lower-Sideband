@@ -43,6 +43,10 @@ public final class SidebandStore {
     public private(set) var iCloudSyncEnabled = false
     public private(set) var iCloudSyncStatus: ICloudSyncStatus = .disabled
     public private(set) var lastICloudSync: Date?
+    public private(set) var voiceCall: VoiceCall?
+    public private(set) var voiceCallHistory: [VoiceCall] = []
+    public private(set) var voiceTrustedOnly: Bool
+    public private(set) var preferredVoiceProfile: LXSTVoice.Profile
     public var networkHost: String
     public var networkIPv6Host: String
     public var networkInternetHost: String
@@ -121,6 +125,12 @@ public final class SidebandStore {
     private var receivedLXMFIDs: Set<String> = []
     private var inboundRemoteIdentities: [String: ReticulumIdentity] = [:]
     private var inboundLinkIDs: Set<String> = []
+    private var voiceLinkIDs: Set<String> = []
+    private var pendingVoiceConversations: [String: UUID] = [:]
+    private var pendingVoicePublicKeys: [String: Data] = [:]
+    private var activeVoiceLinkID: String?
+    private var voiceCallTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private var voiceFrameHandler: ((Data) -> Void)?
     private var propagationSyncTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var attemptedGatewayIDs: Set<String> = []
@@ -174,6 +184,8 @@ public final class SidebandStore {
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
         propagationNodeIsAutomatic = UserDefaults.standard.object(forKey: "lxmfPropagationNodeAutomatic") as? Bool ?? true
         localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Sideband Swift"
+        voiceTrustedOnly = UserDefaults.standard.bool(forKey: "lxstVoiceTrustedOnly")
+        preferredVoiceProfile = LXSTVoice.Profile(rawValue: UInt64(UserDefaults.standard.integer(forKey: "lxstVoiceProfile"))) ?? .mediumQuality
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
         preferredInternetGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredInternetGatewayID")
@@ -190,6 +202,96 @@ public final class SidebandStore {
 
     public var selectedConversation: Conversation? {
         conversations.first { $0.id == selectedConversationID }
+    }
+
+    public var localVoiceHash: String { LXSTVoice.destinationHash(for: messagingIdentity).hex }
+
+    public func setVoiceTrustedOnly(_ enabled: Bool) {
+        voiceTrustedOnly = enabled
+        UserDefaults.standard.set(enabled, forKey: "lxstVoiceTrustedOnly")
+    }
+
+    public func setPreferredVoiceProfile(_ profile: LXSTVoice.Profile) {
+        guard profile.isLocallySupported else { return }
+        preferredVoiceProfile = profile
+        UserDefaults.standard.set(Int(profile.rawValue), forKey: "lxstVoiceProfile")
+    }
+
+    public func setVoiceFrameHandler(_ handler: ((Data) -> Void)?) { voiceFrameHandler = handler }
+
+    public func startVoiceCall(conversationID: UUID) async {
+        guard voiceCall == nil,
+              let conversation = conversations.first(where: { $0.id == conversationID }),
+              !conversation.isBlocked,
+              let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash }),
+              let publicKey = discovery.publicKey,
+              let remoteIdentity = try? ReticulumIdentity(publicKey: publicKey)
+        else {
+            lastError = voiceCall == nil ? "A validated identity announce is required before calling this contact." : "Another voice call is already active."
+            return
+        }
+        let call = VoiceCall(conversationID: conversationID, direction: .outgoing, state: .findingRoute, profile: preferredVoiceProfile)
+        voiceCall = call
+        let voiceDestination = LXSTVoice.destinationHash(for: remoteIdentity)
+        if !hasPath(to: voiceDestination.hex) {
+            await requestPath(to: voiceDestination.hex)
+            let deadline = ContinuousClock.now + .seconds(10)
+            while !hasPath(to: voiceDestination.hex), ContinuousClock.now < deadline, voiceCall?.id == call.id {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
+        guard voiceCall?.id == call.id else { return }
+        guard hasPath(to: voiceDestination.hex), networkState == .ready else {
+            finishVoiceCall(failure: "No route to the contact's LXST voice service.")
+            return
+        }
+        do {
+            voiceCall?.state = .connecting
+            let request = try ReticulumLinkRequest(destinationHash: voiceDestination)
+            let linkID = request.linkID.hex
+            pendingLinks[linkID] = request
+            pendingVoiceConversations[linkID] = conversationID
+            pendingVoicePublicKeys[linkID] = publicKey
+            pendingLinkTimeoutTokens[linkID] = UUID()
+            try await transmitDestinationPacket(request.rawPacket, destinationHash: voiceDestination)
+            scheduleVoiceTimeout(callID: call.id, seconds: 70)
+        } catch {
+            finishVoiceCall(failure: "Could not establish the encrypted voice link.")
+        }
+    }
+
+    public func answerVoiceCall() async {
+        guard var call = voiceCall, call.direction == .incoming, call.state == .incoming,
+              let linkID = activeVoiceLinkID, let session = activeLinks[linkID] else { return }
+        call.state = .connecting
+        voiceCall = call
+        do {
+            try await sendVoiceSignal(.connecting, on: session)
+            call.state = .active
+            call.connectedAt = .now
+            voiceCall = call
+            try await sendVoiceSignal(.established, on: session)
+        } catch { finishVoiceCall(failure: "Voice call setup failed.") }
+    }
+
+    public func declineVoiceCall() async {
+        guard let linkID = activeVoiceLinkID, let session = activeLinks[linkID] else { finishVoiceCall(); return }
+        try? await sendVoiceSignal(.rejected, on: session)
+        await closeVoiceLink(session)
+        finishVoiceCall()
+    }
+
+    public func hangUpVoiceCall() async {
+        guard voiceCall != nil else { return }
+        voiceCall?.state = .ending
+        if let linkID = activeVoiceLinkID, let session = activeLinks[linkID] { await closeVoiceLink(session) }
+        finishVoiceCall()
+    }
+
+    public func sendVoiceFrame(_ opusPayload: Data) async {
+        guard voiceCall?.state == .active, !opusPayload.isEmpty,
+              let linkID = activeVoiceLinkID, let session = activeLinks[linkID] else { return }
+        try? await transmitRawPacket(try session.encryptedPacket(LXSTVoice.frame(codec: .opus, payload: opusPayload)))
     }
 
     public var automaticBackupURL: URL {
@@ -720,7 +822,7 @@ public final class SidebandStore {
         }
         iCloudSyncStatus = .syncing
         do {
-            let local = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts)
+            let local = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory)
             let localData = try JSONEncoder.sideband.encode(local)
             var merged: AppSnapshot
             if let payload = try await cloudSync.fetchSnapshot() {
@@ -910,7 +1012,7 @@ public final class SidebandStore {
     }
 
     public func exportSnapshotData() throws -> Data {
-        let snapshot = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts)
+        let snapshot = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory)
         let data = try JSONEncoder.sideband.encode(snapshot)
         let validated = try JSONDecoder.sideband.decode(AppSnapshot.self, from: data)
         guard validated.schemaVersion <= AppSnapshot.currentSchemaVersion else { throw SnapshotError.unsupportedVersion }
@@ -939,6 +1041,7 @@ public final class SidebandStore {
         messages = snapshot.messages
         sortConversations()
         discoveries = snapshot.discoveries
+        voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
         drafts = snapshot.drafts
         selectedConversationID = conversations.first?.id
         visibleConversationID = nil
@@ -1145,6 +1248,7 @@ public final class SidebandStore {
     }
 
     private func resetLinkState() {
+        if voiceCall != nil { finishVoiceCall(failure: "The network connection ended.") }
         pendingLinks.removeAll()
         pendingLinkTimeoutTokens.removeAll()
         activeLinks.removeAll()
@@ -1154,6 +1258,10 @@ public final class SidebandStore {
         activeLinkHashes.removeAll()
         inboundLinkIDs.removeAll()
         inboundRemoteIdentities.removeAll()
+        voiceLinkIDs.removeAll()
+        pendingVoiceConversations.removeAll()
+        pendingVoicePublicKeys.removeAll()
+        activeVoiceLinkID = nil
         pendingPropagationRequests.removeAll()
         UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
         UserDefaults.standard.removeObject(forKey: "reticulumLastActiveLink")
@@ -1380,6 +1488,8 @@ public final class SidebandStore {
         do {
             let packet = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: "lxmf.delivery", appData: localAnnounceAppData)
             try await transmitRawPacket(packet)
+            let voicePacket = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: LXSTVoice.destinationName)
+            try await transmitRawPacket(voicePacket)
             deliveryAnnouncesSent += 1
         } catch {
             // Connection transitions are retried by the engine. An announce is
@@ -1397,8 +1507,9 @@ public final class SidebandStore {
             receiveResourceProof(packet)
             return
         }
-        if packet.packetType == .linkRequest, packet.destinationHash.hex == localDeliveryHash {
-            acceptIncomingLink(packet, interfaceID: interfaceID)
+        if packet.packetType == .linkRequest,
+           packet.destinationHash.hex == localDeliveryHash || packet.destinationHash.hex == localVoiceHash {
+            acceptIncomingLink(packet, interfaceID: interfaceID, isVoice: packet.destinationHash.hex == localVoiceHash)
             return
         }
         if packet.packetType == .proof {
@@ -1505,7 +1616,7 @@ public final class SidebandStore {
 
     private func trimDiscoveryCache(limit: Int = 500) {
         guard discoveries.count > limit else { return }
-        let protected = Set(conversations.map(\.destinationHash)).union([localDeliveryHash, propagationNodeHash])
+        let protected = Set(conversations.map(\.destinationHash)).union([localDeliveryHash, localVoiceHash, propagationNodeHash])
         while discoveries.count > limit,
               let index = discoveries.lastIndex(where: { !protected.contains($0.destinationHash) }) {
             discoveries.remove(at: index)
@@ -1554,8 +1665,7 @@ public final class SidebandStore {
     private func receiveLinkProof(_ packet: ReticulumPacket, interfaceID: String?) {
         let linkID = packet.destinationHash.hex
         guard let request = pendingLinks[linkID],
-              let discovery = discoveries.first(where: { $0.destinationHash == request.destinationHash.hex }),
-              let publicKey = discovery.publicKey,
+              let publicKey = pendingVoicePublicKeys[linkID] ?? discoveries.first(where: { $0.destinationHash == request.destinationHash.hex })?.publicKey,
               let session = try? request.validateProof(packet, destinationPublicKey: publicKey) else { return }
         activeLinks[linkID] = session
         if let interfaceID { linkInterfaceIDs[linkID] = interfaceID }
@@ -1567,6 +1677,12 @@ public final class SidebandStore {
         activeLinkHashes.insert(destination)
         UserDefaults.standard.set(linkID, forKey: "reticulumLastActiveLink")
         UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
+        if pendingVoiceConversations[linkID] != nil {
+            voiceLinkIDs.insert(linkID)
+            activeVoiceLinkID = linkID
+            pendingVoicePublicKeys.removeValue(forKey: linkID)
+            return
+        }
         if destination == propagationNodeHash { Task { await activateAndRequestPropagation(on: session) } }
         else if let conversation = conversations.first(where: { $0.destinationHash == destination }) {
             Task { await activateDirectLink(session, conversationID: conversation.id) }
@@ -1574,7 +1690,8 @@ public final class SidebandStore {
     }
 
     private func receiveLinkPacket(_ packet: ReticulumPacket) {
-        guard let session = activeLinks[packet.destinationHash.hex] else { return }
+        let linkID = packet.destinationHash.hex
+        guard let session = activeLinks[linkID] else { return }
         if packet.context == 0xfa {
             keepalivesReceived += 1
             return
@@ -1585,6 +1702,12 @@ public final class SidebandStore {
         }
         if let plaintext = try? session.decrypt(packet) {
             encryptedPacketsReceived += 1
+            if packet.context == 0xfc {
+                guard plaintext == session.linkID else { return }
+                removeLink(linkID)
+                if voiceLinkIDs.contains(linkID) || activeVoiceLinkID == linkID { finishVoiceCall() }
+                return
+            }
             if packet.context == 0x03 {
                 handleResourceRequest(plaintext, session: session)
                 return
@@ -1602,6 +1725,7 @@ public final class SidebandStore {
                 return
             }
             if packet.context == 0x00 || packet.context == 0xfb || packet.context == 0xfe {
+                if voiceLinkIDs.contains(linkID), handleVoiceLinkPacket(packet, plaintext: plaintext, session: session) { return }
                 handleInboundLinkPacket(packet, plaintext: plaintext, session: session)
                 return
             }
@@ -1614,13 +1738,26 @@ public final class SidebandStore {
         }
     }
 
-    private func acceptIncomingLink(_ packet: ReticulumPacket, interfaceID: String?) {
+    private func acceptIncomingLink(_ packet: ReticulumPacket, interfaceID: String?, isVoice: Bool = false) {
         guard let incoming = try? ReticulumIncomingLink(request: packet, localIdentity: messagingIdentity) else { return }
-        activeLinks[incoming.session.linkID.hex] = incoming.session
-        if let interfaceID { linkInterfaceIDs[incoming.session.linkID.hex] = interfaceID }
-        inboundLinkIDs.insert(incoming.session.linkID.hex)
+        let linkID = incoming.session.linkID.hex
+        activeLinks[linkID] = incoming.session
+        if let interfaceID { linkInterfaceIDs[linkID] = interfaceID }
+        inboundLinkIDs.insert(linkID)
+        if isVoice { voiceLinkIDs.insert(linkID) }
         Task {
-            do { try await transmitRawPacket(incoming.proofPacket); inboundLinksAccepted += 1 }
+            do {
+                try await transmitRawPacket(incoming.proofPacket)
+                inboundLinksAccepted += 1
+                if isVoice {
+                    if voiceCall != nil {
+                        try await sendVoiceSignal(.busy, on: incoming.session)
+                        await closeVoiceLink(incoming.session)
+                    } else {
+                        try await sendVoiceSignal(.available, on: incoming.session)
+                    }
+                }
+            }
             catch { lastError = "Incoming link proof failed: \(error.localizedDescription)" }
         }
     }
@@ -1650,6 +1787,152 @@ public final class SidebandStore {
                 try await transmitRawPacket(proof)
             } catch { lastError = "Delivery proof failed: \(error.localizedDescription)" }
         }
+    }
+
+    /// Handles LXST telephony payloads before the normal LXMF link decoder.
+    /// Returns true when the packet belongs to the voice primitive.
+    private func handleVoiceLinkPacket(_ packet: ReticulumPacket, plaintext: Data, session: ReticulumLinkSession) -> Bool {
+        let linkID = session.linkID.hex
+        if packet.context == 0xfe { return true }
+        if packet.context == 0xfb {
+            guard plaintext.count == 128 else { return true }
+            let publicKey = Data(plaintext.prefix(64))
+            let signature = Data(plaintext.suffix(64))
+            guard let identity = try? ReticulumIdentity(publicKey: publicKey),
+                  identity.validate(signature: signature, message: session.linkID + publicKey) else { return true }
+            inboundRemoteIdentities[linkID] = identity
+            let deliveryNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+            let deliveryHash = ReticulumIdentity.truncatedHash(deliveryNameHash + identity.hash).hex
+            if !conversations.contains(where: { $0.destinationHash == deliveryHash }) {
+                let name = discoveries.first(where: { $0.destinationHash == deliveryHash })?.announcedDisplayName ?? "Caller \(deliveryHash.prefix(8))"
+                _ = addConversation(destinationHash: deliveryHash, displayName: name, select: false)
+            }
+            guard let conversation = conversations.first(where: { $0.destinationHash == deliveryHash }),
+                  !conversation.isBlocked,
+                  !voiceTrustedOnly || conversation.isTrusted else {
+                Task { try? await sendVoiceSignal(.rejected, on: session); await closeVoiceLink(session) }
+                return true
+            }
+            if voiceCall != nil {
+                Task { try? await sendVoiceSignal(.busy, on: session); await closeVoiceLink(session) }
+                return true
+            }
+            activeVoiceLinkID = linkID
+            var call = VoiceCall(conversationID: conversation.id, direction: .incoming, state: .incoming, profile: preferredVoiceProfile)
+            call.state = .incoming
+            voiceCall = call
+            scheduleVoiceTimeout(callID: call.id, seconds: 60)
+            Task {
+                try? await sendVoiceSignal(.ringing, on: session)
+                if !isApplicationActive { await notifications.notifyIncomingCall(conversationID: conversation.id, callerName: conversation.displayName) }
+            }
+            return true
+        }
+        guard packet.context == 0x00, let event = try? LXSTVoice.decode(plaintext) else { return packet.context == 0x00 }
+        switch event {
+        case .signals(let signals):
+            for signal in signals { handleVoiceSignal(signal, session: session) }
+        case .frame(let codec, let payload):
+            if codec == .opus, voiceCall?.state == .active { voiceFrameHandler?(payload) }
+        }
+        return true
+    }
+
+    private func handleVoiceSignal(_ value: UInt64, session: ReticulumLinkSession) {
+        let linkID = session.linkID.hex
+        if value >= 0xff, let profile = LXSTVoice.Profile(rawValue: value - 0xff), profile.isLocallySupported {
+            voiceCall?.profile = profile
+            return
+        }
+        guard let signal = LXSTVoice.Signal(rawValue: value) else { return }
+        switch signal {
+        case .available:
+            guard voiceCall?.direction == .outgoing, pendingVoiceConversations[linkID] != nil else { return }
+            Task {
+                do {
+                    let signedData = session.linkID + messagingIdentity.publicKey
+                    let identifyData = messagingIdentity.publicKey + (try messagingIdentity.sign(signedData))
+                    try await transmitRawPacket(try session.encryptedPacket(identifyData, context: 0xfb))
+                    try await transmitRawPacket(try session.encryptedPacket(LXSTVoice.preferredProfile(voiceCall?.profile ?? preferredVoiceProfile)))
+                } catch { finishVoiceCall(failure: "Voice identity exchange failed.") }
+            }
+        case .ringing:
+            if voiceCall?.direction == .outgoing { voiceCall?.state = .ringing }
+        case .connecting:
+            guard var call = voiceCall, call.direction == .outgoing else { return }
+            call.state = .active
+            call.connectedAt = .now
+            voiceCall = call
+            Task { try? await sendVoiceSignal(.established, on: session) }
+        case .established:
+            if var call = voiceCall {
+                call.state = .active
+                call.connectedAt = call.connectedAt ?? .now
+                voiceCall = call
+            }
+        case .busy:
+            finishVoiceCall(failure: "The contact is already on another call.")
+        case .rejected:
+            finishVoiceCall(failure: "The contact declined the call.")
+        case .calling:
+            break
+        }
+    }
+
+    private func sendVoiceSignal(_ signal: LXSTVoice.Signal, on session: ReticulumLinkSession) async throws {
+        try await transmitRawPacket(try session.encryptedPacket(LXSTVoice.signalling([signal.rawValue])))
+    }
+
+    private func closeVoiceLink(_ session: ReticulumLinkSession) async {
+        try? await transmitRawPacket(try session.closePacket())
+        removeLink(session.linkID.hex)
+    }
+
+    private func removeLink(_ linkID: String) {
+        let remote = linkRemoteDestinations.removeValue(forKey: linkID)
+        activeLinks.removeValue(forKey: linkID)
+        inboundLinkIDs.remove(linkID)
+        inboundRemoteIdentities.removeValue(forKey: linkID)
+        linkInterfaceIDs.removeValue(forKey: linkID)
+        voiceLinkIDs.remove(linkID)
+        pendingVoiceConversations.removeValue(forKey: linkID)
+        pendingVoicePublicKeys.removeValue(forKey: linkID)
+        if activeVoiceLinkID == linkID { activeVoiceLinkID = nil }
+        if let remote { activeLinkHashes.remove(remote) }
+    }
+
+    private func scheduleVoiceTimeout(callID: UUID, seconds: TimeInterval) {
+        voiceCallTimeoutTask?.cancel()
+        voiceCallTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, self?.voiceCall?.id == callID else { return }
+            if let linkID = self?.activeVoiceLinkID, let session = self?.activeLinks[linkID] {
+                await self?.closeVoiceLink(session)
+            }
+            self?.finishVoiceCall(failure: "The voice call timed out.")
+        }
+    }
+
+    private func finishVoiceCall(failure: String? = nil) {
+        voiceCallTimeoutTask?.cancel()
+        voiceCallTimeoutTask = nil
+        guard var call = voiceCall else { return }
+        call.state = failure == nil ? .idle : .failed
+        call.endedAt = .now
+        call.failureReason = failure
+        voiceCallHistory.insert(call, at: 0)
+        voiceCallHistory = Array(voiceCallHistory.prefix(100))
+        voiceCall = nil
+        if let linkID = activeVoiceLinkID { removeLink(linkID) }
+        for linkID in pendingVoiceConversations.keys {
+            pendingLinks.removeValue(forKey: linkID)
+            pendingLinkTimeoutTokens.removeValue(forKey: linkID)
+            pendingVoicePublicKeys.removeValue(forKey: linkID)
+        }
+        pendingVoiceConversations.removeAll()
+        activeVoiceLinkID = nil
+        if let failure { lastError = failure }
+        save()
     }
 
     private func bind(session: ReticulumLinkSession, to remoteIdentity: ReticulumIdentity) {
@@ -2293,6 +2576,7 @@ public final class SidebandStore {
             }
         }
         discoveries = snapshot.discoveries
+        voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
         let conversationIDs = Set(conversations.map(\.id))
         drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }
         selectedConversationID = conversations.first?.id
@@ -2334,7 +2618,7 @@ public final class SidebandStore {
                       (try? validatedSnapshot(from: existingPlaintext)) != nil {
                 try existingData.write(to: automaticBackupURL, options: .atomic)
             }
-            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts))
+            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory))
             let encrypted = try localDataCipher.seal(plaintext, context: "application-snapshot-v1")
             try encrypted.write(to: persistenceURL, options: .atomic)
             lastValidatedPersistenceData = encrypted

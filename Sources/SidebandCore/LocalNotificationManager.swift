@@ -98,6 +98,24 @@ public final class LocalNotificationManager {
         }
     }
 
+    public func notifyIncomingCall(conversationID: UUID, callerName: String) async {
+        guard isEnabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = showPreviews ? callerName : "Incoming Sideband call"
+        content.body = showPreviews ? "Incoming encrypted voice call" : "Open Sideband to answer."
+        content.sound = playSounds ? .default : nil
+        content.categoryIdentifier = Self.messageCategoryIdentifier
+        content.threadIdentifier = conversationID.uuidString
+        content.targetContentIdentifier = conversationID.uuidString
+        content.userInfo = [Self.conversationIDUserInfoKey: conversationID.uuidString]
+        let request = UNNotificationRequest(identifier: "voice-call-\(UUID().uuidString)", content: content, trigger: nil)
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            scheduledCount += 1
+            lastError = nil
+        } catch { lastError = error.localizedDescription }
+    }
+
     public func removeNotifications(for conversationID: UUID) async {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let center = UNUserNotificationCenter.current()
