@@ -91,6 +91,42 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(decoded == telemetry)
 }
 
+@Test func telemetryHistorySummarizesTrackAndExportsInteroperableFiles() throws {
+    let conversationID = UUID()
+    let first = SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_000), location: .init(latitude: -37.8136, longitude: 144.9631, altitude: 12, accuracy: 5, updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
+    let second = SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_060), location: .init(latitude: -37.8146, longitude: 144.9641, altitude: 13, speed: 5, accuracy: 7, updatedAt: Date(timeIntervalSince1970: 1_700_000_060)), battery: .init(chargePercent: 50, isCharging: false))
+    let messages = [
+        Message(conversationID: conversationID, body: "one", direction: .incoming, state: .delivered, telemetry: first),
+        Message(conversationID: conversationID, body: "two", direction: .outgoing, state: .delivered, telemetry: second)
+    ]
+    let summary = SidebandTelemetryHistory.summary(messages: messages)
+    #expect(summary.sampleCount == 2)
+    #expect(summary.locationCount == 2)
+    #expect(summary.duration == 60)
+    #expect(summary.distanceMeters > 100 && summary.distanceMeters < 200)
+
+    let csv = try #require(SidebandTelemetryHistory.export(messages: messages, contactName: "Test & Contact", format: .csv))
+    let csvText = String(decoding: csv, as: UTF8.self)
+    #expect(csvText.contains("timestamp,direction,latitude"))
+    #expect(csvText.contains("outgoing,-37.8146,144.9641"))
+
+    let gpx = try #require(SidebandTelemetryHistory.export(messages: messages, contactName: "Test & Contact", format: .gpx))
+    let gpxText = String(decoding: gpx, as: UTF8.self)
+    #expect(gpxText.contains("<gpx version=\"1.1\""))
+    #expect(gpxText.contains("Test &amp; Contact"))
+    #expect(gpxText.components(separatedBy: "<trkpt ").count == 3)
+}
+
+@Test func telemetryValidationRejectsUnsafeValuesAndReportsFreshness() {
+    let current = SidebandTelemetry(capturedAt: .now, location: .init(latitude: -37.8, longitude: 145, updatedAt: .now), battery: .init(chargePercent: 40, isCharging: true))
+    #expect(current.validationError == nil)
+    #expect(current.isFresh())
+    let invalid = SidebandTelemetry(capturedAt: .now, location: .init(latitude: 120, longitude: 145), battery: .init(chargePercent: 140, isCharging: false))
+    #expect(invalid.validationError != nil)
+    let staleDate = Date(timeIntervalSinceNow: -3_600)
+    #expect(!SidebandTelemetry(capturedAt: staleDate, location: .init(latitude: 0, longitude: 0, updatedAt: staleDate)).isFresh())
+}
+
 @Test func sidebandContactLinksRoundTripNameAndDestination() throws {
     let hash = "0123456789abcdef0123456789abcdef"
     let contact = try #require(SidebandContactLink(destinationHash: hash, displayName: "Mesh Peer"))

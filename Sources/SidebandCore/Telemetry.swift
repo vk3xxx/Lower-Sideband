@@ -43,6 +43,32 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
         self.battery = battery
     }
 
+    public var mostRecentSensorDate: Date { max(capturedAt, location?.updatedAt ?? capturedAt) }
+
+    public func isFresh(relativeTo date: Date = .now, maximumAge: TimeInterval = 15 * 60) -> Bool {
+        let age = date.timeIntervalSince(mostRecentSensorDate)
+        return age >= -5 * 60 && age <= maximumAge
+    }
+
+    public var validationError: String? {
+        let supportedDates = Date(timeIntervalSince1970: 946_684_800)...Date(timeIntervalSince1970: 4_102_444_800)
+        guard supportedDates.contains(capturedAt) else { return "Telemetry timestamp is outside the supported range." }
+        if let location {
+            guard location.latitude.isFinite, location.longitude.isFinite,
+                  (-90...90).contains(location.latitude), (-180...180).contains(location.longitude) else { return "Telemetry coordinates are invalid." }
+            guard location.altitude.isFinite, (-20_000...100_000).contains(location.altitude),
+                  location.speed.isFinite, (0...2_000).contains(location.speed),
+                  location.bearing.isFinite, (-360...360).contains(location.bearing),
+                  location.accuracy.isFinite, (0...100_000).contains(location.accuracy),
+                  supportedDates.contains(location.updatedAt) else { return "Telemetry location metadata is invalid." }
+        }
+        if let battery {
+            guard battery.chargePercent.isFinite, (0...100).contains(battery.chargePercent),
+                  battery.temperature.map({ $0.isFinite && (-100...200).contains($0) }) ?? true else { return "Telemetry battery data is invalid." }
+        }
+        return nil
+    }
+
     public func packed() -> Data {
         var sensors: [(UInt64, Data)] = [(SensorID.time, MessagePack.unsigned(UInt64(max(0, Int64(capturedAt.timeIntervalSince1970)))))]
         if let location {
@@ -89,6 +115,7 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
         capturedAt = timestamp ?? decodedLocation?.updatedAt ?? .distantPast
         location = decodedLocation
         battery = decodedBattery
+        guard validationError == nil else { throw DecodeError.invalidPayload }
     }
 
     private enum SensorID {
@@ -158,6 +185,87 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
     }
 
     public enum DecodeError: Error { case invalidPayload, invalidTime, invalidLocation, invalidBattery }
+}
+
+public enum SidebandTelemetryExportFormat: String, CaseIterable, Sendable {
+    case csv
+    case gpx
+}
+
+public struct SidebandTelemetryHistorySummary: Equatable, Sendable {
+    public let sampleCount: Int
+    public let locationCount: Int
+    public let firstAt: Date?
+    public let lastAt: Date?
+    public let distanceMeters: Double
+
+    public var duration: TimeInterval { max(0, (lastAt ?? .distantPast).timeIntervalSince(firstAt ?? .distantPast)) }
+}
+
+public enum SidebandTelemetryHistory {
+    public static func summary(messages: [Message]) -> SidebandTelemetryHistorySummary {
+        let samples = messages.compactMap(\.telemetry).sorted { $0.mostRecentSensorDate < $1.mostRecentSensorDate }
+        let locations = samples.compactMap(\.location)
+        let distance = zip(locations, locations.dropFirst()).reduce(0.0) { total, pair in
+            total + distanceMeters(from: pair.0, to: pair.1)
+        }
+        return SidebandTelemetryHistorySummary(
+            sampleCount: samples.count,
+            locationCount: locations.count,
+            firstAt: samples.first?.mostRecentSensorDate,
+            lastAt: samples.last?.mostRecentSensorDate,
+            distanceMeters: distance
+        )
+    }
+
+    public static func export(messages: [Message], contactName: String, format: SidebandTelemetryExportFormat) -> Data? {
+        let records = messages.compactMap { message -> (Message, SidebandTelemetry.Location, SidebandTelemetry.Battery?)? in
+            guard let telemetry = message.telemetry, let location = telemetry.location, telemetry.validationError == nil else { return nil }
+            return (message, location, telemetry.battery)
+        }.sorted { $0.1.updatedAt < $1.1.updatedAt }
+        guard !records.isEmpty, records.count <= 10_000 else { return nil }
+        switch format {
+        case .csv:
+            var lines = ["timestamp,direction,latitude,longitude,altitude_m,speed_kmh,bearing_deg,accuracy_m,battery_percent,charging"]
+            lines += records.map { message, location, battery in
+                [
+                    iso8601(location.updatedAt), message.direction.rawValue,
+                    String(location.latitude), String(location.longitude), String(location.altitude),
+                    String(location.speed), String(location.bearing), String(location.accuracy),
+                    battery.map { String($0.chargePercent) } ?? "", battery.map { String($0.isCharging) } ?? ""
+                ].joined(separator: ",")
+            }
+            return Data((lines.joined(separator: "\n") + "\n").utf8)
+        case .gpx:
+            let trackPoints = records.map { _, location, _ in
+                "<trkpt lat=\"\(location.latitude)\" lon=\"\(location.longitude)\"><ele>\(location.altitude)</ele><time>\(iso8601(location.updatedAt))</time><hdop>\(location.accuracy)</hdop></trkpt>"
+            }.joined()
+            let name = xmlEscaped(String(contactName.prefix(80)))
+            return Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"Sideband Swift\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(name)</name><trkseg>\(trackPoints)</trkseg></trk></gpx>".utf8)
+        }
+    }
+
+    private static func distanceMeters(from lhs: SidebandTelemetry.Location, to rhs: SidebandTelemetry.Location) -> Double {
+        let radius = 6_371_000.0
+        let latitudeDelta = (rhs.latitude - lhs.latitude) * .pi / 180
+        let longitudeDelta = (rhs.longitude - lhs.longitude) * .pi / 180
+        let lhsLatitude = lhs.latitude * .pi / 180
+        let rhsLatitude = rhs.latitude * .pi / 180
+        let a = pow(sin(latitudeDelta / 2), 2) + cos(lhsLatitude) * cos(rhsLatitude) * pow(sin(longitudeDelta / 2), 2)
+        return radius * 2 * atan2(sqrt(a), sqrt(max(0, 1 - a)))
+    }
+
+    private static func iso8601(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
+    }
+
+    private static func xmlEscaped(_ value: String) -> String {
+        value.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+    }
 }
 
 private extension MessagePackValue {

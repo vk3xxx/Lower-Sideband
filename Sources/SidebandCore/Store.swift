@@ -847,6 +847,10 @@ public final class SidebandStore {
             lastError = "Send telemetry separately from file attachments."
             return
         }
+        if let telemetryError = telemetry?.validationError {
+            lastError = telemetryError
+            return
+        }
         guard validateAttachmentTotal(attachments) else { return }
         let message = Message(
             conversationID: conversation.id, body: body, direction: .outgoing, state: .queued,
@@ -1488,6 +1492,7 @@ public final class SidebandStore {
               Set(destinations).count == destinations.count,
               destinations.allSatisfy(DestinationHash.isValid),
               snapshot.messages.allSatisfy({ conversationIDs.contains($0.conversationID) }),
+              snapshot.messages.compactMap(\.telemetry).allSatisfy({ $0.validationError == nil }),
               snapshot.drafts.keys.allSatisfy({ conversationIDs.contains($0) }),
               snapshot.pluginAuditEvents.count <= 200,
               snapshot.pluginAuditEvents.allSatisfy({ event in

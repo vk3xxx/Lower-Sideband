@@ -1,6 +1,7 @@
 import MapKit
 import SidebandCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TelemetryMessageCard: View {
     let telemetry: SidebandTelemetry
@@ -25,6 +26,9 @@ struct TelemetryMessageCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            Label(telemetry.isFresh() ? "Current" : "Historical · \(telemetry.mostRecentSensorDate.formatted(.relative(presentation: .named)))", systemImage: telemetry.isFresh() ? "checkmark.circle.fill" : "clock")
+                .font(.caption2)
+                .foregroundStyle(telemetry.isFresh() ? Color.green : Color.secondary)
         }
         .padding(8)
         .frame(maxWidth: 280, alignment: .leading)
@@ -40,13 +44,32 @@ private struct TelemetryMapPoint: Identifiable {
     let outgoing: Bool
 }
 
+private struct TelemetryExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.commaSeparatedText, .xml] }
+    let data: Data
+
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
+}
+
 struct ConversationTelemetryMapView: View {
     let conversationName: String
     private let points: [TelemetryMapPoint]
+    private let messages: [Message]
+    private let summary: SidebandTelemetryHistorySummary
     @Environment(\.dismiss) private var dismiss
+    @State private var exportDocument: TelemetryExportDocument?
+    @State private var exportType: UTType = .commaSeparatedText
+    @State private var exportExtension = "csv"
+    @State private var showingExporter = false
 
     init(conversationName: String, messages: [Message]) {
         self.conversationName = conversationName
+        self.messages = messages
+        summary = SidebandTelemetryHistory.summary(messages: messages)
         points = messages.compactMap { message in
             guard let location = message.telemetry?.location else { return nil }
             return TelemetryMapPoint(
@@ -61,6 +84,10 @@ struct ConversationTelemetryMapView: View {
     var body: some View {
         NavigationStack {
             Map(initialPosition: initialPosition) {
+                if points.count > 1 {
+                    MapPolyline(coordinates: points.map(\.coordinate))
+                        .stroke(.blue.opacity(0.7), lineWidth: 3)
+                }
                 ForEach(points) { point in
                     Marker(point.timestamp.formatted(date: .abbreviated, time: .shortened), coordinate: point.coordinate)
                         .tint(point.outgoing ? .blue : .orange)
@@ -72,21 +99,54 @@ struct ConversationTelemetryMapView: View {
                 MapUserLocationButton()
             }
             .overlay(alignment: .bottomLeading) {
-                Text("\(points.count) location \(points.count == 1 ? "update" : "updates") · blue sent, orange received")
-                    .font(.caption)
-                    .padding(8)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding()
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(points.count) location \(points.count == 1 ? "update" : "updates") · blue sent, orange received")
+                    if summary.distanceMeters > 0 {
+                        Text("Track \(Measurement(value: summary.distanceMeters, unit: UnitLength.meters).formatted(.measurement(width: .abbreviated, usage: .road))) · \(summary.duration.formattedDuration)")
+                    }
+                }
+                .font(.caption)
+                .padding(8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+                .padding()
             }
             .navigationTitle("\(conversationName) Telemetry")
-            .toolbar { Button("Done") { dismiss() } }
+            .toolbar {
+                Menu("Export", systemImage: "square.and.arrow.up") {
+                    Button("CSV data") { prepareExport(.csv) }
+                    Button("GPX track") { prepareExport(.gpx) }
+                }
+                Button("Done") { dismiss() }
+            }
         }
         .platformTelemetryMapSize()
+        .fileExporter(isPresented: $showingExporter, document: exportDocument, contentType: exportType, defaultFilename: "Sideband-\(safeFilename).\(exportExtension)") { _ in
+            exportDocument = nil
+        }
     }
 
     private var initialPosition: MapCameraPosition {
         guard let latest = points.last else { return .automatic }
         return .region(MKCoordinateRegion(center: latest.coordinate, latitudinalMeters: 10_000, longitudinalMeters: 10_000))
+    }
+
+
+    private var safeFilename: String {
+        conversationName.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+    }
+
+    private func prepareExport(_ format: SidebandTelemetryExportFormat) {
+        guard let data = SidebandTelemetryHistory.export(messages: messages, contactName: conversationName, format: format) else { return }
+        exportDocument = TelemetryExportDocument(data: data)
+        exportExtension = format.rawValue
+        exportType = format == .csv ? .commaSeparatedText : (UTType(filenameExtension: "gpx") ?? .xml)
+        showingExporter = true
+    }
+}
+
+private extension TimeInterval {
+    var formattedDuration: String {
+        Duration.seconds(self).formatted(.time(pattern: .hourMinuteSecond(padHourToLength: 1)))
     }
 }
 
