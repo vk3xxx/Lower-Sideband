@@ -101,6 +101,12 @@ struct ContentView: View {
                         Picker("Discovery sorting", selection: $discoverySort) {
                             ForEach(DiscoverySort.allCases) { option in Text(option.rawValue).tag(option) }
                         }
+                        Divider()
+                        Menu("Remove stale discoveries") {
+                            Button("Older than 1 day") { pruneDiscoveries(days: 1) }
+                            Button("Older than 7 days") { pruneDiscoveries(days: 7) }
+                            Button("Older than 30 days") { pruneDiscoveries(days: 30) }
+                        }
                     } label: {
                         Label("Sort discoveries", systemImage: "arrow.up.arrow.down")
                     }
@@ -374,7 +380,17 @@ struct ContentView: View {
                 ShareLink(item: contactLink.url) { Label("Share Contact Link", systemImage: "square.and.arrow.up") }
             }
             Button { startConversation(with: discovery) } label: { Label("Start Conversation", systemImage: "message") }
+            if !store.conversations.contains(where: { $0.destinationHash == discovery.destinationHash }) {
+                Button(role: .destructive) { _ = store.forgetDiscovery(discovery.destinationHash) } label: {
+                    Label("Forget Discovery", systemImage: "trash")
+                }
+            }
         }
+    }
+
+    private func pruneDiscoveries(days: Double) {
+        let removed = store.pruneDiscoveries(olderThan: days * 24 * 60 * 60)
+        if removed == 0 { store.lastError = "No unreferenced discoveries were old enough to remove." }
     }
 
     private func startConversation(with discovery: DiscoveredDestination) {

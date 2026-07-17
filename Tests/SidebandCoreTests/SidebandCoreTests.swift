@@ -116,6 +116,26 @@ import Testing
     #expect(store.contactLink(for: try #require(store.selectedConversationID)) == contact)
 }
 
+@MainActor @Test func discoveryCleanupProtectsConversationDestinations() async throws {
+    let now = Date.now.addingTimeInterval(8 * 24 * 60 * 60)
+    let firstIdentity = ReticulumIdentity()
+    let secondIdentity = ReticulumIdentity()
+    let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+    let protectedHash = ReticulumIdentity.truncatedHash(nameHash + firstIdentity.hash).hex
+    let removableHash = ReticulumIdentity.truncatedHash(nameHash + secondIdentity.hash).hex
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    let protectedLink = try #require(SidebandContactLink(destinationHash: protectedHash, publicKey: firstIdentity.publicKey))
+    let removableLink = try #require(SidebandContactLink(destinationHash: removableHash, publicKey: secondIdentity.publicKey))
+    #expect(store.openContactLink(protectedLink.url))
+    #expect(store.openContactLink(removableLink.url))
+    await store.deleteConversation(try #require(store.selectedConversationID))
+    #expect(store.pruneDiscoveries(olderThan: 7 * 24 * 60 * 60, now: now) == 1)
+    #expect(store.discoveries.contains(where: { $0.destinationHash == protectedHash }))
+    #expect(!store.discoveries.contains(where: { $0.destinationHash == removableHash }))
+    #expect(!store.forgetDiscovery(protectedHash))
+}
+
 @MainActor @Test func localDisplayNameIsNormalizedAndPersisted() {
     let defaults = UserDefaults.standard
     let previous = defaults.string(forKey: "lxmfLocalDisplayName")

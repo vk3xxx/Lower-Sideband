@@ -447,6 +447,30 @@ public final class SidebandStore {
     }
 
     @discardableResult
+    public func forgetDiscovery(_ destinationHash: String) -> Bool {
+        let normalized = destinationHash.lowercased()
+        guard !conversations.contains(where: { $0.destinationHash == normalized }),
+              ![localDeliveryHash, localVoiceHash, propagationNodeHash].contains(normalized),
+              let index = discoveries.firstIndex(where: { $0.destinationHash == normalized }) else { return false }
+        discoveries.remove(at: index)
+        save()
+        return true
+    }
+
+    @discardableResult
+    public func pruneDiscoveries(olderThan age: TimeInterval, now: Date = .now) -> Int {
+        guard age >= 0 else { return 0 }
+        let protected = Set(conversations.map(\.destinationHash)).union([localDeliveryHash, localVoiceHash, propagationNodeHash])
+        let before = discoveries.count
+        discoveries.removeAll { discovery in
+            !protected.contains(discovery.destinationHash) && now.timeIntervalSince(discovery.lastSeen) > age
+        }
+        let removed = before - discoveries.count
+        if removed > 0 { save() }
+        return removed
+    }
+
+    @discardableResult
     public func openContactLink(_ url: URL) -> Bool {
         guard let contact = SidebandContactLink(url: url) else {
             lastError = "This is not a valid Sideband contact link."
