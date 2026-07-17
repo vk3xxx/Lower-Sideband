@@ -171,6 +171,8 @@ struct ContentView: View {
                     } label: { Label("Contacts", systemImage: "person.2") }
                     .help("Import or export contacts")
                     Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
+                        .keyboardShortcut("n", modifiers: .command)
+                        .accessibilityIdentifier("new-conversation")
                 }
             } detail: {
                 if let conversation = store.selectedConversation {
@@ -485,6 +487,8 @@ struct ContentView: View {
                     .accessibilityLabel("\(conversation.unreadCount) unread messages")
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conversation-\(conversation.id.uuidString)")
     }
 
     @ViewBuilder private func discoveryRow(_ discovery: DiscoveredDestination) -> some View {
@@ -1304,6 +1308,7 @@ private struct NetworkView: View {
 }
 
 private struct ConversationView: View {
+    private enum FocusTarget: Hashable { case search, composer }
     private enum SearchScope: String, CaseIterable { case all = "All", text = "Text", attachments = "Files", telemetry = "Telemetry", reactions = "Reactions" }
     private struct ReactionSummary: Identifiable {
         let content: String
@@ -1335,6 +1340,7 @@ private struct ConversationView: View {
     @State private var inspectedMessage: Message?
     @State private var messageToForward: Message?
     @State private var isVisible = false
+    @FocusState private var focusedField: FocusTarget?
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -1366,6 +1372,8 @@ private struct ConversationView: View {
                 TextField("Search messages", text: $messageSearch)
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 220)
+                    .focused($focusedField, equals: .search)
+                    .accessibilityIdentifier("message-search")
                 if !messageSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Picker("Search scope", selection: $messageSearchScope) {
                         ForEach(SearchScope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -1422,6 +1430,11 @@ private struct ConversationView: View {
                 .help(conversation.isBlocked ? "Unblock this contact before calling" : "Start encrypted voice call")
                 .accessibilityLabel("Start encrypted voice call")
                 Menu {
+                    Button("Search Messages", systemImage: "magnifyingglass") { focusedField = .search }
+                        .keyboardShortcut("f", modifiers: .command)
+                    Button("Focus Message Composer", systemImage: "text.cursor") { focusedField = .composer }
+                        .keyboardShortcut("m", modifiers: [.command, .option])
+                    Divider()
                     Button { Task { await store.sendCommand(.ping, conversationID: conversation.id) } } label: {
                         Label("Ping contact", systemImage: "wave.3.right")
                     }
@@ -1492,6 +1505,11 @@ private struct ConversationView: View {
                                                     VStack(alignment: .leading, spacing: 1) {
                                                         Text(attachment.filename).lineLimit(1)
                                                         Text(attachmentStatus(attachment)).font(.caption2).foregroundStyle(.secondary)
+                                                        if attachment.state == .transferring {
+                                                            ProgressView(value: attachment.progress)
+                                                                .accessibilityLabel("Attachment transfer progress")
+                                                                .accessibilityValue("\(Int(attachment.progress * 100)) percent")
+                                                        }
                                                     }
                                                 } icon: { Image(systemName: "doc.fill") }
                                             }
@@ -1646,9 +1664,19 @@ private struct ConversationView: View {
                     }
                     .help(composeAsMarkdown ? "Markdown formatting enabled" : "Enable Markdown formatting")
                     .accessibilityLabel(composeAsMarkdown ? "Disable Markdown formatting" : "Enable Markdown formatting")
-                    TextField("Message", text: $draft, axis: .vertical).textFieldStyle(.roundedBorder).onSubmit(send)
+                    TextField("Message", text: $draft, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($focusedField, equals: .composer)
+                        .submitLabel(.send)
+                        .onSubmit(send)
                         .disabled(voiceRecorder.isRecording)
-                    Button(action: send) { Image(systemName: "paperplane.fill") }.buttonStyle(.borderedProminent).disabled(!canSend || voiceRecorder.isRecording)
+                        .accessibilityIdentifier("message-composer")
+                    Button(action: send) { Image(systemName: "paperplane.fill") }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(!canSend || voiceRecorder.isRecording)
+                        .accessibilityLabel("Send message")
+                        .accessibilityIdentifier("send-message")
                 }
                 HStack {
                     if voiceRecorder.isRecording {
@@ -1688,6 +1716,9 @@ private struct ConversationView: View {
             isVisible = true
             draft = store.draft(for: conversation.id)
             store.conversationDidAppear(conversation.id)
+            #if os(macOS)
+            focusedField = .composer
+            #endif
         }
         .onDisappear {
             isVisible = false
@@ -2782,6 +2813,16 @@ private extension View {
         self
         #endif
     }
+
+    @ViewBuilder func destinationInputBehavior() -> some View {
+        #if os(iOS)
+        textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .submitLabel(.done)
+        #else
+        self
+        #endif
+    }
 }
 
 private struct NewConversationView: View {
@@ -2789,6 +2830,8 @@ private struct NewConversationView: View {
     @Bindable var store: SidebandStore
     @State private var address = ""
     @State private var name = ""
+    @FocusState private var focusedField: Field?
+    private enum Field: Hashable { case name, address }
     #if os(iOS)
     @State private var showingContactScanner = false
     #endif
@@ -2796,14 +2839,28 @@ private struct NewConversationView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("New Conversation").font(.title2.bold())
             TextField("Display name (optional)", text: $name)
-            TextField("LXMF destination, contact link or lxm:// paper message", text: $address).font(.body.monospaced())
+                .focused($focusedField, equals: .name)
+                .textContentType(.name)
+            TextField("LXMF destination, contact link or lxm:// paper message", text: $address)
+                .font(.body.monospaced())
+                .focused($focusedField, equals: .address)
+                .destinationInputBehavior()
+                .onSubmit(create)
+                .accessibilityIdentifier("new-conversation-address")
             #if os(iOS)
             Button { showingContactScanner = true } label: {
                 Label("Scan contact or paper message", systemImage: "qrcode.viewfinder")
             }
             #endif
-            HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Create", action: create).buttonStyle(.borderedProminent) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Create", action: create).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("create-conversation")
+            }
         }.textFieldStyle(.roundedBorder).padding(24).platformNewConversationSize()
+        .onAppear { focusedField = .address }
         #if os(iOS)
         .sheet(isPresented: $showingContactScanner) {
             ContactQRScannerSheet { scannedValue in
