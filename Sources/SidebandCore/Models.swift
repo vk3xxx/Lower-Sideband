@@ -122,8 +122,10 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var lastDeliveryAttemptAt: Date?
     public var lastDeliveryMode: DeliveryMode?
     public var lastDeliveryFailure: String?
+    public var isStarred: Bool
+    public var starredUpdatedAt: Date?
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, commentTo: Data? = nil, continuationOf: Data? = nil, commands: [LXMFCommand] = [], outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil, deliveryAttemptCount: Int = 0, lastDeliveryAttemptAt: Date? = nil, lastDeliveryMode: DeliveryMode? = nil, lastDeliveryFailure: String? = nil) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, commentTo: Data? = nil, continuationOf: Data? = nil, commands: [LXMFCommand] = [], outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil, deliveryAttemptCount: Int = 0, lastDeliveryAttemptAt: Date? = nil, lastDeliveryMode: DeliveryMode? = nil, lastDeliveryFailure: String? = nil, isStarred: Bool = false, starredUpdatedAt: Date? = nil) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
@@ -147,9 +149,11 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.lastDeliveryAttemptAt = lastDeliveryAttemptAt
         self.lastDeliveryMode = lastDeliveryMode
         self.lastDeliveryFailure = lastDeliveryFailure.map { String($0.prefix(256)) }
+        self.isStarred = isStarred
+        self.starredUpdatedAt = starredUpdatedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, commentTo, continuationOf, commands, outboxOwnerID, outboxOwnerUpdatedAt, deliveryAttemptCount, lastDeliveryAttemptAt, lastDeliveryMode, lastDeliveryFailure }
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, commentTo, continuationOf, commands, outboxOwnerID, outboxOwnerUpdatedAt, deliveryAttemptCount, lastDeliveryAttemptAt, lastDeliveryMode, lastDeliveryFailure, isStarred, starredUpdatedAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -175,6 +179,8 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         lastDeliveryAttemptAt = try values.decodeIfPresent(Date.self, forKey: .lastDeliveryAttemptAt)
         lastDeliveryMode = try values.decodeIfPresent(DeliveryMode.self, forKey: .lastDeliveryMode)
         lastDeliveryFailure = try values.decodeIfPresent(String.self, forKey: .lastDeliveryFailure).map { String($0.prefix(256)) }
+        isStarred = try values.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
+        starredUpdatedAt = try values.decodeIfPresent(Date.self, forKey: .starredUpdatedAt)
     }
 
     public static func isValidReaction(content: String, target: Data) -> Bool {

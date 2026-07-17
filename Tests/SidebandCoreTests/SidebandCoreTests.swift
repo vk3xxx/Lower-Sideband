@@ -269,7 +269,9 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
         deliveryAttemptCount: 3,
         lastDeliveryAttemptAt: Date(timeIntervalSince1970: 1_234),
         lastDeliveryMode: .propagation,
-        lastDeliveryFailure: "No route"
+        lastDeliveryFailure: "No route",
+        isStarred: true,
+        starredUpdatedAt: Date(timeIntervalSince1970: 1_235)
     )
 
     let archive = SidebandConversationExport(conversation: conversation, fingerprint: nil, messages: [message])
@@ -284,6 +286,35 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(exported.deliveryAttemptCount == 3)
     #expect(exported.lastDeliveryMode == .propagation)
     #expect(exported.lastDeliveryFailure == "No route")
+    #expect(exported.isStarred == true)
+}
+
+@MainActor @Test func starredMessagesPersistFilterAndUnstar() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let conversation = try #require(store.selectedConversation)
+    #expect(await store.send("Important", attachments: []))
+    let message = try #require(store.messages.first)
+
+    store.setMessageStarred(true, messageID: message.id)
+    #expect(store.starredMessageCount == 1)
+    #expect(store.starredMessages(for: conversation.id).map(\.id) == [message.id])
+    let restored = SidebandStore(persistenceURL: url)
+    #expect(restored.messages.first?.isStarred == true)
+
+    restored.setMessageStarred(false, messageID: message.id)
+    #expect(restored.starredMessageCount == 0)
+}
+
+@Test func cloudMergeUsesNewestStarredState() {
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let id = UUID()
+    let local = Message(id: id, conversationID: conversation.id, body: "Important", direction: .incoming, state: .delivered, isStarred: false, starredUpdatedAt: Date(timeIntervalSince1970: 20))
+    let remote = Message(id: id, conversationID: conversation.id, body: "Important", direction: .incoming, state: .delivered, isStarred: true, starredUpdatedAt: Date(timeIntervalSince1970: 10))
+    let merged = AppSnapshot(conversations: [conversation], messages: [local]).mergingCloudSnapshot(AppSnapshot(conversations: [conversation], messages: [remote]))
+    #expect(merged.messages.first?.isStarred == false)
+    #expect(merged.messages.first?.starredUpdatedAt == local.starredUpdatedAt)
 }
 
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {

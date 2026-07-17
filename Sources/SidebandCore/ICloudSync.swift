@@ -271,7 +271,8 @@ public extension AppSnapshot {
                 commentTo: message.commentTo, continuationOf: message.continuationOf, commands: message.commands,
                 outboxOwnerID: message.outboxOwnerID, outboxOwnerUpdatedAt: message.outboxOwnerUpdatedAt,
                 deliveryAttemptCount: message.deliveryAttemptCount, lastDeliveryAttemptAt: message.lastDeliveryAttemptAt,
-                lastDeliveryMode: message.lastDeliveryMode, lastDeliveryFailure: message.lastDeliveryFailure
+                lastDeliveryMode: message.lastDeliveryMode, lastDeliveryFailure: message.lastDeliveryFailure,
+                isStarred: message.isStarred, starredUpdatedAt: message.starredUpdatedAt
             )
         }
 
@@ -285,6 +286,8 @@ public extension AppSnapshot {
                 ? local : remoteMessage
             let localAttemptIsNewest = (local.lastDeliveryAttemptAt ?? .distantPast) >= (remoteMessage.lastDeliveryAttemptAt ?? .distantPast)
             let latestAttemptAt = [local.lastDeliveryAttemptAt, remoteMessage.lastDeliveryAttemptAt].compactMap { $0 }.max()
+            let starSource = (local.starredUpdatedAt ?? .distantPast) >= (remoteMessage.starredUpdatedAt ?? .distantPast)
+                ? local : remoteMessage
             messagesByID[local.id] = Message(
                 id: preferred.id, conversationID: preferred.conversationID, body: preferred.body,
                 timestamp: preferred.timestamp, direction: preferred.direction, state: state,
@@ -303,7 +306,8 @@ public extension AppSnapshot {
                 deliveryAttemptCount: max(local.deliveryAttemptCount, remoteMessage.deliveryAttemptCount),
                 lastDeliveryAttemptAt: latestAttemptAt,
                 lastDeliveryMode: localAttemptIsNewest ? local.lastDeliveryMode : remoteMessage.lastDeliveryMode,
-                lastDeliveryFailure: state == .delivered ? nil : (localAttemptIsNewest ? local.lastDeliveryFailure : remoteMessage.lastDeliveryFailure)
+                lastDeliveryFailure: state == .delivered ? nil : (localAttemptIsNewest ? local.lastDeliveryFailure : remoteMessage.lastDeliveryFailure),
+                isStarred: starSource.isStarred, starredUpdatedAt: starSource.starredUpdatedAt
             )
         }
 

@@ -355,6 +355,7 @@ public final class SidebandStore {
     public var deliveredMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .delivered }) }
     public var failedMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .failed }) }
     public var reactionCount: Int { messages.count(where: { $0.reactionTo != nil }) }
+    public var starredMessageCount: Int { messages.count(where: \.isStarred) }
     public var activeAttachmentTransferCount: Int {
         messages.reduce(0) { count, message in
             count + message.attachments.count(where: { $0.state == .queued || $0.state == .transferring })
@@ -378,6 +379,17 @@ public final class SidebandStore {
     public func failedMessageCount(for conversationID: UUID) -> Int {
         rebuildMessageIndexesIfNeeded()
         return failedMessageCountByConversation[conversationID] ?? 0
+    }
+
+    public func starredMessages(for conversationID: UUID) -> [Message] {
+        messages(for: conversationID).filter(\.isStarred)
+    }
+
+    public func setMessageStarred(_ starred: Bool, messageID: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == messageID }), messages[index].isStarred != starred else { return }
+        messages[index].isStarred = starred
+        messages[index].starredUpdatedAt = .now
+        save()
     }
 
     public func conversationTranscript(_ conversationID: UUID) -> String? {

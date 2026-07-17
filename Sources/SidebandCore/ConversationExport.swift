@@ -40,6 +40,7 @@ public struct SidebandConversationExport: Codable, Sendable {
         public var lastDeliveryAttemptAt: Date?
         public var lastDeliveryMode: Message.DeliveryMode?
         public var lastDeliveryFailure: String?
+        public var isStarred: Bool?
     }
 
     public var version: Int
@@ -80,7 +81,8 @@ public struct SidebandConversationExport: Codable, Sendable {
                 deliveryAttemptCount: message.deliveryAttemptCount,
                 lastDeliveryAttemptAt: message.lastDeliveryAttemptAt,
                 lastDeliveryMode: message.lastDeliveryMode,
-                lastDeliveryFailure: message.lastDeliveryFailure
+                lastDeliveryFailure: message.lastDeliveryFailure,
+                isStarred: message.isStarred
             )
         }
     }

@@ -1323,6 +1323,7 @@ private struct ConversationView: View {
     @State private var showingFileImporter = false
     @State private var messageSearch = ""
     @State private var messageSearchScope: SearchScope = .all
+    @State private var showStarredOnly = false
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var previewAttachmentURL: URL?
     @State private var previewAttachment: Attachment?
@@ -1404,6 +1405,14 @@ private struct ConversationView: View {
                 if !telemetryMessages.isEmpty {
                     Button { showingTelemetryMap = true } label: { Image(systemName: "map") }
                         .help("Show conversation telemetry map")
+                }
+                if !store.starredMessages(for: conversation.id).isEmpty {
+                    Button { showStarredOnly.toggle() } label: {
+                        Image(systemName: showStarredOnly ? "star.fill" : "star")
+                    }
+                    .foregroundStyle(showStarredOnly ? .yellow : .secondary)
+                    .help(showStarredOnly ? "Show all messages" : "Show starred messages")
+                    .accessibilityLabel(showStarredOnly ? "Show all messages" : "Show starred messages")
                 }
                 if let transcript = store.conversationTranscript(conversation.id) {
                     ShareLink(item: transcript, subject: Text("Sideband conversation with \(conversation.displayName)")) {
@@ -1534,6 +1543,10 @@ private struct ConversationView: View {
                                         }
                                     }
                                     HStack {
+                                        if message.isStarred {
+                                            Image(systemName: "star.fill").foregroundStyle(.yellow)
+                                                .accessibilityLabel("Starred")
+                                        }
                                         Text(message.timestamp, style: .time)
                                         Text(message.state.rawValue.capitalized)
                                         if message.deliveryAttemptCount > 1 {
@@ -1557,6 +1570,9 @@ private struct ConversationView: View {
                                 .accessibilityElement(children: .combine)
                                 .accessibilityLabel(messageAccessibilityLabel(message))
                                 .contextMenu {
+                                    Button { store.setMessageStarred(!message.isStarred, messageID: message.id) } label: {
+                                        Label(message.isStarred ? "Remove Star" : "Star Message", systemImage: message.isStarred ? "star.slash" : "star")
+                                    }
                                     if !message.body.isEmpty {
                                         Button { copyToSystemClipboard(message.body) } label: { Label("Copy Message", systemImage: "doc.on.doc") }
                                     }
@@ -1799,7 +1815,8 @@ private struct ConversationView: View {
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
 
     private var filteredMessages: [Message] {
-        let all = store.messages(for: conversation.id).filter { $0.reactionTo == nil && $0.commands.isEmpty }
+        let visible = store.messages(for: conversation.id).filter { $0.reactionTo == nil && $0.commands.isEmpty }
+        let all = showStarredOnly ? visible.filter(\.isStarred) : visible
         let query = messageSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return all }
         return all.filter { message in
@@ -1968,6 +1985,7 @@ private struct ConversationView: View {
             message.body.isEmpty ? "Message" : message.body
         ]
         if let quote = message.replyQuote { parts.append("Replying to \(quote)") }
+        if message.isStarred { parts.append("Starred") }
         if !message.attachments.isEmpty {
             parts.append("Attachments: \(message.attachments.map(\.filename).joined(separator: ", "))")
         }
@@ -1995,6 +2013,7 @@ private struct ConversationView: View {
         if let attempt = message.lastDeliveryAttemptAt { lines.append("Last delivery attempt: \(formatter.string(from: attempt))") }
         if let mode = message.lastDeliveryMode { lines.append("Last delivery mode: \(mode.rawValue)") }
         if let failure = message.lastDeliveryFailure { lines.append("Last delivery issue: \(failure)") }
+        lines.append("Starred: \(message.isStarred ? "yes" : "no")")
         if let replyTo = message.replyTo { lines.append("Reply to LXMF hash: \(replyTo.sidebandHex)") }
         if let replyQuote = message.replyQuote { lines.append("Reply quote: \(replyQuote)") }
         if !message.attachments.isEmpty {
