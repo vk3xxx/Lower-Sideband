@@ -193,6 +193,10 @@ final class LiveVoiceAudioEngine {
     private(set) var playbackUnderruns = 0
     private(set) var droppedPlaybackFrames = 0
     private(set) var isPlaybackRecovering = false
+    #if os(iOS)
+    private(set) var audioRouteName = "Speaker"
+    private(set) var isSpeakerEnabled = true
+    #endif
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -219,7 +223,7 @@ final class LiveVoiceAudioEngine {
         guard await microphonePermissionGranted() else { throw VoiceMessageAudioError.microphoneDenied }
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
         try session.setPreferredSampleRate(sampleRate)
         try session.setPreferredIOBufferDuration(0.02)
         if CallKitCoordinator.shared.hasManagedCall {
@@ -228,6 +232,11 @@ final class LiveVoiceAudioEngine {
         } else {
             try session.setActive(true)
         }
+        let hasExternalRoute = session.currentRoute.outputs.contains {
+            $0.portType != .builtInReceiver && $0.portType != .builtInSpeaker
+        }
+        try session.overrideOutputAudioPort(hasExternalRoute ? .none : .speaker)
+        refreshAudioRoute()
         #endif
         guard let opusFormat,
               let encoder = AVAudioConverter(from: pcmFormat, to: opusFormat),
@@ -288,6 +297,35 @@ final class LiveVoiceAudioEngine {
         bufferedFrameCount = jitterBuffer.count
         droppedPlaybackFrames = jitterBuffer.droppedFrameCount
     }
+
+    #if os(iOS)
+    func toggleSpeakerRoute() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.overrideOutputAudioPort(isSpeakerEnabled ? .none : .speaker)
+            refreshAudioRoute()
+        } catch {
+            refreshAudioRoute()
+        }
+    }
+
+    func refreshAudioRoute() {
+        let output = AVAudioSession.sharedInstance().currentRoute.outputs.first
+        audioRouteName = output?.portName ?? "Audio"
+        isSpeakerEnabled = output?.portType == .builtInSpeaker
+    }
+
+    func recoverAudioIfNeeded() {
+        guard isRunning, !engine.isRunning else { return }
+        do {
+            try engine.start()
+            if !player.isPlaying { player.play() }
+        } catch {
+            // CallKit can temporarily deactivate audio during an interruption.
+            // The call timer retries after the system restores the session.
+        }
+    }
+    #endif
 
     private func decodeAndSchedule(_ payload: Data) {
         guard isRunning, let opusFormat, let decoder else { return }

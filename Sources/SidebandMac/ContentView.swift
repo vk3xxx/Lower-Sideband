@@ -1364,6 +1364,10 @@ private struct VoiceCallView: View {
                 Text(statusText).foregroundStyle(.secondary)
                 if call?.state == .active {
                     Text(callDuration).font(.title3.monospacedDigit())
+                    #if os(iOS)
+                    Label(audio.audioRouteName, systemImage: audio.isSpeakerEnabled ? "speaker.wave.2.fill" : "airplayaudio")
+                        .font(.caption).foregroundStyle(.secondary)
+                    #endif
                     if audio.isPlaybackRecovering || audio.droppedPlaybackFrames > 0 {
                         Label(callQualityText, systemImage: "waveform.badge.exclamationmark")
                             .font(.caption).foregroundStyle(.orange)
@@ -1378,10 +1382,15 @@ private struct VoiceCallView: View {
                     callButton("Answer", systemImage: "phone.fill", color: .green) { answerCall() }
                 }
             } else {
-                HStack(spacing: 26) {
+                HStack(spacing: 20) {
                     callButton(audio.isMuted ? "Unmute" : "Mute", systemImage: audio.isMuted ? "mic.slash.fill" : "mic.fill", color: .secondary) {
                         setMuted(!audio.isMuted)
                     }
+                    #if os(iOS)
+                    callButton(audio.isSpeakerEnabled ? "Speaker" : "Audio", systemImage: audio.isSpeakerEnabled ? "speaker.wave.2.fill" : "airplayaudio", color: .secondary) {
+                        audio.toggleSpeakerRoute()
+                    }
+                    #endif
                     callButton("Hang Up", systemImage: "phone.down.fill", color: .red) { endCall() }
                 }
             }
@@ -1441,6 +1450,10 @@ private struct VoiceCallView: View {
         timerTask = Task { @MainActor in
             while !Task.isCancelled {
                 elapsed = Int(Date.now.timeIntervalSince(call?.connectedAt ?? .now))
+                #if os(iOS)
+                audio.refreshAudioRoute()
+                audio.recoverAudioIfNeeded()
+                #endif
                 try? await Task.sleep(for: .seconds(1))
             }
         }
