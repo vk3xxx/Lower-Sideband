@@ -118,6 +118,36 @@ public struct InternetGateway: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct GatewayHealthRecord: Codable, Equatable, Sendable {
+    public var successfulConnections: Int = 0
+    public var failedConnections: Int = 0
+    public var consecutiveFailures: Int = 0
+    public var lastSuccess: Date?
+    public var lastFailure: Date?
+    public var smoothedConnectLatency: TimeInterval?
+
+    public init() {}
+
+    public mutating func recordSuccess(at date: Date = .now, latency: TimeInterval? = nil) {
+        successfulConnections += 1
+        consecutiveFailures = 0
+        lastSuccess = date
+        if let latency, latency.isFinite, latency >= 0 {
+            smoothedConnectLatency = smoothedConnectLatency.map { ($0 * 0.7) + (latency * 0.3) } ?? latency
+        }
+    }
+
+    public mutating func recordFailure(at date: Date = .now) {
+        failedConnections += 1
+        consecutiveFailures += 1
+        lastFailure = date
+    }
+
+    public func isCoolingDown(at date: Date = .now, cooldown: TimeInterval = 15 * 60) -> Bool {
+        consecutiveFailures >= 3 && lastFailure.map { date.timeIntervalSince($0) < cooldown } == true
+    }
+}
+
 public enum ConfiguredReticulumGateways {
     public static func ordered(
         ipv4Host: String,
@@ -158,7 +188,7 @@ public enum PublicReticulumGateways {
         InternetGateway(name: "MobileFabrik", host: "phantom.mobilefabrik.com", port: 4_242)
     ]
 
-    public static func ordered(customHost: String?, customPort: Int, preferredID: String?, excluding attemptedIDs: Set<String> = []) -> [InternetGateway] {
+    public static func ordered(customHost: String?, customPort: Int, preferredID: String?, excluding attemptedIDs: Set<String> = [], health: [String: GatewayHealthRecord] = [:], now: Date = .now) -> [InternetGateway] {
         var gateways: [InternetGateway] = []
         let normalizedHost = customHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !normalizedHost.isEmpty, let port = UInt16(exactly: customPort), port > 0 {
@@ -168,9 +198,23 @@ public enum PublicReticulumGateways {
         var seen: Set<String> = []
         let unique = gateways.filter { seen.insert($0.id).inserted && !attemptedIDs.contains($0.id) }
         return unique.sorted { lhs, rhs in
+            let lhsHealth = health[lhs.id] ?? GatewayHealthRecord()
+            let rhsHealth = health[rhs.id] ?? GatewayHealthRecord()
+            let lhsCooldown = lhsHealth.isCoolingDown(at: now)
+            let rhsCooldown = rhsHealth.isCoolingDown(at: now)
+            if lhsCooldown != rhsCooldown { return !lhsCooldown }
             let lhsPreferred = lhs.id == preferredID
             let rhsPreferred = rhs.id == preferredID
             if lhsPreferred != rhsPreferred { return lhsPreferred }
+            let lhsFailures = lhsHealth.consecutiveFailures
+            let rhsFailures = rhsHealth.consecutiveFailures
+            if lhsFailures != rhsFailures { return lhsFailures < rhsFailures }
+            let lhsLatency = lhsHealth.smoothedConnectLatency ?? .infinity
+            let rhsLatency = rhsHealth.smoothedConnectLatency ?? .infinity
+            if lhsLatency != rhsLatency { return lhsLatency < rhsLatency }
+            let lhsSuccess = lhsHealth.lastSuccess ?? .distantPast
+            let rhsSuccess = rhsHealth.lastSuccess ?? .distantPast
+            if lhsSuccess != rhsSuccess { return lhsSuccess > rhsSuccess }
             return gateways.firstIndex(of: lhs)! < gateways.firstIndex(of: rhs)!
         }
     }

@@ -173,6 +173,8 @@ public final class SidebandStore {
     private var pendingLANGatewaySwitchID: String?
     private var preferredGatewayID: String?
     private var preferredInternetGatewayID: String?
+    public private(set) var gatewayHealth: [String: GatewayHealthRecord] = [:]
+    private var networkConnectionStartedAt: Date?
     private var deferredPathRequests: Set<String> = []
     private var intentionallyDisconnected = false
     private var reconnectAttempt = 0
@@ -224,6 +226,10 @@ public final class SidebandStore {
         lastBackgroundRefreshSucceeded = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshSucceeded") as? Bool
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
         preferredInternetGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredInternetGatewayID")
+        if let healthData = UserDefaults.standard.data(forKey: "reticulumGatewayHealth"),
+           let decoded = try? JSONDecoder.sideband.decode([String: GatewayHealthRecord].self, from: healthData) {
+            gatewayHealth = decoded
+        }
         receivedLXMFIDs = Set(UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? [])
         load()
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
@@ -1382,6 +1388,7 @@ public final class SidebandStore {
             return
         }
         networkState = .connecting
+        networkConnectionStartedAt = .now
         let generation = UUID()
         networkConnectionGeneration = generation
         await networkInterfacePool?.stop()
@@ -1404,7 +1411,8 @@ public final class SidebandStore {
             let publicGateways = PublicReticulumGateways.ordered(
                 customHost: networkInternetHost,
                 customPort: networkInternetPort,
-                preferredID: internetGatewayID
+                preferredID: internetGatewayID,
+                health: gatewayHealth
             )
             endpoints = Array(publicGateways.prefix(3)).map {
                 ReticulumTCPInterfacePool.Endpoint(id: $0.id, name: $0.name, host: $0.host, port: $0.port, isBootstrap: true)
@@ -2088,6 +2096,14 @@ public final class SidebandStore {
             reconnectAttempt = 0
             reconnectDelaySeconds = nil
             let readyCount = snapshots.count { $0.state == .ready }
+            let latency = networkConnectionStartedAt.map { Date.now.timeIntervalSince($0) }
+            for snapshot in snapshots where snapshot.state == .ready {
+                var record = gatewayHealth[snapshot.id] ?? GatewayHealthRecord()
+                record.recordSuccess(latency: latency)
+                gatewayHealth[snapshot.id] = record
+            }
+            persistGatewayHealth()
+            networkConnectionStartedAt = nil
             automaticConnectionDescription = selectedGatewayName.map { "Connected automatically to \($0)" }
                 ?? (readyCount > 1 ? "Connected securely through \(readyCount) gateways" : "Connected automatically to \(activeNetworkHost ?? networkHost)")
             if let activeGatewayID {
@@ -2114,6 +2130,13 @@ public final class SidebandStore {
         }
         switch state {
         case .failed:
+            for snapshot in snapshots where snapshot.state != .ready {
+                var record = gatewayHealth[snapshot.id] ?? GatewayHealthRecord()
+                record.recordFailure()
+                gatewayHealth[snapshot.id] = record
+            }
+            persistGatewayHealth()
+            networkConnectionStartedAt = nil
             stopPeriodicPropagationSync()
             resetLinkState()
             if autoConnectEnabled, !intentionallyDisconnected {
@@ -2212,7 +2235,8 @@ public final class SidebandStore {
             customHost: networkInternetHost,
             customPort: networkInternetPort,
             preferredID: preferredInternetGatewayID,
-            excluding: attemptedInternetGatewayIDs
+            excluding: attemptedInternetGatewayIDs,
+            health: gatewayHealth
         )
         if let gateway = internetCandidates.first {
             attemptedInternetGatewayIDs.insert(gateway.id)
@@ -2225,6 +2249,25 @@ public final class SidebandStore {
             return
         }
         scheduleReconnect()
+    }
+
+    public func resetGatewayHealth() {
+        gatewayHealth.removeAll()
+        UserDefaults.standard.removeObject(forKey: "reticulumGatewayHealth")
+    }
+
+    public var gatewayHealthDiagnostics: String {
+        guard !gatewayHealth.isEmpty else { return "No gateway health history recorded." }
+        return gatewayHealth.sorted(by: { $0.key < $1.key }).map { id, record in
+            let latency = record.smoothedConnectLatency.map { String(format: "%.2fs", $0) } ?? "unknown"
+            return "\(id): \(record.successfulConnections) success, \(record.failedConnections) failure, \(record.consecutiveFailures) consecutive, latency \(latency)"
+        }.joined(separator: "\n")
+    }
+
+    private func persistGatewayHealth() {
+        if let data = try? JSONEncoder.sideband.encode(gatewayHealth) {
+            UserDefaults.standard.set(data, forKey: "reticulumGatewayHealth")
+        }
     }
 
     private func gatewayResultsChanged(_ gateways: [LANGateway]) {

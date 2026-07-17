@@ -919,6 +919,18 @@ private struct NetworkView: View {
                     }
                 }.padding(6)
             }
+            GroupBox("Gateway health") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(store.gatewayHealth.isEmpty ? "No endpoint history recorded yet." : "\(store.gatewayHealth.count) endpoint\(store.gatewayHealth.count == 1 ? "" : "s") tracked. Repeated failures temporarily lower an endpoint's automatic priority.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Copy Health Report") { copyToSystemClipboard(store.gatewayHealthDiagnostics) }
+                            .disabled(store.gatewayHealth.isEmpty)
+                        Button("Reset Health History", role: .destructive) { store.resetGatewayHealth() }
+                            .disabled(store.gatewayHealth.isEmpty)
+                    }
+                }.padding(6)
+            }
             GroupBox("LXMF propagation") {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Select a propagation node automatically", isOn: Binding(

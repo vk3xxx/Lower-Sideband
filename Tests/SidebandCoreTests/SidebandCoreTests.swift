@@ -422,6 +422,34 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(store.messages.first?.attachments.isEmpty == true)
 }
 
+@Test func gatewayHealthTracksSuccessFailureLatencyAndCooldown() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    var record = GatewayHealthRecord()
+    record.recordFailure(at: now.addingTimeInterval(-30))
+    record.recordFailure(at: now.addingTimeInterval(-20))
+    record.recordFailure(at: now.addingTimeInterval(-10))
+    #expect(record.consecutiveFailures == 3)
+    #expect(record.isCoolingDown(at: now))
+    record.recordSuccess(at: now, latency: 2)
+    record.recordSuccess(at: now, latency: 1)
+    #expect(record.consecutiveFailures == 0)
+    #expect(record.successfulConnections == 2)
+    #expect(record.smoothedConnectLatency == 1.7)
+    #expect(!record.isCoolingDown(at: now))
+}
+
+@Test func publicGatewayOrderingUsesCooldownFailureAndLatencyHealth() throws {
+    let now = Date(timeIntervalSince1970: 20_000)
+    let first = try #require(PublicReticulumGateways.defaults.first)
+    let second = try #require(PublicReticulumGateways.defaults.dropFirst().first)
+    var unhealthy = GatewayHealthRecord()
+    for offset in [30.0, 20.0, 10.0] { unhealthy.recordFailure(at: now.addingTimeInterval(-offset)) }
+    var healthy = GatewayHealthRecord(); healthy.recordSuccess(at: now, latency: 0.5)
+    let ordered = PublicReticulumGateways.ordered(customHost: nil, customPort: 4_242, preferredID: first.id, health: [first.id: unhealthy, second.id: healthy], now: now)
+    #expect(ordered.first?.id == second.id)
+    #expect(ordered.last?.id == first.id)
+}
+
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
     let identity = ReticulumIdentity()
     let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
