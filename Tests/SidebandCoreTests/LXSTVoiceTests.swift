@@ -38,6 +38,34 @@ struct LXSTVoiceTests {
         #expect(try LXSTVoice.decode(encoded) == .frame(codec: .opus, payload: Data("abc".utf8)))
     }
 
+    @Test func pythonCompatibleLXMURIEncodingAndLimits() throws {
+        #expect(try LXMURI.encode(Data([0xfb, 0xef])) == "lxm://--8")
+        #expect(try LXMURI.decode("lxm://--8") == Data([0xfb, 0xef]))
+        #expect(throws: LXMURI.Error.self) { try LXMURI.encode(Data(repeating: 0, count: LXMURI.maximumPackedBytes + 1)) }
+        #expect(throws: LXMURI.Error.self) { try LXMURI.decode("https://example.com") }
+    }
+
+    @Test func encryptedPaperMessageRoundTripsWithoutNetwork() throws {
+        let source = try ReticulumIdentity(privateKey: Data((0..<64).map(UInt8.init)))
+        let recipient = try ReticulumIdentity(privateKey: Data((64..<128).map(UInt8.init)))
+        let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+        let sourceHash = ReticulumIdentity.truncatedHash(combine(nameHash, source.hash))
+        let destinationHash = ReticulumIdentity.truncatedHash(combine(nameHash, recipient.hash))
+        let message = try LXMFMessage(destinationHash: destinationHash, sourceHash: sourceHash, sourceIdentity: source, timestamp: 1_700_000_000, content: Data("Paper hello".utf8))
+        let uri = try message.paperURI(
+            recipientIdentity: recipient,
+            ephemeralPrivateKey: Data(repeating: 0x42, count: 32),
+            iv: Data(repeating: 0x24, count: 16)
+        )
+
+        let paperPacked = try LXMURI.decode(uri)
+        #expect(paperPacked.prefix(16) == destinationHash)
+        let decrypted = try recipient.decrypt(Data(paperPacked.dropFirst(16)))
+        let received = try LXMFReceivedMessage(packed: combine(destinationHash, decrypted))
+        #expect(received.content == Data("Paper hello".utf8))
+        #expect(received.validate(with: source))
+    }
+
     @Test func destinationUsesTelephonyAspectAndIdentity() {
         let identity = ReticulumIdentity()
         #expect(LXSTVoice.destinationHash(for: identity).count == 16)
@@ -80,6 +108,12 @@ struct LXSTVoiceTests {
         #expect(declined.historyOutcome == .declined)
         #expect(failed.historyOutcome == .failed)
         #expect(cancelled.historyOutcome == .cancelled)
+    }
+
+    private func combine(_ first: Data, _ second: Data) -> Data {
+        var value = first
+        value.append(second)
+        return value
     }
 }
 

@@ -2,6 +2,27 @@ import Foundation
 import Observation
 import CryptoKit
 
+public enum PaperMessageImportResult: Equatable, Sendable {
+    case imported(conversationID: UUID)
+    case duplicate
+    case notAddressedToThisIdentity
+    case unknownSender
+    case invalid
+}
+
+public enum PaperMessageError: LocalizedError {
+    case messageNotFound, incomingMessage, attachmentsUnsupported, unknownRecipient
+
+    public var errorDescription: String? {
+        switch self {
+        case .messageNotFound: "The selected message no longer exists."
+        case .incomingMessage: "Only messages you sent can be exported as paper messages."
+        case .attachmentsUnsupported: "Paper messages currently support text and telemetry, but not attachments."
+        case .unknownRecipient: "A validated identity announce from this contact is required before encrypting a paper message."
+        }
+    }
+}
+
 @MainActor @Observable
 public final class SidebandStore {
     public private(set) var conversations: [Conversation] = []
@@ -331,6 +352,45 @@ public final class SidebandStore {
         let transcript = (["Conversation with \(conversation.displayName)", "Destination: \(conversation.destinationHash)", ""] + lines).joined(separator: "\n")
         transcriptCache[conversationID] = transcript
         return transcript
+    }
+
+    public func paperMessageURI(for messageID: UUID) throws -> String {
+        guard let message = messages.first(where: { $0.id == messageID }),
+              let conversation = conversations.first(where: { $0.id == message.conversationID }) else {
+            throw PaperMessageError.messageNotFound
+        }
+        guard message.direction == .outgoing else { throw PaperMessageError.incomingMessage }
+        guard message.attachments.isEmpty else { throw PaperMessageError.attachmentsUnsupported }
+        guard let publicKey = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated })?.publicKey,
+              let recipientIdentity = try? ReticulumIdentity(publicKey: publicKey),
+              let destinationHash = Data(hexadecimal: conversation.destinationHash),
+              let sourceHash = Data(hexadecimal: localDeliveryHash) else { throw PaperMessageError.unknownRecipient }
+        let lxmf = try LXMFMessage(
+            destinationHash: destinationHash,
+            sourceHash: sourceHash,
+            sourceIdentity: messagingIdentity,
+            timestamp: message.timestamp.timeIntervalSince1970,
+            content: Data(message.body.utf8),
+            fields: lxmfFields(for: message)
+        )
+        return try lxmf.paperURI(recipientIdentity: recipientIdentity)
+    }
+
+    @discardableResult
+    public func ingestPaperMessageURI(_ uri: String) -> PaperMessageImportResult {
+        guard let paperPacked = try? LXMURI.decode(uri), paperPacked.count > 16 else { return .invalid }
+        let destinationHash = Data(paperPacked.prefix(16))
+        guard destinationHash.hex == localDeliveryHash else { return .notAddressedToThisIdentity }
+        guard let decrypted = try? messagingIdentity.decrypt(Data(paperPacked.dropFirst(16))),
+              let message = try? LXMFReceivedMessage(packed: destinationHash + decrypted) else { return .invalid }
+        if receivedLXMFIDs.contains(message.messageID.hex) { return .duplicate }
+        guard let publicKey = discoveries.first(where: { $0.destinationHash == message.sourceHash.hex && $0.isValidated })?.publicKey,
+              let sourceIdentity = try? ReticulumIdentity(publicKey: publicKey),
+              message.validate(with: sourceIdentity) else { return .unknownSender }
+        guard importReceivedMessage(message, sourceIdentity: sourceIdentity),
+              let conversation = conversations.first(where: { $0.destinationHash == message.sourceHash.hex }) else { return .invalid }
+        selectedConversationID = conversation.id
+        return .imported(conversationID: conversation.id)
     }
 
     public func conversationContactCard(_ conversationID: UUID) -> String? {

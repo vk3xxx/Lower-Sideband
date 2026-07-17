@@ -23,6 +23,16 @@ private func copyToSystemClipboard(_ text: String) {
     #endif
 }
 
+private func paperMessageError(_ result: PaperMessageImportResult) -> String? {
+    switch result {
+    case .imported: nil
+    case .duplicate: "This paper message has already been imported."
+    case .notAddressedToThisIdentity: "This paper message was encrypted for a different LXMF identity."
+    case .unknownSender: "The message decrypted, but its sender is unknown. Receive a validated announce from the sender, then scan it again."
+    case .invalid: "The LXM link does not contain a valid encrypted LXMF paper message."
+    }
+}
+
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -162,7 +172,12 @@ struct ContentView: View {
             #endif
         }
         .onOpenURL { url in
-            _ = store.openContactLink(url)
+            if url.scheme?.lowercased() == LXMURI.scheme {
+                let result = store.ingestPaperMessageURI(url.absoluteString)
+                if let error = paperMessageError(result) { store.lastError = error }
+            } else {
+                _ = store.openContactLink(url)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -902,6 +917,7 @@ private struct ConversationView: View {
     @State private var telemetryCapture = TelemetryCapture()
     @State private var voiceRecorder = VoiceMessageRecorder()
     @State private var showingTelemetryMap = false
+    @State private var paperMessageURI: String?
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -1035,6 +1051,9 @@ private struct ConversationView: View {
                                     if message.direction == .outgoing && (message.state == .failed || message.state == .queued) {
                                         Button { Task { await store.retryMessage(message.id) } } label: { Label("Retry Now", systemImage: "arrow.clockwise") }
                                     }
+                                    if message.direction == .outgoing {
+                                        Button { presentPaperMessage(message) } label: { Label("Show Paper Message QR", systemImage: "qrcode") }
+                                    }
                                     if message.direction == .outgoing && message.state == .failed {
                                         Button(role: .destructive) { Task { await store.removeFailedMessage(message.id) } } label: { Label("Remove Failed Message", systemImage: "trash") }
                                     }
@@ -1154,6 +1173,14 @@ private struct ConversationView: View {
         .sheet(isPresented: $showingTelemetryMap) {
             ConversationTelemetryMapView(conversationName: conversation.displayName, messages: telemetryMessages)
         }
+        .sheet(isPresented: Binding(
+            get: { paperMessageURI != nil },
+            set: { if !$0 { paperMessageURI = nil } }
+        )) {
+            if let paperMessageURI {
+                PaperMessageQRCodeView(recipientName: conversation.displayName, uri: paperMessageURI)
+            }
+        }
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
@@ -1169,6 +1196,11 @@ private struct ConversationView: View {
 
     private var telemetryMessages: [Message] {
         store.messages(for: conversation.id).filter { $0.telemetry?.location != nil }
+    }
+
+    private func presentPaperMessage(_ message: Message) {
+        do { paperMessageURI = try store.paperMessageURI(for: message.id) }
+        catch { store.lastError = error.localizedDescription }
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy) {
@@ -1661,6 +1693,61 @@ private struct ContactQRCodeView: View {
     }
 }
 
+private struct PaperMessageQRCodeView: View {
+    @Environment(\.dismiss) private var dismiss
+    let recipientName: String
+    let uri: String
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text("Encrypted Paper Message").font(.title2.bold())
+                    Text("For \(recipientName)").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+            }
+            if let image = qrImage {
+                platformImage(image).resizable().interpolation(.none).scaledToFit()
+                    .accessibilityLabel("Encrypted LXMF paper message QR code for \(recipientName)")
+            } else {
+                ContentUnavailableView("QR Code Unavailable", systemImage: "qrcode")
+            }
+            Text("The message content and signature are encrypted for the recipient's LXMF identity.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button { copyToSystemClipboard(uri) } label: { Label("Copy LXM Link", systemImage: "doc.on.doc") }
+                ShareLink(item: uri) { Label("Share", systemImage: "square.and.arrow.up") }
+            }
+            Text(uri).font(.caption2.monospaced()).lineLimit(3).textSelection(.enabled)
+        }
+        .padding(24)
+        .platformContactSheetSize()
+    }
+
+    private var qrImage: PlatformImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(uri.utf8)
+        filter.correctionLevel = "L"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)),
+              let cgImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
+        #if os(macOS)
+        return NSImage(cgImage: cgImage, size: .zero)
+        #else
+        return UIImage(cgImage: cgImage)
+        #endif
+    }
+
+    private func platformImage(_ image: PlatformImage) -> Image {
+        #if os(macOS)
+        Image(nsImage: image)
+        #else
+        Image(uiImage: image)
+        #endif
+    }
+}
+
 private struct AttachmentShareButton: View {
     let store: AttachmentStore
     let attachment: Attachment
@@ -1857,10 +1944,10 @@ private struct NewConversationView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("New Conversation").font(.title2.bold())
             TextField("Display name (optional)", text: $name)
-            TextField("LXMF destination or sideband:// contact link", text: $address).font(.body.monospaced())
+            TextField("LXMF destination, contact link or lxm:// paper message", text: $address).font(.body.monospaced())
             #if os(iOS)
             Button { showingContactScanner = true } label: {
-                Label("Scan contact QR code", systemImage: "qrcode.viewfinder")
+                Label("Scan contact or paper message", systemImage: "qrcode.viewfinder")
             }
             #endif
             HStack { Spacer(); Button("Cancel") { dismiss() }; Button("Create", action: create).buttonStyle(.borderedProminent) }
@@ -1868,8 +1955,15 @@ private struct NewConversationView: View {
         #if os(iOS)
         .sheet(isPresented: $showingContactScanner) {
             ContactQRScannerSheet { scannedValue in
+                if scannedValue.lowercased().hasPrefix("\(LXMURI.scheme)://") {
+                    let result = store.ingestPaperMessageURI(scannedValue)
+                    showingContactScanner = false
+                    if let error = paperMessageError(result) { store.lastError = error }
+                    else { dismiss() }
+                    return
+                }
                 guard let contact = SidebandContactLink(string: scannedValue) else {
-                    store.lastError = "That QR code is not a valid Sideband contact."
+                    store.lastError = "That QR code is not a valid Sideband contact or LXM paper message."
                     showingContactScanner = false
                     return
                 }
@@ -1884,6 +1978,12 @@ private struct NewConversationView: View {
     }
 
     private func create() {
+        if address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("\(LXMURI.scheme)://") {
+            let result = store.ingestPaperMessageURI(address)
+            if let error = paperMessageError(result) { store.lastError = error }
+            else { dismiss() }
+            return
+        }
         let contact = SidebandContactLink(string: address)
         let destination = contact?.destinationHash ?? address
         let enteredName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1909,7 +2009,7 @@ private struct ContactQRScannerSheet: View {
                     .shadow(color: .black.opacity(0.5), radius: 4)
                 VStack {
                     Spacer()
-                    Text("Place a Sideband contact QR code inside the frame")
+                    Text("Place a Sideband contact or LXM paper-message QR code inside the frame")
                         .font(.callout.weight(.semibold))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.white)
