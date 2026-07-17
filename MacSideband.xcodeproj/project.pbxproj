@@ -11,6 +11,8 @@
 		F1A000000000000000000012 /* ConversationExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A000000000000000000001 /* ConversationExport.swift */; };
 		F1A000000000000000000013 /* ContactCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A000000000000000000002 /* ContactCollection.swift */; };
 		F1A000000000000000000014 /* ContactCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A000000000000000000002 /* ContactCollection.swift */; };
+		F2A000000000000000000011 /* LXMFCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2A000000000000000000001 /* LXMFCommand.swift */; };
+		F2A000000000000000000012 /* LXMFCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2A000000000000000000001 /* LXMFCommand.swift */; };
 		01E564776CA9E776B55ED75B /* ReticulumIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */; };
 		026DAF6778C7172BBEB38D1D /* VoiceMessageAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59439F9438760DD48AD116BC /* VoiceMessageAudio.swift */; };
 		03301265781053B5497105C0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
@@ -168,6 +170,7 @@
 /* Begin PBXFileReference section */
 		F1A000000000000000000001 /* ConversationExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationExport.swift; sourceTree = "<group>"; };
 		F1A000000000000000000002 /* ContactCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactCollection.swift; sourceTree = "<group>"; };
+		F2A000000000000000000001 /* LXMFCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFCommand.swift; sourceTree = "<group>"; };
 		0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPathTable.swift; sourceTree = "<group>"; };
 		0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResource.swift; sourceTree = "<group>"; };
 		148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPInterface.swift; sourceTree = "<group>"; };
@@ -364,6 +367,7 @@
 			isa = PBXGroup;
 			children = (
 				B051F39471BC4F462A0AAD58 /* LXMFAnnounceInfo.swift */,
+				F2A000000000000000000001 /* LXMFCommand.swift */,
 				A94DB2EEB1FF3081E4531FA8 /* LXMFMessage.swift */,
 				BFCE24619EAC858E5E6395B0 /* LXMFPropagation.swift */,
 				2CED86FB13053D632A2C3889 /* LXMFReceivedMessage.swift */,
@@ -559,6 +563,7 @@
 				693916E438F815BA883FF42C /* ICloudSync.swift in Sources */,
 				34B42B0C911C5E91A4C25053 /* LANGatewayDiscovery.swift in Sources */,
 				FE7573CA2B305D7801D7B736 /* LXMFAnnounceInfo.swift in Sources */,
+				F2A000000000000000000011 /* LXMFCommand.swift in Sources */,
 				AF13402E68C11412BB92925A /* LXMFMessage.swift in Sources */,
 				DC474C973A9C53F74A80A8C1 /* LXMFPropagation.swift in Sources */,
 				D365CFC7A7FE5E7B2E4B8846 /* LXMFReceivedMessage.swift in Sources */,
@@ -637,6 +642,7 @@
 				CE7D380C74F290A15E0883F4 /* ICloudSync.swift in Sources */,
 				7D54E947F32D589336652761 /* LANGatewayDiscovery.swift in Sources */,
 				E67AD73F984D7EEEA59689B1 /* LXMFAnnounceInfo.swift in Sources */,
+				F2A000000000000000000012 /* LXMFCommand.swift in Sources */,
 				AD9B710A16EBD8847C580DAC /* LXMFMessage.swift in Sources */,
 				8F943D1FE999971659BC8A0B /* LXMFPropagation.swift in Sources */,
 				3DDCAB680F41D01BD199D3CF /* LXMFReceivedMessage.swift in Sources */,
