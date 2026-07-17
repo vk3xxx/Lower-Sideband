@@ -207,6 +207,38 @@ import Testing
     #expect(!destinationStore.isConversationIdentityVerified(imported.id))
 }
 
+@Test func legacyConversationsDecodeWithSafeFeatureDefaults() throws {
+    let id = UUID()
+    let json = """
+    {"id":"\(id.uuidString)","destinationHash":"0123456789abcdef0123456789abcdef","displayName":"Legacy Peer","unreadCount":2,"updatedAt":0}
+    """
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .secondsSince1970
+    let conversation = try decoder.decode(Conversation.self, from: Data(json.utf8))
+
+    #expect(conversation.deliveryPreference == .automatic)
+    #expect(conversation.telemetrySharingEnabled)
+    #expect(conversation.verifiedIdentityKey == nil)
+    #expect(conversation.identityVerifiedAt == nil)
+}
+
+@MainActor @Test func snapshotValidationRejectsIdentityPinnedToDifferentDestination() throws {
+    let identity = ReticulumIdentity()
+    let conversation = Conversation(
+        destinationHash: "0123456789abcdef0123456789abcdef",
+        displayName: "Mismatched Peer",
+        verifiedIdentityKey: identity.publicKey,
+        identityVerifiedAt: .now
+    )
+    let snapshot = AppSnapshot(conversations: [conversation])
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(snapshot)
+    let store = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json"))
+
+    #expect(throws: SnapshotError.self) { try store.validatedSnapshot(from: data) }
+}
+
 @MainActor @Test func discoveryCleanupProtectsConversationDestinations() async throws {
     let now = Date.now.addingTimeInterval(8 * 24 * 60 * 60)
     let firstIdentity = ReticulumIdentity()
