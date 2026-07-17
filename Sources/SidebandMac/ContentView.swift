@@ -59,6 +59,7 @@ struct ContentView: View {
     @State private var renameDraft = ""
     @State private var deletingConversation: Conversation?
     @State private var clearingConversation: Conversation?
+    @State private var clearingTelemetryConversation: Conversation?
     @State private var backupDocument = SnapshotBackupDocument(data: Data())
     @State private var showingBackupExporter = false
     @State private var showingBackupImporter = false
@@ -168,6 +169,15 @@ struct ContentView: View {
             }
         } message: {
             Text("This permanently removes locally stored messages and attachments while keeping the contact.")
+        }
+        .alert("Clear Telemetry History?", isPresented: Binding(get: { clearingTelemetryConversation != nil }, set: { if !$0 { clearingTelemetryConversation = nil } })) {
+            Button("Cancel", role: .cancel) { clearingTelemetryConversation = nil }
+            Button("Clear Telemetry", role: .destructive) {
+                if let id = clearingTelemetryConversation?.id { _ = store.clearTelemetryHistory(id) }
+                clearingTelemetryConversation = nil
+            }
+        } message: {
+            Text("This removes stored location and battery readings from this conversation while retaining its messages and attachments.")
         }
         .alert("Restore Sideband Backup?", isPresented: Binding(get: { pendingRestoreData != nil }, set: { if !$0 { pendingRestoreData = nil } })) {
             Button("Cancel", role: .cancel) { pendingRestoreData = nil }
@@ -448,6 +458,11 @@ struct ContentView: View {
         .disabled(!store.hasPath(to: conversation.destinationHash) || store.activeLinkHashes.contains(conversation.destinationHash) || store.pendingLinkHashes.contains(conversation.destinationHash))
         if store.failedMessageCount(for: conversation.id) > 0 {
             Button { Task { await store.retryAllFailedMessages(in: conversation.id) } } label: { Label("Retry All Failed", systemImage: "arrow.clockwise") }
+        }
+        if store.telemetryMessageCount(for: conversation.id) > 0 {
+            Button(role: .destructive) { clearingTelemetryConversation = conversation } label: {
+                Label("Clear Telemetry History", systemImage: "location.slash")
+            }
         }
         Button(role: .destructive) { clearingConversation = conversation } label: { Label("Clear History", systemImage: "eraser") }
         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }

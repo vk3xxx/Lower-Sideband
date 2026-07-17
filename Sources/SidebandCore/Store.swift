@@ -563,6 +563,19 @@ public final class SidebandStore {
         save()
     }
 
+    public func telemetryMessageCount(for conversationID: UUID) -> Int {
+        messages.lazy.filter { $0.conversationID == conversationID && $0.telemetry != nil }.count
+    }
+
+    @discardableResult
+    public func clearTelemetryHistory(_ conversationID: UUID) -> Int {
+        let indices = messages.indices.filter { messages[$0].conversationID == conversationID && messages[$0].telemetry != nil }
+        guard !indices.isEmpty else { return 0 }
+        for index in indices { messages[index].telemetry = nil }
+        save()
+        return indices.count
+    }
+
     public func setConversationTrusted(_ trusted: Bool, conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].isTrusted = trusted

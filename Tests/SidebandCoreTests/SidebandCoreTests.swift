@@ -878,6 +878,20 @@ import Testing
     #expect(SidebandStore(persistenceURL: url).conversations.first?.telemetrySharingEnabled == false)
 }
 
+@MainActor @Test func clearingTelemetryPreservesMessages() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let conversation = try #require(store.selectedConversation)
+    await store.send("Position", attachments: [], telemetry: SidebandTelemetry(location: .init(latitude: -37.8, longitude: 145.0)))
+
+    #expect(store.telemetryMessageCount(for: conversation.id) == 1)
+    #expect(store.clearTelemetryHistory(conversation.id) == 1)
+    #expect(store.messages(for: conversation.id).count == 1)
+    #expect(store.messages(for: conversation.id).first?.body == "Position")
+    #expect(store.messages(for: conversation.id).first?.telemetry == nil)
+}
+
 @MainActor @Test func conversationDraftPersistsAndClears() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
