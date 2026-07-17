@@ -4,9 +4,20 @@
 
 - Version: 1.0.0
 - Build: 15
+- App Store Connect: Build 15 uploaded, processed and attached to version 1.0.0
 - Price: Free
 - Availability: All storefronts, including future storefronts
 - Release: Manual release after App Review approval
+
+## Submission checklist
+
+- Product metadata and screenshots: Complete
+- App Privacy and age rating: Complete
+- App Store build: Complete
+- App Review contact phone: Required before submission
+- EU Digital Services Act trader status: Confirm in App Store Connect before submission
+- Upstream licensing: Confirm App Store distribution permission for the CC BY-NC-SA-derived work before submission
+- Final Add for Review / Submit for Review action: Not yet performed
 
 ## Product page
 
