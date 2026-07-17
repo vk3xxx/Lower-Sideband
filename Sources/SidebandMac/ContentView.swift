@@ -838,10 +838,27 @@ private struct NetworkView: View {
                 GridRow { Text("Internet override"); TextField("Optional public IPv6 or DNS hostname", text: $store.networkInternetHost) }
                 GridRow { Text("Internet port"); TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never)) }
                 GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
+                GridRow {
+                    Text("Connection mode")
+                    Picker("Connection mode", selection: Binding(
+                        get: { store.connectionMode },
+                        set: { store.setConnectionMode($0) }
+                    )) {
+                        ForEach(NetworkConnectionMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
+                    }
+                    .labelsHidden()
+                }
                 GridRow { Text("Addressing"); Toggle("Prefer IPv6 with IPv4 fallback", isOn: Binding(get: { store.preferIPv6 }, set: { store.setPreferIPv6($0) })) }
                 GridRow { Text("Connection policy"); Toggle("Internet only — disable LAN gateways", isOn: Binding(get: { store.internetOnlyEnabled }, set: { store.setInternetOnly($0) })) }
                 GridRow { Text("Reconnect"); Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) })) }
                 GridRow { Text("Automatic connection"); Text(store.automaticConnectionDescription).foregroundStyle(.secondary) }
+                if store.connectionMode == .automatic {
+                    GridRow {
+                        Text("Discovery order")
+                        Text("Local Bonjour gateways, authenticated on-network interfaces, then healthy public gateways")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 GridRow { Text("Transport"); Text(transportSummary).foregroundStyle(.secondary) }
                 ForEach(store.networkInterfaces) { interface in
                     GridRow {

@@ -642,6 +642,34 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(SidebandStore(persistenceURL: url).internetOnlyEnabled)
 }
 
+@MainActor @Test func automaticDiscoveryIsTheDefaultAndConfiguredModePersists() {
+    let defaults = UserDefaults.standard
+    let previousMode = defaults.object(forKey: "reticulumConnectionMode")
+    let previousAutoConnect = defaults.object(forKey: "reticulumAutoConnect")
+    let previousInternetOnly = defaults.object(forKey: "reticulumInternetOnly")
+    defer {
+        if let previousMode { defaults.set(previousMode, forKey: "reticulumConnectionMode") }
+        else { defaults.removeObject(forKey: "reticulumConnectionMode") }
+        if let previousAutoConnect { defaults.set(previousAutoConnect, forKey: "reticulumAutoConnect") }
+        else { defaults.removeObject(forKey: "reticulumAutoConnect") }
+        if let previousInternetOnly { defaults.set(previousInternetOnly, forKey: "reticulumInternetOnly") }
+        else { defaults.removeObject(forKey: "reticulumInternetOnly") }
+    }
+    defaults.removeObject(forKey: "reticulumConnectionMode")
+    defaults.removeObject(forKey: "reticulumAutoConnect")
+    defaults.removeObject(forKey: "reticulumInternetOnly")
+    let firstURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let first = SidebandStore(persistenceURL: firstURL)
+    #expect(first.connectionMode == .automatic)
+    #expect(first.autoConnectEnabled)
+    #expect(!first.internetOnlyEnabled)
+
+    first.setAutoConnect(false)
+    first.setConnectionMode(.configured)
+    let restored = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json"))
+    #expect(restored.connectionMode == .configured)
+}
+
 @MainActor @Test func localContactLinkContainsDeliveryDestination() {
     let defaults = UserDefaults.standard
     let previous = defaults.string(forKey: "lxmfLocalDisplayName")

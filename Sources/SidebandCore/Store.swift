@@ -2,6 +2,18 @@ import Foundation
 import Observation
 import CryptoKit
 
+public enum NetworkConnectionMode: String, CaseIterable, Sendable {
+    case automatic
+    case configured
+
+    public var title: String {
+        switch self {
+        case .automatic: "Automatic discovery"
+        case .configured: "Configured gateway first"
+        }
+    }
+}
+
 public enum PaperMessageImportResult: Equatable, Sendable {
     case imported(conversationID: UUID)
     case duplicate
@@ -80,6 +92,7 @@ public final class SidebandStore {
     public var networkPort: Int
     public var preferIPv6: Bool
     public var autoConnectEnabled: Bool
+    public private(set) var connectionMode: NetworkConnectionMode
     public var internetOnlyEnabled: Bool
     public var autoInterfaceEnabled: Bool
     public var propagationNodeHash: String
@@ -214,6 +227,7 @@ public final class SidebandStore {
         networkPort = savedPort == 0 ? 4242 : savedPort
         preferIPv6 = UserDefaults.standard.object(forKey: "reticulumPreferIPv6") as? Bool ?? true
         autoConnectEnabled = UserDefaults.standard.object(forKey: "reticulumAutoConnect") as? Bool ?? true
+        connectionMode = UserDefaults.standard.string(forKey: "reticulumConnectionMode").flatMap(NetworkConnectionMode.init(rawValue:)) ?? .automatic
         internetOnlyEnabled = UserDefaults.standard.bool(forKey: "reticulumInternetOnly")
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
@@ -1688,6 +1702,16 @@ public final class SidebandStore {
         }
     }
 
+    public func setConnectionMode(_ mode: NetworkConnectionMode) {
+        guard connectionMode != mode else { return }
+        connectionMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: "reticulumConnectionMode")
+        attemptedConfiguredGatewayIDs.removeAll()
+        attemptedGatewayIDs.removeAll()
+        attemptedInternetGatewayIDs.removeAll()
+        if autoConnectEnabled { Task { await reconnectNetwork() } }
+    }
+
     public func setPreferIPv6(_ enabled: Bool) {
         preferIPv6 = enabled
         UserDefaults.standard.set(enabled, forKey: "reticulumPreferIPv6")
@@ -2200,7 +2224,9 @@ public final class SidebandStore {
         attemptedConfiguredGatewayIDs.removeAll()
         attemptedInternetGatewayIDs.removeAll()
         observedLANDiscoveryGrace = false
-        automaticConnectionDescription = "Trying configured Reticulum gateway"
+        automaticConnectionDescription = connectionMode == .automatic
+            ? "Discovering Reticulum gateways automatically"
+            : "Trying configured Reticulum gateway"
         await tryNextAutomaticConnection()
     }
 
@@ -2212,7 +2238,7 @@ public final class SidebandStore {
         }
         guard networkState != .ready, networkState != .connecting else { return }
 
-        if !internetOnlyEnabled {
+        if !internetOnlyEnabled, connectionMode == .configured {
             let configuredCandidates = ConfiguredReticulumGateways.ordered(
                 ipv4Host: networkHost,
                 ipv6Host: networkIPv6Host,
@@ -2227,7 +2253,9 @@ public final class SidebandStore {
                 await connectNetwork(explicitHost: gateway.host, explicitPort: gateway.port)
                 return
             }
+        }
 
+        if !internetOnlyEnabled {
             let candidates = AutomaticGatewaySelector.ordered(
                 lanDiscovery.gateways,
                 preferredID: preferredGatewayID,
