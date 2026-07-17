@@ -46,6 +46,7 @@ struct ContentView: View {
     @State private var showingCallHistory = false
     @State private var conversationSearch = ""
     @State private var showingArchived = false
+    @State private var showingUnreadOnly = false
     @State private var renamingConversation: Conversation?
     @State private var renameDraft = ""
     @State private var deletingConversation: Conversation?
@@ -84,6 +85,10 @@ struct ContentView: View {
                         Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
                     }
                     .help(showingArchived ? "Hide archived conversations" : "Show archived conversations")
+                    Button { showingUnreadOnly.toggle() } label: {
+                        Label(showingUnreadOnly ? "Show all conversations" : "Show unread conversations", systemImage: showingUnreadOnly ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    }
+                    .help(showingUnreadOnly ? "Show all conversations" : "Show unread conversations only")
                     Button(action: exportBackup) { Label("Export backup", systemImage: "externaldrive.badge.plus") }
                         .help("Export Sideband backup")
                     Button { showingBackupImporter = true } label: { Label("Restore backup", systemImage: "externaldrive.badge.timemachine") }
@@ -427,7 +432,9 @@ struct ContentView: View {
 
     private var filteredConversations: [Conversation] {
         let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        let visible = store.conversations.filter { showingArchived || !$0.isArchived }
+        let visible = store.conversations.filter {
+            (showingArchived || !$0.isArchived) && (!showingUnreadOnly || $0.unreadCount > 0)
+        }
         guard !query.isEmpty else { return visible }
         return visible.filter {
             $0.displayName.localizedCaseInsensitiveContains(query) || $0.destinationHash.localizedCaseInsensitiveContains(query)
@@ -436,6 +443,7 @@ struct ContentView: View {
 
     private var filteredDiscoveries: [DiscoveredDestination] {
         let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if showingUnreadOnly { return [] }
         let messageDestinations = store.discoveries.filter { !$0.isLXSTVoiceDestination }
         guard !query.isEmpty else { return messageDestinations }
         return messageDestinations.filter {
