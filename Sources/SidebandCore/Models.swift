@@ -183,16 +183,18 @@ public struct AppSnapshot: Codable, Sendable {
     public var discoveries: [DiscoveredDestination]
     public var drafts: [UUID: String]
     public var voiceCallHistory: [VoiceCall]
-    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:], voiceCallHistory: [VoiceCall] = []) {
+    public var pluginAuditEvents: [SidebandPluginAuditEvent]
+    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:], voiceCallHistory: [VoiceCall] = [], pluginAuditEvents: [SidebandPluginAuditEvent] = []) {
         self.schemaVersion = schemaVersion
         self.conversations = conversations
         self.messages = messages
         self.discoveries = discoveries
         self.drafts = drafts
         self.voiceCallHistory = voiceCallHistory
+        self.pluginAuditEvents = pluginAuditEvents
     }
 
-    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts, voiceCallHistory }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts, voiceCallHistory, pluginAuditEvents }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
@@ -201,6 +203,25 @@ public struct AppSnapshot: Codable, Sendable {
         discoveries = try values.decodeIfPresent([DiscoveredDestination].self, forKey: .discoveries) ?? []
         drafts = try values.decodeIfPresent([UUID: String].self, forKey: .drafts) ?? [:]
         voiceCallHistory = try values.decodeIfPresent([VoiceCall].self, forKey: .voiceCallHistory) ?? []
+        pluginAuditEvents = try values.decodeIfPresent([SidebandPluginAuditEvent].self, forKey: .pluginAuditEvents) ?? []
+    }
+}
+
+public struct SidebandPluginAuditEvent: Codable, Hashable, Sendable, Identifiable {
+    public let id: UUID
+    public let timestamp: Date
+    public let pluginIdentifier: String?
+    public let command: String
+    public let conversationID: UUID
+    public let outcome: SidebandPluginExecutionOutcome
+
+    public init(id: UUID = UUID(), timestamp: Date = .now, pluginIdentifier: String?, command: String, conversationID: UUID, outcome: SidebandPluginExecutionOutcome) {
+        self.id = id
+        self.timestamp = timestamp
+        self.pluginIdentifier = pluginIdentifier
+        self.command = String(command.prefix(64))
+        self.conversationID = conversationID
+        self.outcome = outcome
     }
 }
 

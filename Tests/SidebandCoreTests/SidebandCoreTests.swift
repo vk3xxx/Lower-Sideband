@@ -9,6 +9,24 @@ private struct TestNativePlugin: SidebandCommandPlugin {
     }
 }
 
+private struct PermissionProbePlugin: SidebandCommandPlugin {
+    let manifest: SidebandPluginManifest
+    init(permissions: Set<SidebandPluginPermission>) {
+        manifest = SidebandPluginManifest(identifier: "test.permissions", name: "Permission Probe", version: "1", commands: ["probe"], permissions: permissions)
+    }
+    func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {
+        SidebandPluginResponse(text: [context.senderDestinationHash ?? "redacted", context.networkReady.map(String.init) ?? "redacted", context.routeAvailable.map(String.init) ?? "redacted"].joined(separator: "|"))
+    }
+}
+
+private struct SlowNativePlugin: SidebandCommandPlugin {
+    let manifest = SidebandPluginManifest(identifier: "test.slow", name: "Slow Plugin", version: "1", commands: ["slow"])
+    func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {
+        try await Task.sleep(for: .seconds(10))
+        return SidebandPluginResponse(text: "late")
+    }
+}
+
 @Test func explicitSingleDestinationProofUsesPacketHashForRoutingAndSignature() throws {
     let identity = ReticulumIdentity()
     let destination = Data(repeating: 0x22, count: 16)
@@ -497,12 +515,41 @@ private struct TestNativePlugin: SidebandCommandPlugin {
         else { defaults.removeObject(forKey: key) }
     }
     defaults.removeObject(forKey: key)
-    let registry = SidebandPluginRegistry(plugins: [TestNativePlugin()])
+    let registry = SidebandPluginRegistry(plugins: [TestNativePlugin()], enabledIdentifiers: ["test.native"], persistsConfiguration: false)
     let context = SidebandPluginContext(command: "test-echo", arguments: ["a", "b"], senderDestinationHash: String(repeating: "0", count: 32), networkReady: true, routeAvailable: true)
-    #expect(await registry.execute(command: "test-echo", arguments: ["a", "b"], context: context)?.text == "a|b")
-    #expect(await registry.execute(command: "undeclared", arguments: [], context: context) == nil)
+    let success = await registry.execute(command: "test-echo", arguments: ["a", "b"], context: context)
+    #expect(success.response?.text == "a|b")
+    #expect(success.outcome == .succeeded)
+    #expect(await registry.execute(command: "undeclared", arguments: [], context: context).outcome == .unavailable)
     registry.setEnabled(false, identifier: "test.native")
-    #expect(await registry.execute(command: "test-echo", arguments: [], context: context) == nil)
+    #expect(await registry.execute(command: "test-echo", arguments: [], context: context).outcome == .unavailable)
+}
+
+@MainActor @Test func nativePluginsReceiveOnlyDeclaredContextPermissions() async {
+    let fullContext = SidebandPluginContext(command: "probe", arguments: [], senderDestinationHash: String(repeating: "a", count: 32), networkReady: true, routeAvailable: false)
+    let restricted = SidebandPluginRegistry(plugins: [PermissionProbePlugin(permissions: [])], enabledIdentifiers: ["test.permissions"], persistsConfiguration: false)
+    #expect(await restricted.execute(command: "probe", arguments: [], context: fullContext).response?.text == "redacted|redacted|redacted")
+
+    let allowed = SidebandPluginRegistry(plugins: [PermissionProbePlugin(permissions: [.networkStatus, .conversationMetadata])], enabledIdentifiers: ["test.permissions"], persistsConfiguration: false)
+    #expect(await allowed.execute(command: "probe", arguments: [], context: fullContext).response?.text == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|true|false")
+}
+
+@MainActor @Test func nativePluginTimeoutIsBoundedAndReported() async {
+    let registry = SidebandPluginRegistry(plugins: [SlowNativePlugin()], executionTimeout: .milliseconds(10), enabledIdentifiers: ["test.slow"], persistsConfiguration: false)
+    let context = SidebandPluginContext(command: "slow", arguments: [])
+    let result = await registry.execute(command: "slow", arguments: [], context: context)
+    #expect(result.outcome == .timedOut)
+    #expect(result.response?.text == "Plugin request timed out safely.")
+}
+
+@Test func pluginAuditHistoryDecodesLegacySnapshotsAndRejectsSensitivePayloads() throws {
+    let legacy = Data("{\"schemaVersion\":1}".utf8)
+    #expect(try JSONDecoder().decode(AppSnapshot.self, from: legacy).pluginAuditEvents.isEmpty)
+    let event = SidebandPluginAuditEvent(pluginIdentifier: "test.native", command: "probe", conversationID: UUID(), outcome: .succeeded)
+    let encoded = try JSONEncoder().encode(event)
+    let text = String(decoding: encoded, as: UTF8.self)
+    #expect(!text.contains("arguments"))
+    #expect(!text.contains("senderDestinationHash"))
 }
 
 @MainActor @Test func reactionsAreBoundedQueuedAndPersisted() async {

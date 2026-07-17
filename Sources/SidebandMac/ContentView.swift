@@ -820,12 +820,49 @@ private struct NetworkView: View {
                                 Text("v\(manifest.version) · \(manifest.commands.sorted().joined(separator: ", "))")
                                     .font(.caption.monospaced())
                                     .foregroundStyle(.secondary)
+                                Text(pluginPermissionSummary(manifest.permissions))
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
                             }
                         }
+                    }
+                    ForEach(store.pluginRegistry.rejectedPluginDescriptions, id: \.self) { description in
+                        Label(description, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
                     }
                     Text("Plugins are app-bundled Swift components. A contact must also be trusted, fingerprint-verified and explicitly authorized before plugin requests can run.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if !store.pluginAuditEvents.isEmpty {
+                        Divider()
+                        HStack {
+                            Text("Recent activity").font(.caption.bold())
+                            Spacer()
+                            Button("Clear history", role: .destructive) { store.clearPluginAuditHistory() }
+                                .font(.caption)
+                        }
+                        ForEach(store.pluginAuditEvents.prefix(10)) { event in
+                            HStack(spacing: 8) {
+                                Image(systemName: pluginAuditIcon(event.outcome))
+                                    .foregroundStyle(pluginAuditColor(event.outcome))
+                                    .accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(event.command).font(.caption.monospaced()).lineLimit(1)
+                                    Text(event.pluginIdentifier ?? "No enabled plugin")
+                                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Text(event.timestamp, style: .relative)
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Plugin command \(event.command), \(event.outcome.rawValue)")
+                        }
+                        Text("Activity records contain only the command name and outcome. Arguments and message content are never logged.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }.padding(6)
             }
             GroupBox("Notifications") {
@@ -1012,6 +1049,33 @@ private struct NetworkView: View {
     }
     private func capability(_ title: String, complete: Bool) -> some View {
         Label(title, systemImage: complete ? "checkmark.circle.fill" : "circle.dotted").foregroundStyle(complete ? Color.green : Color.secondary)
+    }
+    private func pluginPermissionSummary(_ permissions: Set<SidebandPluginPermission>) -> String {
+        guard !permissions.isEmpty else { return "Permissions: none" }
+        let names = permissions.sorted { $0.rawValue < $1.rawValue }.map {
+            switch $0 {
+            case .networkStatus: "network status"
+            case .conversationMetadata: "contact identifier"
+            }
+        }
+        return "Permissions: " + names.joined(separator: ", ")
+    }
+    private func pluginAuditIcon(_ outcome: SidebandPluginExecutionOutcome) -> String {
+        switch outcome {
+        case .succeeded: "checkmark.circle.fill"
+        case .denied: "lock.fill"
+        case .unavailable: "puzzlepiece.extension"
+        case .failed: "exclamationmark.triangle.fill"
+        case .timedOut: "clock.badge.exclamationmark"
+        }
+    }
+    private func pluginAuditColor(_ outcome: SidebandPluginExecutionOutcome) -> Color {
+        switch outcome {
+        case .succeeded: .green
+        case .denied: .orange
+        case .unavailable: .secondary
+        case .failed, .timedOut: .red
+        }
     }
     private var propagationStatus: String {
         if store.propagationNodeHasPath { return "Propagation node reachable" }

@@ -25,9 +25,17 @@ public struct SidebandPluginManifest: Codable, Hashable, Sendable, Identifiable 
 public struct SidebandPluginContext: Sendable {
     public let command: String
     public let arguments: [String]
-    public let senderDestinationHash: String
-    public let networkReady: Bool
-    public let routeAvailable: Bool
+    public let senderDestinationHash: String?
+    public let networkReady: Bool?
+    public let routeAvailable: Bool?
+
+    public init(command: String, arguments: [String], senderDestinationHash: String? = nil, networkReady: Bool? = nil, routeAvailable: Bool? = nil) {
+        self.command = command
+        self.arguments = arguments
+        self.senderDestinationHash = senderDestinationHash
+        self.networkReady = networkReady
+        self.routeAvailable = routeAvailable
+    }
 }
 
 public struct SidebandPluginResponse: Sendable, Equatable {
@@ -40,14 +48,56 @@ public protocol SidebandCommandPlugin: Sendable {
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse
 }
 
+public enum SidebandPluginExecutionOutcome: String, Codable, Hashable, Sendable {
+    case succeeded
+    case unavailable
+    case denied
+    case failed
+    case timedOut
+}
+
+public struct SidebandPluginExecution: Sendable, Equatable {
+    public let pluginIdentifier: String?
+    public let outcome: SidebandPluginExecutionOutcome
+    public let response: SidebandPluginResponse?
+
+    public init(pluginIdentifier: String?, outcome: SidebandPluginExecutionOutcome, response: SidebandPluginResponse? = nil) {
+        self.pluginIdentifier = pluginIdentifier
+        self.outcome = outcome
+        self.response = response
+    }
+}
+
 @MainActor public final class SidebandPluginRegistry {
     private var plugins: [String: any SidebandCommandPlugin] = [:]
     private var enabledIdentifiers: Set<String>
+    private let executionTimeout: Duration
+    private let persistsConfiguration: Bool
+    public private(set) var rejectedPluginDescriptions: [String] = []
 
-    public init(plugins: [any SidebandCommandPlugin] = [SidebandInfoPlugin()]) {
-        let saved = UserDefaults.standard.stringArray(forKey: "sidebandEnabledPlugins")
-        enabledIdentifiers = Set(saved ?? plugins.map(\.manifest.identifier))
-        for plugin in plugins { self.plugins[plugin.manifest.identifier] = plugin }
+    public init(plugins: [any SidebandCommandPlugin] = [SidebandInfoPlugin()], executionTimeout: Duration = .seconds(3), enabledIdentifiers: Set<String>? = nil, persistsConfiguration: Bool = true) {
+        self.executionTimeout = executionTimeout
+        self.persistsConfiguration = persistsConfiguration
+        var claimedCommands: Set<String> = []
+        for plugin in plugins.sorted(by: { $0.manifest.identifier < $1.manifest.identifier }) {
+            let manifest = plugin.manifest
+            guard Self.isValid(manifest) else {
+                rejectedPluginDescriptions.append("\(manifest.name): invalid manifest")
+                continue
+            }
+            guard self.plugins[manifest.identifier] == nil else {
+                rejectedPluginDescriptions.append("\(manifest.name): duplicate identifier")
+                continue
+            }
+            guard claimedCommands.isDisjoint(with: manifest.commands) else {
+                rejectedPluginDescriptions.append("\(manifest.name): command conflicts with another plugin")
+                continue
+            }
+            self.plugins[manifest.identifier] = plugin
+            claimedCommands.formUnion(manifest.commands)
+        }
+        let saved = persistsConfiguration ? UserDefaults.standard.stringArray(forKey: "sidebandEnabledPlugins") : nil
+        self.enabledIdentifiers = (enabledIdentifiers ?? saved.map(Set.init) ?? Set(self.plugins.keys)).intersection(self.plugins.keys)
         persistEnabledIdentifiers()
     }
 
@@ -64,27 +114,58 @@ public protocol SidebandCommandPlugin: Sendable {
         persistEnabledIdentifiers()
     }
 
-    public func execute(command: String, arguments: [String], context: SidebandPluginContext) async -> SidebandPluginResponse? {
+    public func execute(command: String, arguments: [String], context: SidebandPluginContext) async -> SidebandPluginExecution {
         guard let plugin = plugins.values.first(where: {
             enabledIdentifiers.contains($0.manifest.identifier) && $0.manifest.commands.contains(command)
-        }) else { return nil }
-        return await withTaskGroup(of: SidebandPluginResponse?.self) { group in
+        }) else { return SidebandPluginExecution(pluginIdentifier: nil, outcome: .unavailable) }
+        let permissions = plugin.manifest.permissions
+        let authorizedContext = SidebandPluginContext(
+            command: command,
+            arguments: arguments,
+            senderDestinationHash: permissions.contains(.conversationMetadata) ? context.senderDestinationHash : nil,
+            networkReady: permissions.contains(.networkStatus) ? context.networkReady : nil,
+            routeAvailable: permissions.contains(.networkStatus) ? context.routeAvailable : nil
+        )
+        enum Result: Sendable {
+            case response(SidebandPluginResponse)
+            case failed
+            case timedOut
+        }
+        let timeout = executionTimeout
+        let result = await withTaskGroup(of: Result.self) { group in
             group.addTask {
-                do { return try await plugin.handle(context) }
-                catch { return SidebandPluginResponse(text: "Plugin request failed safely.") }
+                do { return .response(try await plugin.handle(authorizedContext)) }
+                catch { return .failed }
             }
             group.addTask {
-                try? await Task.sleep(for: .seconds(3))
-                return SidebandPluginResponse(text: "Plugin request timed out safely.")
+                try? await Task.sleep(for: timeout)
+                return .timedOut
             }
-            let response = await group.next() ?? nil
+            let result = await group.next() ?? .failed
             group.cancelAll()
-            return response
+            return result
+        }
+        switch result {
+        case .response(let response):
+            return SidebandPluginExecution(pluginIdentifier: plugin.manifest.identifier, outcome: .succeeded, response: response)
+        case .failed:
+            return SidebandPluginExecution(pluginIdentifier: plugin.manifest.identifier, outcome: .failed, response: SidebandPluginResponse(text: "Plugin request failed safely."))
+        case .timedOut:
+            return SidebandPluginExecution(pluginIdentifier: plugin.manifest.identifier, outcome: .timedOut, response: SidebandPluginResponse(text: "Plugin request timed out safely."))
         }
     }
 
     private func persistEnabledIdentifiers() {
+        guard persistsConfiguration else { return }
         UserDefaults.standard.set(enabledIdentifiers.sorted(), forKey: "sidebandEnabledPlugins")
+    }
+
+    private static func isValid(_ manifest: SidebandPluginManifest) -> Bool {
+        !manifest.identifier.isEmpty && manifest.identifier.count <= 128 &&
+        !manifest.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && manifest.name.count <= 80 &&
+        !manifest.version.isEmpty && manifest.version.count <= 32 &&
+        !manifest.commands.isEmpty && manifest.commands.count <= 32 &&
+        manifest.commands.allSatisfy(SidebandPluginCommandLine.isValidCommand)
     }
 }
 
@@ -102,7 +183,9 @@ public struct SidebandInfoPlugin: SidebandCommandPlugin {
     public func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {
         switch context.command {
         case "route-status":
-            return SidebandPluginResponse(text: "Route status: network \(context.networkReady ? "ready" : "offline"), route \(context.routeAvailable ? "available" : "unknown").")
+            let network = context.networkReady.map { $0 ? "ready" : "offline" } ?? "not permitted"
+            let route = context.routeAvailable.map { $0 ? "available" : "unknown" } ?? "not permitted"
+            return SidebandPluginResponse(text: "Route status: network \(network), route \(route).")
         default:
             return SidebandPluginResponse(text: "Sideband Swift native plugin service is available.")
         }
@@ -137,7 +220,7 @@ public enum SidebandPluginCommandLine {
         return (command, Array(tokens.dropFirst()))
     }
 
-    private static func isValidCommand(_ command: String) -> Bool {
+    fileprivate static func isValidCommand(_ command: String) -> Bool {
         !command.isEmpty && command.count <= 64 && command.allSatisfy { $0.isLetter || $0.isNumber || ".-_".contains($0) }
     }
 

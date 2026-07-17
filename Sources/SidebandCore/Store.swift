@@ -67,6 +67,7 @@ public final class SidebandStore {
     public private(set) var voiceCall: VoiceCall?
     public private(set) var voiceCallHistory: [VoiceCall] = []
     public private(set) var pluginConfigurationRevision = 0
+    public private(set) var pluginAuditEvents: [SidebandPluginAuditEvent] = []
     public private(set) var voiceTrustedOnly: Bool
     public private(set) var richTextTrustedOnly: Bool
     public private(set) var preferredVoiceProfile: LXSTVoice.Profile
@@ -783,6 +784,11 @@ public final class SidebandStore {
         return pluginRegistry.isEnabled(identifier)
     }
 
+    public func clearPluginAuditHistory() {
+        pluginAuditEvents.removeAll()
+        save()
+    }
+
     public func setConversationDeliveryPreference(_ preference: Conversation.DeliveryPreference, conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].deliveryPreference = preference
@@ -1453,6 +1459,7 @@ public final class SidebandStore {
             "Discoveries: \(discoveries.count) (\(validatedDiscoveryCount) validated)",
             "Links: \(activeLinkCount) active, \(pendingLinkCount) pending",
             "Messages: \(messages.count) total, \(messages.count(where: { $0.state == .queued })) queued, \(messages.count(where: { $0.state == .failed })) failed",
+            "Plugins: \(pluginRegistry.manifests.count) loaded, \(pluginRegistry.rejectedPluginDescriptions.count) rejected, \(pluginAuditEvents.count) audit events",
             "Propagation node: \(propagationNodeHash.isEmpty ? "not discovered" : propagationNodeHash) (\(propagationNodeIsAutomatic ? "automatic" : "manual"))",
             "Remote wake token: \(UserDefaults.standard.string(forKey: "sidebandAPNsDeviceToken") == nil ? "not registered" : "registered")",
             "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")"
@@ -1465,7 +1472,7 @@ public final class SidebandStore {
     }
 
     public func exportSnapshotData() throws -> Data {
-        let snapshot = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory)
+        let snapshot = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents)
         let data = try JSONEncoder.sideband.encode(snapshot)
         let validated = try JSONDecoder.sideband.decode(AppSnapshot.self, from: data)
         guard validated.schemaVersion <= AppSnapshot.currentSchemaVersion else { throw SnapshotError.unsupportedVersion }
@@ -1482,6 +1489,12 @@ public final class SidebandStore {
               destinations.allSatisfy(DestinationHash.isValid),
               snapshot.messages.allSatisfy({ conversationIDs.contains($0.conversationID) }),
               snapshot.drafts.keys.allSatisfy({ conversationIDs.contains($0) }),
+              snapshot.pluginAuditEvents.count <= 200,
+              snapshot.pluginAuditEvents.allSatisfy({ event in
+                  conversationIDs.contains(event.conversationID) &&
+                  !event.command.isEmpty && event.command.count <= 64 &&
+                  (event.pluginIdentifier?.count ?? 0) <= 128
+              }),
               snapshot.messages.flatMap(\.attachments).allSatisfy({
                   !$0.relativePath.isEmpty && URL(fileURLWithPath: $0.relativePath).lastPathComponent == $0.relativePath
               }),
@@ -1502,6 +1515,7 @@ public final class SidebandStore {
         sortConversations()
         discoveries = snapshot.discoveries
         voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
+        pluginAuditEvents = Array(snapshot.pluginAuditEvents.prefix(200))
         drafts = snapshot.drafts
         selectedConversationID = conversations.first?.id
         visibleConversationID = nil
@@ -3046,7 +3060,10 @@ public final class SidebandStore {
                 response = "Signal report: Reticulum route \(route). RSSI and SNR are not exposed by Apple Network.framework."
             case .plugin(let command, let arguments):
                 guard let conversation = conversations.first(where: { $0.id == conversationID }),
-                      conversation.pluginCommandsEnabled else { continue }
+                      conversation.pluginCommandsEnabled else {
+                    recordPluginAudit(command: command, conversationID: conversationID, pluginIdentifier: nil, outcome: .denied)
+                    continue
+                }
                 let context = SidebandPluginContext(
                     command: command,
                     arguments: arguments,
@@ -3054,12 +3071,20 @@ public final class SidebandStore {
                     networkReady: networkState == .ready,
                     routeAvailable: hasPath(to: conversation.destinationHash)
                 )
-                guard let pluginResponse = await pluginRegistry.execute(command: command, arguments: arguments, context: context) else { continue }
+                let execution = await pluginRegistry.execute(command: command, arguments: arguments, context: context)
+                recordPluginAudit(command: command, conversationID: conversationID, pluginIdentifier: execution.pluginIdentifier, outcome: execution.outcome)
+                guard let pluginResponse = execution.response else { continue }
                 response = pluginResponse.text
             }
             enqueueAutomatedResponse(response, conversationID: conversationID)
         }
         await attemptDelivery(for: conversationID)
+    }
+
+    private func recordPluginAudit(command: String, conversationID: UUID, pluginIdentifier: String?, outcome: SidebandPluginExecutionOutcome) {
+        pluginAuditEvents.insert(SidebandPluginAuditEvent(pluginIdentifier: pluginIdentifier, command: command, conversationID: conversationID, outcome: outcome), at: 0)
+        if pluginAuditEvents.count > 200 { pluginAuditEvents.removeLast(pluginAuditEvents.count - 200) }
+        save()
     }
 
     private func enqueueAutomatedResponse(_ body: String, conversationID: UUID) {
@@ -3170,6 +3195,7 @@ public final class SidebandStore {
         }
         discoveries = snapshot.discoveries
         voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
+        pluginAuditEvents = Array(snapshot.pluginAuditEvents.prefix(200))
         let conversationIDs = Set(conversations.map(\.id))
         drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }
         selectedConversationID = conversations.first?.id
@@ -3211,7 +3237,7 @@ public final class SidebandStore {
                       (try? validatedSnapshot(from: existingPlaintext)) != nil {
                 try existingData.write(to: automaticBackupURL, options: .atomic)
             }
-            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory))
+            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents))
             let encrypted = try localDataCipher.seal(plaintext, context: "application-snapshot-v1")
             try encrypted.write(to: persistenceURL, options: .atomic)
             lastValidatedPersistenceData = encrypted
