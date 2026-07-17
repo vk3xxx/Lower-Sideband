@@ -1357,6 +1357,7 @@ private struct ConversationView: View {
     @State private var paperMessageURI: String?
     @State private var replyingTo: Message?
     @State private var composeAsMarkdown = false
+    @State private var scheduledFor: Date?
     @State private var messagePendingDeletion: Message?
     @State private var inspectedMessage: Message?
     @State private var messageToForward: Message?
@@ -1618,8 +1619,12 @@ private struct ConversationView: View {
                                             }
                                         }
                                     }
-                                    if message.direction == .outgoing && (message.state == .failed || message.state == .queued) {
+                                    if message.direction == .outgoing && (message.state == .failed || (message.state == .queued && message.scheduledFor == nil)) {
                                         Button { Task { await store.retryMessage(message.id) } } label: { Label("Retry Now", systemImage: "arrow.clockwise") }
+                                    }
+                                    if message.direction == .outgoing && message.state == .queued && message.scheduledFor != nil {
+                                        Button { Task { await store.sendScheduledMessageNow(message.id) } } label: { Label("Send Scheduled Message Now", systemImage: "paperplane") }
+                                        Button(role: .destructive) { Task { await store.cancelScheduledMessage(message.id) } } label: { Label("Cancel Scheduled Message", systemImage: "calendar.badge.minus") }
                                     }
                                     if message.direction == .outgoing {
                                         Button { presentPaperMessage(message) } label: { Label("Show Paper Message QR", systemImage: "qrcode") }
@@ -1678,6 +1683,18 @@ private struct ConversationView: View {
                         }
                     }
                 }
+                if let scheduledFor {
+                    HStack {
+                        Label("Scheduled", systemImage: "calendar.badge.clock")
+                        DatePicker("Delivery time", selection: Binding(get: { scheduledFor }, set: { self.scheduledFor = $0 }), in: Date.now.addingTimeInterval(60)...Date.now.addingTimeInterval(366 * 24 * 60 * 60))
+                            .labelsHidden()
+                        Spacer()
+                        Button("Cancel", role: .cancel) { self.scheduledFor = nil }
+                    }
+                    .font(.caption)
+                    .padding(8)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                }
                 HStack {
                     Button(action: shareTelemetry) {
                         if telemetryCapture.isRequesting { ProgressView().controlSize(.small) }
@@ -1700,6 +1717,10 @@ private struct ConversationView: View {
                     }
                     .help(composeAsMarkdown ? "Markdown formatting enabled" : "Enable Markdown formatting")
                     .accessibilityLabel(composeAsMarkdown ? "Disable Markdown formatting" : "Enable Markdown formatting")
+                    Button { scheduledFor = scheduledFor == nil ? Date.now.addingTimeInterval(60 * 60) : nil } label: {
+                        Image(systemName: scheduledFor == nil ? "calendar.badge.clock" : "calendar.badge.checkmark")
+                    }
+                    .help(scheduledFor == nil ? "Schedule message" : "Cancel scheduled delivery")
                     TextField("Message", text: $draft, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .focused($focusedField, equals: .composer)
@@ -1888,14 +1909,16 @@ private struct ConversationView: View {
         let text = draft
         let attachments = pendingAttachments
         let repliedMessage = replyingTo
+        let deliveryDate = scheduledFor
         draftSaveTask?.cancel()
         draft = ""
         store.updateDraft("", for: conversation.id)
         pendingAttachments = []
         replyingTo = nil
+        scheduledFor = nil
         let renderer: Message.Renderer = composeAsMarkdown ? .markdown : .plain
         Task {
-            let accepted = await store.send(text, attachments: attachments, replyingTo: repliedMessage, renderer: renderer)
+            let accepted = await store.send(text, attachments: attachments, replyingTo: repliedMessage, renderer: renderer, scheduledFor: deliveryDate)
             guard !accepted else { return }
             guard isVisible else {
                 for attachment in attachments { try? await store.attachmentStore.remove(attachment) }
@@ -1909,6 +1932,7 @@ private struct ConversationView: View {
                 pendingAttachments.append(attachment)
             }
             if replyingTo == nil { replyingTo = repliedMessage }
+            if scheduledFor == nil { scheduledFor = deliveryDate }
         }
     }
 
@@ -2033,6 +2057,7 @@ private struct ConversationView: View {
         if let attempt = message.lastDeliveryAttemptAt { lines.append("Last delivery attempt: \(formatter.string(from: attempt))") }
         if let mode = message.lastDeliveryMode { lines.append("Last delivery mode: \(mode.rawValue)") }
         if let failure = message.lastDeliveryFailure { lines.append("Last delivery issue: \(failure)") }
+        if let scheduledFor = message.scheduledFor { lines.append("Scheduled for: \(formatter.string(from: scheduledFor))") }
         lines.append("Starred: \(message.isStarred ? "yes" : "no")")
         if let replyTo = message.replyTo { lines.append("Reply to LXMF hash: \(replyTo.sidebandHex)") }
         if let replyQuote = message.replyQuote { lines.append("Reply quote: \(replyQuote)") }

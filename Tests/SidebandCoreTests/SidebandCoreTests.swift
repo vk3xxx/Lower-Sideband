@@ -341,6 +341,32 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(try store.importConversationData(data) == 0)
 }
 
+@MainActor @Test func scheduledMessagesPersistStayGatedAndCanSendNow() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let future = Date.now.addingTimeInterval(3_600)
+    #expect(await store.send("Later", attachments: [], scheduledFor: future))
+    let message = try #require(store.messages.first)
+    #expect(message.scheduledFor == future)
+    #expect(store.dueQueuedMessageCount() == 0)
+    #expect(store.nextScheduledMessageDate == future)
+    let restored = SidebandStore(persistenceURL: url)
+    #expect(abs((restored.messages.first?.scheduledFor?.timeIntervalSince(future)) ?? .infinity) < 1)
+
+    await restored.sendScheduledMessageNow(message.id)
+    #expect(restored.messages.first?.scheduledFor == nil)
+    #expect(restored.dueQueuedMessageCount() == 1)
+}
+
+@MainActor @Test func scheduledMessageValidationRejectsPastAndExcessiveDates() async {
+    let store = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json"))
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    #expect(!(await store.send("Past", attachments: [], scheduledFor: Date.now.addingTimeInterval(-60))))
+    #expect(!(await store.send("Too far", attachments: [], scheduledFor: Date.now.addingTimeInterval(367 * 24 * 60 * 60))))
+    #expect(store.messages.isEmpty)
+}
+
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
     let identity = ReticulumIdentity()
     let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))

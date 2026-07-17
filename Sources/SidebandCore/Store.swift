@@ -356,6 +356,10 @@ public final class SidebandStore {
     public var failedMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .failed }) }
     public var reactionCount: Int { messages.count(where: { $0.reactionTo != nil }) }
     public var starredMessageCount: Int { messages.count(where: \.isStarred) }
+    public var nextScheduledMessageDate: Date? { messages.compactMap(\.scheduledFor).filter { $0 > .now }.min() }
+    public func dueQueuedMessageCount(at date: Date = .now) -> Int {
+        messages.count { $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= date }
+    }
     public var activeAttachmentTransferCount: Int {
         messages.reduce(0) { count, message in
             count + message.attachments.count(where: { $0.state == .queued || $0.state == .transferring })
@@ -499,7 +503,7 @@ public final class SidebandStore {
                 commands: item.commands ?? [], deliveryAttemptCount: item.deliveryAttemptCount ?? 0,
                 lastDeliveryAttemptAt: item.lastDeliveryAttemptAt, lastDeliveryMode: item.lastDeliveryMode,
                 lastDeliveryFailure: safeState == item.state ? item.lastDeliveryFailure : "Imported archive item; not queued",
-                isStarred: item.isStarred ?? false
+                isStarred: item.isStarred ?? false, scheduledFor: nil
             ))
             seenIDs.insert(item.id)
             if let lxmfID = item.lxmfID { seenLXMFIDs.insert(lxmfID) }
@@ -984,7 +988,7 @@ public final class SidebandStore {
     }
 
     @discardableResult
-    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain) async -> Bool {
+    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain, scheduledFor: Date? = nil) async -> Bool {
         var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var renderer = requestedRenderer
         if body.hasPrefix("#!md\n") {
@@ -1017,19 +1021,39 @@ public final class SidebandStore {
             return false
         }
         guard validateAttachmentTotal(attachments) else { return false }
+        if let scheduledFor, scheduledFor < Date.now.addingTimeInterval(30) || scheduledFor > Date.now.addingTimeInterval(366 * 24 * 60 * 60) {
+            lastError = "Scheduled messages must be between one minute and one year in the future."
+            return false
+        }
         let message = Message(
             conversationID: conversation.id, body: body, direction: .outgoing, state: .queued,
             attachments: attachments, telemetry: telemetry, renderer: renderer,
             replyTo: repliedMessage?.lxmfID,
             replyQuote: repliedMessage.map { replyQuote(for: $0) },
             commentTo: repliedMessage?.lxmfID,
-            outboxOwnerID: syncDeviceID, outboxOwnerUpdatedAt: .now
+            outboxOwnerID: syncDeviceID, outboxOwnerUpdatedAt: .now, scheduledFor: scheduledFor
         )
         messages.append(message)
         touch(conversation.id)
         save()
-        await attemptDelivery(for: conversation.id)
+        if scheduledFor == nil { await attemptDelivery(for: conversation.id) }
+        else { backgroundRefresh.schedule(earliest: scheduledFor) }
         return true
+    }
+
+    public func sendScheduledMessageNow(_ messageID: UUID) async {
+        guard let index = messages.firstIndex(where: { $0.id == messageID && $0.direction == .outgoing && $0.state == .queued && $0.scheduledFor != nil }) else { return }
+        messages[index].scheduledFor = nil
+        messages[index].outboxOwnerID = syncDeviceID
+        messages[index].outboxOwnerUpdatedAt = .now
+        let conversationID = messages[index].conversationID
+        save()
+        await attemptDelivery(for: conversationID)
+    }
+
+    public func cancelScheduledMessage(_ messageID: UUID) async {
+        guard messages.contains(where: { $0.id == messageID && $0.state == .queued && $0.scheduledFor != nil }) else { return }
+        await deleteMessage(messageID)
     }
 
     public func sendReaction(_ content: String, to target: Message) async {
@@ -1188,7 +1212,7 @@ public final class SidebandStore {
 
     public func flushQueuedMessages() async {
         let conversationIDs = Set(messages.lazy.filter {
-            $0.direction == .outgoing && $0.state == .queued && self.ownsOutbox($0)
+            $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && self.ownsOutbox($0)
         }.map(\.conversationID))
         for conversationID in conversationIDs { await attemptDelivery(for: conversationID) }
     }
@@ -1383,7 +1407,7 @@ public final class SidebandStore {
         isApplicationActive = false
         flushDeferredSave()
         stopPeriodicPropagationSync()
-        backgroundRefresh.schedule()
+        backgroundRefresh.schedule(earliest: nextScheduledMessageDate)
     }
 
     private func performBackgroundRefresh() async -> Bool {
@@ -2884,7 +2908,7 @@ public final class SidebandStore {
     private func attemptDelivery(for conversationID: UUID) async {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
         let pending = messages.filter {
-            $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0)
+            $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && ownsOutbox($0)
         }
         guard !pending.isEmpty else { return }
         let attachmentMessages = pending.filter { !$0.attachments.isEmpty }
@@ -2905,7 +2929,7 @@ public final class SidebandStore {
             await propagateQueued(for: conversationID)
         }
         let remainingQueued = messages.filter {
-            $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty && ownsOutbox($0)
+            $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && $0.attachments.isEmpty && ownsOutbox($0)
         }
         var requiresLink = !attachmentMessages.isEmpty
         for item in remainingQueued {
@@ -2932,7 +2956,7 @@ public final class SidebandStore {
             return
         }
         guard let session = activeSession(to: conversation.destinationHash) else { return }
-        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty && ownsOutbox($0) }) {
+        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && $0.attachments.isEmpty && ownsOutbox($0) }) {
             guard item.attachments.isEmpty else { continue }
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
@@ -3249,7 +3273,7 @@ public final class SidebandStore {
               let propagationSession = activeLinks.values.first(where: { $0.destinationHash.hex == propagationNodeHash }) else { return }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
-        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty && ownsOutbox($0) }) {
+        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && $0.attachments.isEmpty && ownsOutbox($0) }) {
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)

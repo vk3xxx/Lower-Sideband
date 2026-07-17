@@ -34,12 +34,12 @@ public final class BackgroundRefreshCoordinator {
 #endif
     }
 
-    public func schedule() {
+    public func schedule(earliest: Date? = nil) {
 #if os(iOS)
         guard isRegistered else { return }
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.identifier)
         let request = BGAppRefreshTaskRequest(identifier: Self.identifier)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        request.earliestBeginDate = max(earliest ?? .distantPast, Date(timeIntervalSinceNow: 15 * 60))
         try? BGTaskScheduler.shared.submit(request)
 #endif
     }

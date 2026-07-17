@@ -272,7 +272,8 @@ public extension AppSnapshot {
                 outboxOwnerID: message.outboxOwnerID, outboxOwnerUpdatedAt: message.outboxOwnerUpdatedAt,
                 deliveryAttemptCount: message.deliveryAttemptCount, lastDeliveryAttemptAt: message.lastDeliveryAttemptAt,
                 lastDeliveryMode: message.lastDeliveryMode, lastDeliveryFailure: message.lastDeliveryFailure,
-                isStarred: message.isStarred, starredUpdatedAt: message.starredUpdatedAt
+                isStarred: message.isStarred, starredUpdatedAt: message.starredUpdatedAt,
+                scheduledFor: message.scheduledFor
             )
         }
 
@@ -307,7 +308,8 @@ public extension AppSnapshot {
                 lastDeliveryAttemptAt: latestAttemptAt,
                 lastDeliveryMode: localAttemptIsNewest ? local.lastDeliveryMode : remoteMessage.lastDeliveryMode,
                 lastDeliveryFailure: state == .delivered ? nil : (localAttemptIsNewest ? local.lastDeliveryFailure : remoteMessage.lastDeliveryFailure),
-                isStarred: starSource.isStarred, starredUpdatedAt: starSource.starredUpdatedAt
+                isStarred: starSource.isStarred, starredUpdatedAt: starSource.starredUpdatedAt,
+                scheduledFor: preferred.scheduledFor
             )
         }
 
