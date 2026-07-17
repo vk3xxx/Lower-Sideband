@@ -19,7 +19,8 @@ jobs:
         run: swift build -c release
       - name: iOS device build
         run: >-
-          xcodebuild -scheme SidebandMac
+          xcodebuild -project MacSideband.xcodeproj
+          -scheme SidebandIOS
           -destination 'generic/platform=iOS'
           -derivedDataPath .build/ios-ci
           CODE_SIGNING_ALLOWED=NO build
