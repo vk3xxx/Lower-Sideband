@@ -1006,6 +1006,8 @@ private struct ConversationView: View {
     @State private var previewAttachment: Attachment?
     @State private var showingContactQR = false
     @State private var showingIdentityVerification = false
+    @State private var conversationExportDocument: SnapshotBackupDocument?
+    @State private var showingConversationExporter = false
     @State private var telemetryCapture = TelemetryCapture()
     @State private var voiceRecorder = VoiceMessageRecorder()
     @State private var showingTelemetryMap = false
@@ -1065,6 +1067,15 @@ private struct ConversationView: View {
                     }
                     .help("Export conversation transcript")
                 }
+                Button {
+                    do {
+                        conversationExportDocument = SnapshotBackupDocument(data: try store.exportConversationData(conversation.id))
+                        showingConversationExporter = true
+                    } catch {
+                        store.lastError = "Could not export conversation: \(error.localizedDescription)"
+                    }
+                } label: { Image(systemName: "doc.badge.arrow.up") }
+                .help("Export structured conversation archive")
                 Button { Task { await store.startVoiceCall(conversationID: conversation.id) } } label: {
                     Image(systemName: "phone.fill")
                 }
@@ -1266,6 +1277,15 @@ private struct ConversationView: View {
         }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case let .success(urls) = result { Task { await importAttachments(urls) } }
+        }
+        .fileExporter(
+            isPresented: $showingConversationExporter,
+            document: conversationExportDocument,
+            contentType: .json,
+            defaultFilename: "Sideband-\(conversation.displayName.replacingOccurrences(of: "/", with: "-"))"
+        ) { result in
+            if case let .failure(error) = result { store.lastError = "Could not export conversation: \(error.localizedDescription)" }
+            conversationExportDocument = nil
         }
         .onAppear {
             draft = store.draft(for: conversation.id)

@@ -170,6 +170,24 @@ import Testing
     #expect(report.contains("Delivery policy: automatic direct with propagation fallback"))
 }
 
+@MainActor @Test func structuredConversationExportOmitsLocalPathsAndOutboxOwnership() async throws {
+    let store = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json"))
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Archive Peer"))
+    let conversation = try #require(store.selectedConversation)
+    let attachment = Attachment(filename: "map.png", mimeType: "image/png", byteCount: 42, relativePath: "private-local-file.sbenc", state: .available, contentHash: Data(repeating: 7, count: 32))
+    await store.send("status", attachments: [attachment])
+
+    let data = try store.exportConversationData(conversation.id)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let archive = try decoder.decode(SidebandConversationExport.self, from: data)
+    let text = try #require(String(data: data, encoding: .utf8))
+    #expect(archive.contact.destinationHash == conversation.destinationHash)
+    #expect(archive.messages.first?.attachments.first?.filename == "map.png")
+    #expect(!text.contains("private-local-file.sbenc"))
+    #expect(!text.contains("outboxOwnerID"))
+}
+
 @MainActor @Test func discoveryCleanupProtectsConversationDestinations() async throws {
     let now = Date.now.addingTimeInterval(8 * 24 * 60 * 60)
     let firstIdentity = ReticulumIdentity()

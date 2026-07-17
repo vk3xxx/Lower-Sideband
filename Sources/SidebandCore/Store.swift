@@ -380,6 +380,16 @@ public final class SidebandStore {
         ].joined(separator: "\n")
     }
 
+    public func exportConversationData(_ conversationID: UUID) throws -> Data {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { throw SnapshotError.invalidData }
+        let archive = SidebandConversationExport(
+            conversation: conversation,
+            fingerprint: identityFingerprint(for: conversationID),
+            messages: messages(for: conversationID)
+        )
+        return try JSONEncoder.sideband.encode(archive)
+    }
+
     public func paperMessageURI(for messageID: UUID) throws -> String {
         guard let message = messages.first(where: { $0.id == messageID }),
               let conversation = conversations.first(where: { $0.id == message.conversationID }) else {
