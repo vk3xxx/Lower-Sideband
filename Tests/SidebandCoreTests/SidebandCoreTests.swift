@@ -2414,6 +2414,45 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(store.messages.last?.body == "accepted")
 }
 
+@MainActor @Test func unchangedSnapshotsDoNotRewriteEncryptedPersistence() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let id = try #require(store.conversations.first?.id)
+    store.setConversationTrusted(false, conversationID: id) // Creates the rolling backup.
+    let before = try Data(contentsOf: url)
+    store.setConversationTrusted(false, conversationID: id)
+    let after = try Data(contentsOf: url)
+
+    #expect(after == before)
+}
+
+@MainActor @Test func snapshotValidationRejectsOversizedMessageAndUnsafeAttachmentMetadata() throws {
+    let store = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json"))
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let oversized = Message(conversationID: conversation.id, body: String(repeating: "x", count: SidebandMessageLimits.maximumTextCharacters + 1), direction: .incoming, state: .delivered)
+    let unsafe = Attachment(filename: "payload.bin", byteCount: 1, relativePath: "../payload.bin", state: .available, progress: 2)
+    let attachmentMessage = Message(conversationID: conversation.id, body: "", direction: .incoming, state: .delivered, attachments: [unsafe])
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+
+    let oversizedData = try encoder.encode(AppSnapshot(conversations: [conversation], messages: [oversized]))
+    let unsafeData = try encoder.encode(AppSnapshot(conversations: [conversation], messages: [attachmentMessage]))
+    #expect(throws: SnapshotError.self) { try store.validatedSnapshot(from: oversizedData) }
+    #expect(throws: SnapshotError.self) { try store.validatedSnapshot(from: unsafeData) }
+}
+
+@Test func cloudMergePreservesCallHistoryAcrossDevices() {
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let remoteCall = VoiceCall(conversationID: conversation.id, direction: .incoming, state: .idle, endedAt: .now)
+    let localCall = VoiceCall(conversationID: conversation.id, direction: .outgoing, state: .failed, endedAt: .now, failureReason: "No route")
+    let local = AppSnapshot(conversations: [conversation], voiceCallHistory: [localCall])
+    let remote = AppSnapshot(conversations: [conversation], voiceCallHistory: [remoteCall])
+
+    let merged = local.mergingCloudSnapshot(remote)
+    #expect(Set(merged.voiceCallHistory.map(\.id)) == Set([localCall.id, remoteCall.id]))
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
     init(hex: String) {

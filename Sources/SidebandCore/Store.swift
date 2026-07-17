@@ -112,12 +112,14 @@ public final class SidebandStore {
     private var discoverySaveTask: Task<Void, Never>?
     private var deferredSaveTask: Task<Void, Never>?
     @ObservationIgnored private var lastValidatedPersistenceData: Data?
+    @ObservationIgnored private var lastSavedSnapshotDigest: Data?
     @ObservationIgnored private var messageIndexesAreDirty = true
     @ObservationIgnored private var messagesByConversation: [UUID: [Message]] = [:]
     @ObservationIgnored private var latestMessageByConversation: [UUID: Message] = [:]
     @ObservationIgnored private var failedMessageCountByConversation: [UUID: Int] = [:]
     @ObservationIgnored private var latestMessageDateByConversation: [UUID: Date] = [:]
     @ObservationIgnored private var transcriptCache: [UUID: String] = [:]
+    @ObservationIgnored private var cloudUploadedAttachmentHashes: [UUID: Data] = [:]
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
     private var networkInterfacePool: ReticulumTCPInterfacePool?
@@ -392,6 +394,9 @@ public final class SidebandStore {
             return "[\(formatter.string(from: message.timestamp))] \(sender): \([message.body, attachments, telemetry].filter { !$0.isEmpty }.joined(separator: " "))"
         }
         let transcript = (["Conversation with \(conversation.displayName)", "Destination: \(conversation.destinationHash)", ""] + lines).joined(separator: "\n")
+        if transcriptCache.count >= 64, let oldestKey = transcriptCache.keys.first {
+            transcriptCache.removeValue(forKey: oldestKey)
+        }
         transcriptCache[conversationID] = transcript
         return transcript
     }
@@ -1429,11 +1434,15 @@ public final class SidebandStore {
         for attachment in local.messages.flatMap(\.attachments) where uploaded.insert(attachment.id).inserted {
             guard let data = try? await attachmentStore.read(attachment) else { continue }
             let hash = attachment.contentHash ?? Data(SHA256.hash(data: data))
+            if cloudUploadedAttachmentHashes[attachment.id] == hash { continue }
             let payload = CloudAttachmentPayload(
                 id: attachment.id, data: data, filename: attachment.filename,
                 mimeType: attachment.mimeType, contentHash: hash
             )
-            try? await cloudSync.saveAttachment(payload)
+            do {
+                try await cloudSync.saveAttachment(payload)
+                cloudUploadedAttachmentHashes[attachment.id] = hash
+            } catch { continue }
         }
 
         var result = snapshot
@@ -1450,6 +1459,8 @@ public final class SidebandStore {
                 result.messages[messageIndex].attachments[attachmentIndex] = restored
             }
         }
+        let retainedAttachmentIDs = Set(result.messages.flatMap(\.attachments).map(\.id))
+        cloudUploadedAttachmentHashes = cloudUploadedAttachmentHashes.filter { retainedAttachmentIDs.contains($0.key) }
         return result
     }
 
@@ -1617,16 +1628,26 @@ public final class SidebandStore {
     }
 
     public func validatedSnapshot(from data: Data) throws -> AppSnapshot {
+        guard data.count <= 256 * 1_024 * 1_024 else { throw SnapshotError.invalidData }
         let snapshot = try JSONDecoder.sideband.decode(AppSnapshot.self, from: data)
         guard snapshot.schemaVersion <= AppSnapshot.currentSchemaVersion else { throw SnapshotError.unsupportedVersion }
         let conversationIDs = Set(snapshot.conversations.map(\.id))
         let destinations = snapshot.conversations.map(\.destinationHash)
-        guard conversationIDs.count == snapshot.conversations.count,
+        guard snapshot.conversations.count <= 10_000,
+              snapshot.messages.count <= 250_000,
+              snapshot.discoveries.count <= 50_000,
+              snapshot.drafts.count <= 10_000,
+              snapshot.voiceCallHistory.count <= 100,
+              conversationIDs.count == snapshot.conversations.count,
               Set(destinations).count == destinations.count,
               destinations.allSatisfy(DestinationHash.isValid),
               snapshot.messages.allSatisfy({ conversationIDs.contains($0.conversationID) }),
               snapshot.messages.compactMap(\.telemetry).allSatisfy({ $0.validationError == nil }),
               snapshot.messages.allSatisfy({ message in
+                  message.body.count <= SidebandMessageLimits.maximumTextCharacters &&
+                  message.attachments.count <= SidebandMessageLimits.maximumAttachments &&
+                  message.attachments.allSatisfy { (0...ReticulumResourceLimits.maximumAttachmentBytes).contains($0.byteCount) } &&
+                  message.attachments.reduce(0) { $0 + $1.byteCount } <= SidebandMessageLimits.maximumCombinedAttachmentBytes &&
                   (0...10_000).contains(message.deliveryAttemptCount) && (message.lastDeliveryFailure?.count ?? 0) <= 256
               }),
               snapshot.drafts.keys.allSatisfy({ conversationIDs.contains($0) }),
@@ -1637,7 +1658,11 @@ public final class SidebandStore {
                   (event.pluginIdentifier?.count ?? 0) <= 128
               }),
               snapshot.messages.flatMap(\.attachments).allSatisfy({
-                  !$0.relativePath.isEmpty && URL(fileURLWithPath: $0.relativePath).lastPathComponent == $0.relativePath
+                  !$0.relativePath.isEmpty && URL(fileURLWithPath: $0.relativePath).lastPathComponent == $0.relativePath &&
+                  !$0.filename.isEmpty && $0.filename.count <= 180 &&
+                  (0...ReticulumResourceLimits.maximumAttachmentBytes).contains($0.byteCount) &&
+                  $0.progress.isFinite && (0...1).contains($0.progress) &&
+                  ($0.contentHash == nil || $0.contentHash?.count == 32)
               }),
               snapshot.conversations.allSatisfy({ conversation in
                   guard conversation.contactNote.count <= 512, conversation.displayName.count <= 128 else { return false }
@@ -3349,12 +3374,14 @@ public final class SidebandStore {
                let backupPlaintext = try? localDataCipher.open(backupData, context: "application-snapshot-v1"),
                let backup = try? validatedSnapshot(from: backupPlaintext) {
                 lastValidatedPersistenceData = backupData
+                lastSavedSnapshotDigest = Data(SHA256.hash(data: backupPlaintext))
                 applyLoadedSnapshot(backup)
                 save()
             }
             return
         }
         lastValidatedPersistenceData = data
+        lastSavedSnapshotDigest = Data(SHA256.hash(data: plaintext))
         applyLoadedSnapshot(snapshot)
         if recoveredOutboundCount > 0 || !localDataCipher.isEncrypted(data) { save() }
     }
@@ -3389,6 +3416,7 @@ public final class SidebandStore {
         messages = snapshot.messages
         sortConversations()
         discoveries = snapshot.discoveries
+        voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
         let conversationIDs = Set(conversations.map(\.id))
         drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }
         selectedConversationID = selectedDestination.flatMap { destination in
@@ -3412,6 +3440,11 @@ public final class SidebandStore {
         deferredSaveTask = nil
         do {
             try FileManager.default.createDirectory(at: persistenceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents))
+            let digest = Data(SHA256.hash(data: plaintext))
+            if digest == lastSavedSnapshotDigest,
+               FileManager.default.fileExists(atPath: persistenceURL.path),
+               FileManager.default.fileExists(atPath: automaticBackupURL.path) { return }
             if let lastValidatedPersistenceData {
                 try lastValidatedPersistenceData.write(to: automaticBackupURL, options: .atomic)
             } else if let existingData = try? Data(contentsOf: persistenceURL),
@@ -3419,10 +3452,10 @@ public final class SidebandStore {
                       (try? validatedSnapshot(from: existingPlaintext)) != nil {
                 try existingData.write(to: automaticBackupURL, options: .atomic)
             }
-            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents))
             let encrypted = try localDataCipher.seal(plaintext, context: "application-snapshot-v1")
             try encrypted.write(to: persistenceURL, options: .atomic)
             lastValidatedPersistenceData = encrypted
+            lastSavedSnapshotDigest = digest
             if iCloudSyncEnabled, !isApplyingCloudSnapshot { scheduleICloudSync() }
         } catch { lastError = "Could not save local data: \(error.localizedDescription)" }
     }
