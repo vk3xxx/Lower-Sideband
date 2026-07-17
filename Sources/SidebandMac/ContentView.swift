@@ -814,76 +814,35 @@ private struct SnapshotBackupDocument: FileDocument {
 
 private struct NetworkView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var store: SidebandStore
     @State private var showingLocalContactQR = false
 
     var body: some View {
         ScrollView {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Network Status").font(.title2.bold())
-                Spacer()
-                Label(statusText, systemImage: statusIcon).foregroundStyle(statusColor)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    Text("Network Status").font(.title2.bold())
+                    Spacer()
+                    Label(statusText, systemImage: statusIcon).foregroundStyle(statusColor)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Network Status").font(.title2.bold())
+                    Label(statusText, systemImage: statusIcon).foregroundStyle(statusColor)
+                }
             }
             Text("Connect to a Reticulum TCP Server Interface. Incoming packets and announces are parsed and cryptographically validated by the native Swift stack.")
                 .font(.callout).foregroundStyle(.secondary)
             GroupBox("Interface") {
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
-                GridRow {
-                    Text("Local name")
-                    TextField("Sideband Swift", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
+                if horizontalSizeClass == .compact {
+                    compactInterfaceSettings
+                } else {
+                    regularInterfaceSettings
                 }
-                GridRow { Text("Host"); TextField("Optional configured IPv4 or DNS hostname", text: $store.networkHost) }
-                GridRow { Text("IPv6 host"); TextField("Optional configured IPv6 gateway", text: $store.networkIPv6Host) }
-                GridRow { Text("Internet override"); TextField("Optional public IPv6 or DNS hostname", text: $store.networkInternetHost) }
-                GridRow { Text("Internet port"); TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never)) }
-                GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
-                GridRow {
-                    Text("Connection mode")
-                    Picker("Connection mode", selection: Binding(
-                        get: { store.connectionMode },
-                        set: { store.setConnectionMode($0) }
-                    )) {
-                        ForEach(NetworkConnectionMode.allCases, id: \.self) { mode in Text(mode.title).tag(mode) }
-                    }
-                    .labelsHidden()
-                }
-                GridRow { Text("Addressing"); Toggle("Prefer IPv6 with IPv4 fallback", isOn: Binding(get: { store.preferIPv6 }, set: { store.setPreferIPv6($0) })) }
-                GridRow { Text("Connection policy"); Toggle("Internet only — disable LAN gateways", isOn: Binding(get: { store.internetOnlyEnabled }, set: { store.setInternetOnly($0) })) }
-                GridRow { Text("Reconnect"); Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) })) }
-                GridRow { Text("Automatic connection"); Text(store.automaticConnectionDescription).foregroundStyle(.secondary) }
-                if store.connectionMode == .automatic {
-                    GridRow {
-                        Text("Discovery order")
-                        Text("Local Bonjour gateways, authenticated on-network interfaces, then healthy public gateways")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                GridRow { Text("Transport"); Text(transportSummary).foregroundStyle(.secondary) }
-                ForEach(store.networkInterfaces) { interface in
-                    GridRow {
-                        Text(interface.name + (interface.isBootstrap ? " (bootstrap)" : "")).font(.caption)
-                        Label(interfaceStateText(interface.state), systemImage: interfaceStateIcon(interface.state))
-                            .font(.caption).foregroundStyle(interface.state == .ready ? Color.green : Color.secondary)
-                    }
-                }
-                GridRow { Text("System network"); Text(reachabilityText).foregroundStyle(.secondary) }
-                GridRow {
-                    Text("Discovered interfaces")
-                    Text("\(store.discoveredNetworkInterfaces.count) authenticated")
-                        .foregroundStyle(.secondary)
-                }
-                GridRow {
-                    Text("Last connected")
-                    Text(store.lastNetworkReadyAt?.formatted(date: .abbreviated, time: .standard) ?? "Never")
-                        .foregroundStyle(.secondary)
-                }
-                GridRow {
-                    Text("Background refresh")
-                    Text(backgroundRefreshSummary).foregroundStyle(.secondary)
-                }
-            }.textFieldStyle(.roundedBorder).padding(6)
             }
+            .textFieldStyle(.roundedBorder)
+            .padding(6)
             GroupBox("Routing") {
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow { metric("Packets received", store.receivedPacketCount); metric("Known paths", store.knownPathCount) }
@@ -1277,6 +1236,146 @@ private struct NetworkView: View {
         .sheet(isPresented: $showingLocalContactQR) {
             ContactQRCodeView(name: store.localDisplayName, link: store.localContactLink.url)
         }
+    }
+
+    private var compactInterfaceSettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            compactSetting("Local name") {
+                TextField("Sideband Swift", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
+            }
+            compactSetting("Host") {
+                TextField("Optional configured IPv4 or DNS hostname", text: $store.networkHost)
+            }
+            compactSetting("IPv6 host") {
+                TextField("Optional configured IPv6 gateway", text: $store.networkIPv6Host)
+            }
+            compactSetting("Internet override") {
+                TextField("Optional public IPv6 or DNS hostname", text: $store.networkInternetHost)
+            }
+            compactSetting("Internet port") {
+                TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never))
+            }
+            compactSetting("Port") {
+                TextField("4242", value: $store.networkPort, format: .number.grouping(.never))
+            }
+            compactSetting("Connection mode") {
+                connectionModePicker
+                    .pickerStyle(.menu)
+            }
+            compactSetting("Addressing") {
+                Toggle("Prefer IPv6 with IPv4 fallback", isOn: Binding(get: { store.preferIPv6 }, set: { store.setPreferIPv6($0) }))
+            }
+            compactSetting("Connection policy") {
+                Toggle("Internet only — disable LAN gateways", isOn: Binding(get: { store.internetOnlyEnabled }, set: { store.setInternetOnly($0) }))
+            }
+            compactSetting("Reconnect") {
+                Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) }))
+            }
+            compactSetting("Automatic connection") {
+                secondarySettingText(store.automaticConnectionDescription)
+            }
+            if store.connectionMode == .automatic {
+                compactSetting("Discovery order") {
+                    secondarySettingText("Local Bonjour gateways, authenticated on-network interfaces, then healthy public gateways")
+                }
+            }
+            compactSetting("Transport") {
+                secondarySettingText(transportSummary)
+            }
+            ForEach(store.networkInterfaces) { interface in
+                compactSetting(interface.name + (interface.isBootstrap ? " (bootstrap)" : "")) {
+                    Label(interfaceStateText(interface.state), systemImage: interfaceStateIcon(interface.state))
+                        .font(.caption)
+                        .foregroundStyle(interface.state == .ready ? Color.green : Color.secondary)
+                }
+            }
+            compactSetting("System network") {
+                secondarySettingText(reachabilityText)
+            }
+            compactSetting("Discovered interfaces") {
+                secondarySettingText("\(store.discoveredNetworkInterfaces.count) authenticated")
+            }
+            compactSetting("Last connected") {
+                secondarySettingText(store.lastNetworkReadyAt?.formatted(date: .abbreviated, time: .standard) ?? "Never")
+            }
+            compactSetting("Background refresh") {
+                secondarySettingText(backgroundRefreshSummary)
+            }
+        }
+    }
+
+    private var regularInterfaceSettings: some View {
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
+            GridRow {
+                Text("Local name")
+                TextField("Sideband Swift", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
+            }
+            GridRow { Text("Host"); TextField("Optional configured IPv4 or DNS hostname", text: $store.networkHost) }
+            GridRow { Text("IPv6 host"); TextField("Optional configured IPv6 gateway", text: $store.networkIPv6Host) }
+            GridRow { Text("Internet override"); TextField("Optional public IPv6 or DNS hostname", text: $store.networkInternetHost) }
+            GridRow { Text("Internet port"); TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never)) }
+            GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
+            GridRow {
+                Text("Connection mode")
+                connectionModePicker
+            }
+            GridRow { Text("Addressing"); Toggle("Prefer IPv6 with IPv4 fallback", isOn: Binding(get: { store.preferIPv6 }, set: { store.setPreferIPv6($0) })) }
+            GridRow { Text("Connection policy"); Toggle("Internet only — disable LAN gateways", isOn: Binding(get: { store.internetOnlyEnabled }, set: { store.setInternetOnly($0) })) }
+            GridRow { Text("Reconnect"); Toggle("Connect automatically", isOn: Binding(get: { store.autoConnectEnabled }, set: { store.setAutoConnect($0) })) }
+            GridRow { Text("Automatic connection"); Text(store.automaticConnectionDescription).foregroundStyle(.secondary) }
+            if store.connectionMode == .automatic {
+                GridRow {
+                    Text("Discovery order")
+                    Text("Local Bonjour gateways, authenticated on-network interfaces, then healthy public gateways")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            GridRow { Text("Transport"); Text(transportSummary).foregroundStyle(.secondary) }
+            ForEach(store.networkInterfaces) { interface in
+                GridRow {
+                    Text(interface.name + (interface.isBootstrap ? " (bootstrap)" : "")).font(.caption)
+                    Label(interfaceStateText(interface.state), systemImage: interfaceStateIcon(interface.state))
+                        .font(.caption).foregroundStyle(interface.state == .ready ? Color.green : Color.secondary)
+                }
+            }
+            GridRow { Text("System network"); Text(reachabilityText).foregroundStyle(.secondary) }
+            GridRow { Text("Discovered interfaces"); Text("\(store.discoveredNetworkInterfaces.count) authenticated").foregroundStyle(.secondary) }
+            GridRow {
+                Text("Last connected")
+                Text(store.lastNetworkReadyAt?.formatted(date: .abbreviated, time: .standard) ?? "Never")
+                    .foregroundStyle(.secondary)
+            }
+            GridRow { Text("Background refresh"); Text(backgroundRefreshSummary).foregroundStyle(.secondary) }
+        }
+    }
+
+    private var connectionModePicker: some View {
+        Picker("Connection mode", selection: Binding(
+            get: { store.connectionMode },
+            set: { store.setConnectionMode($0) }
+        )) {
+            ForEach(NetworkConnectionMode.allCases, id: \.self) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .labelsHidden()
+    }
+
+    private func compactSetting<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func secondarySettingText(_ value: String) -> some View {
+        Text(value)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func metric(_ title: String, _ value: Int) -> some View {
