@@ -1,4 +1,8 @@
 import SwiftUI
+
+private extension Data {
+    var sidebandHex: String { map { String(format: "%02x", $0) }.joined() }
+}
 import SidebandCore
 import UniformTypeIdentifiers
 import ImageIO
@@ -920,6 +924,7 @@ private struct ConversationView: View {
     @State private var paperMessageURI: String?
     @State private var replyingTo: Message?
     @State private var messagePendingDeletion: Message?
+    @State private var inspectedMessage: Message?
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -1053,6 +1058,9 @@ private struct ConversationView: View {
                                     }
                                     Button { copyToSystemClipboard(messageMetadata(message)) } label: {
                                         Label("Copy Message Details", systemImage: "info.square")
+                                    }
+                                    Button { inspectedMessage = message } label: {
+                                        Label("Show Message Details", systemImage: "info.circle")
                                     }
                                     if !message.attachments.isEmpty {
                                         Menu("Copy Attachment Details", systemImage: "paperclip") {
@@ -1226,6 +1234,14 @@ private struct ConversationView: View {
         } message: {
             Text("This removes the message and its attachments from your synced Sideband history. It cannot recall copies already delivered to another device.")
         }
+        .sheet(item: $inspectedMessage) { message in
+            MessageDetailsView(
+                conversationName: conversation.displayName,
+                destinationHash: conversation.destinationHash,
+                message: message,
+                details: messageMetadata(message)
+            )
+        }
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
@@ -1326,12 +1342,15 @@ private struct ConversationView: View {
     private func messageMetadata(_ message: Message) -> String {
         let formatter = ISO8601DateFormatter()
         var lines = [
-            "Message ID: \(message.id.uuidString)",
+            "Local record ID: \(message.id.uuidString)",
             "Conversation: \(conversation.destinationHash)",
             "Direction: \(message.direction.rawValue)",
             "Delivery state: \(message.state.rawValue)",
             "Timestamp: \(formatter.string(from: message.timestamp))"
         ]
+        if let lxmfID = message.lxmfID { lines.append("LXMF message hash: \(lxmfID.sidebandHex)") }
+        if let replyTo = message.replyTo { lines.append("Reply to LXMF hash: \(replyTo.sidebandHex)") }
+        if let replyQuote = message.replyQuote { lines.append("Reply quote: \(replyQuote)") }
         if !message.attachments.isEmpty {
             lines.append("Attachments: \(message.attachments.count)")
             lines.append(contentsOf: message.attachments.map {
@@ -1444,6 +1463,66 @@ private struct ConversationView: View {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
         if store.networkState == .ready { return "network" }
         return "arrow.triangle.2.circlepath"
+    }
+}
+
+private struct MessageDetailsView: View {
+    @Environment(\.dismiss) private var dismiss
+    let conversationName: String
+    let destinationHash: String
+    let message: Message
+    let details: String
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Message") {
+                    detail("Conversation", conversationName)
+                    detail("Direction", message.direction.rawValue.capitalized)
+                    detail("State", message.state.rawValue.capitalized)
+                    detail("Sent", message.timestamp.formatted(date: .abbreviated, time: .standard))
+                }
+                Section("Protocol identifiers") {
+                    detail("Destination", destinationHash, monospaced: true)
+                    detail("Local record", message.id.uuidString.lowercased(), monospaced: true)
+                    if let lxmfID = message.lxmfID { detail("LXMF hash", lxmfID.sidebandHex, monospaced: true) }
+                    if let replyTo = message.replyTo { detail("Replies to", replyTo.sidebandHex, monospaced: true) }
+                }
+                if let replyQuote = message.replyQuote {
+                    Section("Quoted message") { Text(replyQuote).textSelection(.enabled) }
+                }
+                if !message.attachments.isEmpty {
+                    Section("Attachments") {
+                        ForEach(message.attachments) { attachment in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(attachment.filename)
+                                Text("\(ByteCountFormatter.string(fromByteCount: Int64(attachment.byteCount), countStyle: .file)) · \(attachment.state.rawValue.capitalized)")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Message Details")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { copyToSystemClipboard(details) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 520, minHeight: 500)
+        #endif
+    }
+
+    @ViewBuilder private func detail(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            if monospaced { Text(value).font(.callout.monospaced()).textSelection(.enabled) }
+            else { Text(value).textSelection(.enabled) }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
