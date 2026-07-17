@@ -427,6 +427,9 @@ struct ContentView: View {
                 Label("Share Contact", systemImage: "person.crop.circle.badge.plus")
             }
         }
+        if let diagnostics = store.conversationDeliveryDiagnostics(conversation.id) {
+            Button { copyToSystemClipboard(diagnostics) } label: { Label("Copy Delivery Diagnostics", systemImage: "stethoscope") }
+        }
         Button { renameDraft = conversation.displayName; renamingConversation = conversation } label: { Label("Rename", systemImage: "pencil") }
         Button { store.setConversationTrusted(!conversation.isTrusted, conversationID: conversation.id) } label: {
             Label(conversation.isTrusted ? "Remove Trust" : "Mark as Trusted", systemImage: conversation.isTrusted ? "shield.slash" : "checkmark.shield")

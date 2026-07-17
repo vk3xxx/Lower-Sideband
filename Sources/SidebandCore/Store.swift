@@ -354,6 +354,32 @@ public final class SidebandStore {
         return transcript
     }
 
+    public func conversationDeliveryDiagnostics(_ conversationID: UUID) -> String? {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        let conversationMessages = messages(for: conversationID)
+        let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash })
+        let latest = conversationMessages.max(by: { $0.timestamp < $1.timestamp })
+        let queued = conversationMessages.count(where: { $0.direction == .outgoing && $0.state == .queued })
+        let sent = conversationMessages.count(where: { $0.direction == .outgoing && $0.state == .sent })
+        let delivered = conversationMessages.count(where: { $0.direction == .outgoing && $0.state == .delivered })
+        let failed = conversationMessages.count(where: { $0.direction == .outgoing && $0.state == .failed })
+        return [
+            "Sideband Conversation Delivery Diagnostics",
+            "Generated: \(ISO8601DateFormatter().string(from: .now))",
+            "Contact: \(conversation.displayName)",
+            "Destination: \(conversation.destinationHash)",
+            "Identity key: \(identityFingerprint(for: conversationID) == nil ? "unknown" : (isConversationIdentityVerified(conversationID) ? "fingerprint verified" : "fingerprint available, not verified"))",
+            "Network: \(networkState == .ready ? "ready" : "not ready")",
+            "Path: \(hasPath(to: conversation.destinationHash) ? "available" : (isPathPending(to: conversation.destinationHash) ? "requested" : "unknown"))",
+            "Announce: \(discovery == nil ? "not received" : "\(discovery!.isValidated ? "validated" : "unverified"), \(discovery!.hops) hop(s), \(discovery!.packetCount) packet(s)")",
+            "Link: \(activeLinkHashes.contains(conversation.destinationHash) ? "active" : (pendingLinkHashes.contains(conversation.destinationHash) ? "establishing" : "inactive"))",
+            "Delivery policy: \(conversation.deliveryPreference == .propagationPreferred ? "prefer propagation" : "automatic direct with propagation fallback")",
+            "Propagation node: \(DestinationHash.isValid(propagationNodeHash) ? (propagationNodeHasPath ? "reachable" : "configured, path unknown") : "not configured")",
+            "Outgoing states: \(queued) queued, \(sent) sent, \(delivered) delivered, \(failed) failed",
+            "Latest message: \(latest.map { "\($0.direction.rawValue), \($0.state.rawValue), \(ISO8601DateFormatter().string(from: $0.timestamp))" } ?? "none")"
+        ].joined(separator: "\n")
+    }
+
     public func paperMessageURI(for messageID: UUID) throws -> String {
         guard let message = messages.first(where: { $0.id == messageID }),
               let conversation = conversations.first(where: { $0.id == message.conversationID }) else {

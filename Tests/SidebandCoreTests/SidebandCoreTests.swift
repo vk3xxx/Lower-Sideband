@@ -158,6 +158,18 @@ import Testing
     #expect(restored.conversations.first?.deliveryPreference == .propagationPreferred)
 }
 
+@MainActor @Test func conversationDeliveryDiagnosticsExplainQueuedState() throws {
+    let store = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json"))
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Remote Peer"))
+    let conversation = try #require(store.selectedConversation)
+    store.updateDraft("waiting for a route", for: conversation.id)
+
+    let report = try #require(store.conversationDeliveryDiagnostics(conversation.id))
+    #expect(report.contains("Destination: 0123456789abcdef0123456789abcdef"))
+    #expect(report.contains("Path: unknown"))
+    #expect(report.contains("Delivery policy: automatic direct with propagation fallback"))
+}
+
 @MainActor @Test func discoveryCleanupProtectsConversationDestinations() async throws {
     let now = Date.now.addingTimeInterval(8 * 24 * 60 * 60)
     let firstIdentity = ReticulumIdentity()
