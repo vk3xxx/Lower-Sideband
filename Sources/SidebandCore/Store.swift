@@ -442,7 +442,8 @@ public final class SidebandStore {
             sourceIdentity: messagingIdentity,
             timestamp: message.timestamp.timeIntervalSince1970,
             content: Data(message.body.utf8),
-            fields: lxmfFields(for: message)
+            fields: lxmfFields(for: message),
+            encodedFields: lxmfEncodedFields(for: message)
         )
         return try lxmf.paperURI(recipientIdentity: recipientIdentity)
     }
@@ -762,8 +763,13 @@ public final class SidebandStore {
         await send(text, attachments: [], telemetry: nil)
     }
 
-    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil) async {
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain) async {
+        var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var renderer = requestedRenderer
+        if body.hasPrefix("#!md\n") {
+            body.removeFirst(5)
+            renderer = .markdown
+        }
         guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil), let conversation = selectedConversation else { return }
         guard !conversation.isBlocked else {
             lastError = "Unblock this contact before sending a message."
@@ -788,7 +794,7 @@ public final class SidebandStore {
         guard validateAttachmentTotal(attachments) else { return }
         let message = Message(
             conversationID: conversation.id, body: body, direction: .outgoing, state: .queued,
-            attachments: attachments, telemetry: telemetry,
+            attachments: attachments, telemetry: telemetry, renderer: renderer,
             replyTo: repliedMessage?.lxmfID,
             replyQuote: repliedMessage.map { replyQuote(for: $0) },
             outboxOwnerID: syncDeviceID, outboxOwnerUpdatedAt: .now
@@ -935,6 +941,7 @@ public final class SidebandStore {
             state: .queued,
             attachments: forwardedAttachments,
             telemetry: source.telemetry,
+            renderer: source.renderer,
             outboxOwnerID: syncDeviceID,
             outboxOwnerUpdatedAt: .now
         )
@@ -2381,6 +2388,7 @@ public final class SidebandStore {
         guard let conversation = conversations.first(where: { $0.destinationHash == source }), let body = String(data: message.content, encoding: .utf8) else { return false }
         let telemetry = message.binaryField(0x02).flatMap { try? SidebandTelemetry(packed: $0) }
         let replyQuote = message.binaryField(0x31).flatMap { String(data: $0, encoding: .utf8) }
+        let renderer = message.unsignedField(0x0F).flatMap { UInt8(exactly: $0) }.flatMap(Message.Renderer.init(rawValue:)) ?? .plain
         let incomingMessage = Message(
             conversationID: conversation.id,
             body: body,
@@ -2388,6 +2396,7 @@ public final class SidebandStore {
             direction: .incoming,
             state: .delivered,
             telemetry: telemetry,
+            renderer: renderer,
             lxmfID: message.messageID,
             replyTo: message.binaryField(0x30),
             replyQuote: replyQuote
@@ -2485,7 +2494,7 @@ public final class SidebandStore {
         var requiresLink = !attachmentMessages.isEmpty
         for item in remainingQueued {
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)
                 let raw = try lxmf.opportunisticPacket(recipientIdentity: recipient, ratchet: discovery.ratchet)
                 guard raw.count <= 500 else { requiresLink = true; continue }
@@ -2505,7 +2514,7 @@ public final class SidebandStore {
         for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty && ownsOutbox($0) }) {
             guard item.attachments.isEmpty else { continue }
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)
                 let raw = try session.encryptedPacket(lxmf.packed)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
@@ -2524,7 +2533,7 @@ public final class SidebandStore {
         for attachment in message.attachments where attachment.state == .local || attachment.state == .queued {
             do {
                 let data = try await attachmentStore.read(attachment)
-                let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, groupID: message.id, fileData: data, signingIdentity: messagingIdentity).encode()
+                let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, groupID: message.id, renderer: message.renderer, replyTo: message.replyTo, replyQuote: message.replyQuote, fileData: data, signingIdentity: messagingIdentity).encode()
                 let segments = try ReticulumResourceSegmentPlanner.prepare(data: envelope, session: session, hasMetadata: true)
                 guard let first = segments.first else { continue }
                 registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: message.id, attachmentID: attachment.id, session: session)
@@ -2671,7 +2680,7 @@ public final class SidebandStore {
         if let index = messages.firstIndex(where: { $0.id == envelope.groupID && $0.conversationID == conversation.id }) {
             messages[index].attachments.append(attachment)
         } else {
-            messages.append(Message(id: envelope.groupID, conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment]))
+            messages.append(Message(id: envelope.groupID, conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment], renderer: envelope.renderer, replyTo: envelope.replyTo, replyQuote: envelope.replyQuote))
             noteIncomingActivity(in: conversation.id)
         }
         incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
@@ -2811,9 +2820,9 @@ public final class SidebandStore {
               let propagationSession = activeLinks.values.first(where: { $0.destinationHash.hex == propagationNodeHash }) else { return }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
-        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0) }) {
+        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty && ownsOutbox($0) }) {
             do {
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item))
+                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)
                 let envelope = try lxmf.propagatedEnvelope(recipientIdentity: recipient, ratchet: discovery.ratchet)
                 let raw = try propagationSession.encryptedPacket(envelope)
@@ -2839,6 +2848,10 @@ public final class SidebandStore {
         if let replyTo = message.replyTo { fields[0x30] = replyTo }
         if let replyQuote = message.replyQuote { fields[0x31] = Data(replyQuote.utf8) }
         return fields
+    }
+
+    private func lxmfEncodedFields(for message: Message) -> [UInt64: Data] {
+        message.renderer == .plain ? [:] : [0x0F: MessagePack.unsigned(UInt64(message.renderer.rawValue))]
     }
 
     private func replyQuote(for message: Message) -> String {

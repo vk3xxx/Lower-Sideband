@@ -263,7 +263,7 @@ public extension AppSnapshot {
             return Message(
                 id: message.id, conversationID: conversationID, body: message.body,
                 timestamp: message.timestamp, direction: message.direction, state: message.state,
-                attachments: message.attachments, telemetry: message.telemetry,
+                attachments: message.attachments, telemetry: message.telemetry, renderer: message.renderer,
                 lxmfID: message.lxmfID, replyTo: message.replyTo, replyQuote: message.replyQuote,
                 outboxOwnerID: message.outboxOwnerID, outboxOwnerUpdatedAt: message.outboxOwnerUpdatedAt
             )
@@ -282,6 +282,7 @@ public extension AppSnapshot {
                 timestamp: preferred.timestamp, direction: preferred.direction, state: state,
                 attachments: preferred.attachments.isEmpty ? (local.attachments.isEmpty ? remoteMessage.attachments : local.attachments) : preferred.attachments,
                 telemetry: preferred.telemetry ?? local.telemetry ?? remoteMessage.telemetry,
+                renderer: preferred.renderer,
                 lxmfID: preferred.lxmfID ?? local.lxmfID ?? remoteMessage.lxmfID,
                 replyTo: preferred.replyTo ?? local.replyTo ?? remoteMessage.replyTo,
                 replyQuote: preferred.replyQuote ?? local.replyQuote ?? remoteMessage.replyQuote,

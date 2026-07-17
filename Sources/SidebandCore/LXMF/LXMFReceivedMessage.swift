@@ -38,6 +38,10 @@ public struct LXMFReceivedMessage: Sendable {
         guard case let .binary(data) = fields[fieldID] else { return nil }
         return data
     }
+    public func unsignedField(_ fieldID: UInt64) -> UInt64? {
+        guard case let .unsigned(value) = fields[fieldID] else { return nil }
+        return value
+    }
     public enum ParseError: Error { case truncated, invalidPayload }
 }
 

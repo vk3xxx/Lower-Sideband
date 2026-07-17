@@ -366,6 +366,7 @@ import Testing
     #expect(migrated.lxmfID == nil)
     #expect(migrated.replyTo == nil)
     #expect(migrated.replyQuote == nil)
+    #expect(migrated.renderer == .plain)
 }
 
 @Test func lxmfReplyFieldsRoundTripWithUpstreamFieldIDs() throws {
@@ -383,6 +384,31 @@ import Testing
     #expect(received.binaryField(0x30) == replyID)
     #expect(received.binaryField(0x31) == quote)
     #expect(received.validate(with: sender))
+}
+
+@Test func lxmfMarkdownRendererUsesUpstreamIntegerField() throws {
+    let sender = ReticulumIdentity()
+    let message = try LXMFMessage(
+        destinationHash: Data(repeating: 0x01, count: 16),
+        sourceHash: Data(repeating: 0x02, count: 16),
+        sourceIdentity: sender,
+        content: Data("**formatted**".utf8),
+        encodedFields: [0x0F: MessagePack.unsigned(0x02)]
+    )
+    let received = try LXMFReceivedMessage(packed: message.packed)
+    #expect(received.unsignedField(0x0F) == 0x02)
+    #expect(received.binaryField(0x0F) == nil)
+    #expect(received.validate(with: sender))
+}
+
+@MainActor @Test func markdownComposerPrefixIsStrippedAndPersisted() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Markdown Peer"))
+    await store.send("#!md\n**important**", attachments: [])
+    #expect(store.messages.first?.body == "**important**")
+    #expect(store.messages.first?.renderer == .markdown)
+    #expect(SidebandStore(persistenceURL: url).messages.first?.renderer == .markdown)
 }
 
 @MainActor @Test func exportedSnapshotDataRoundTripsCurrentState() throws {
@@ -715,7 +741,7 @@ import Testing
     let store = SidebandStore(persistenceURL: url)
     #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Source"))
     let source = try #require(store.selectedConversation)
-    await store.send("Forward this")
+    await store.send("**Forward this**", attachments: [], renderer: .markdown)
     let original = try #require(store.messages(for: source.id).first)
     #expect(store.addConversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Destination"))
     let destination = try #require(store.selectedConversation)
@@ -725,6 +751,7 @@ import Testing
     let forwarded = try #require(store.messages(for: destination.id).first)
     #expect(forwarded.id != original.id)
     #expect(forwarded.body == original.body)
+    #expect(forwarded.renderer == .markdown)
     #expect(forwarded.direction == .outgoing)
     #expect(forwarded.state == .queued)
 }
@@ -1225,6 +1252,21 @@ import Testing
     #expect(decoded.validate(with: identity))
     var tampered = try envelope.encode(); tampered[tampered.count - 1] ^= 0xff
     #expect(!((try? LXMFResourceEnvelope(encoded: tampered))?.validate(with: identity) ?? true))
+}
+
+@Test func attachmentResourceEnvelopePreservesRichMessageContext() throws {
+    let identity = ReticulumIdentity()
+    let replyID = Data(repeating: 0x5A, count: 32)
+    let envelope = try LXMFResourceEnvelope(
+        filename: "report.md", mimeType: "text/markdown", messageBody: "**Update**",
+        sourceHash: Data(repeating: 4, count: 16), renderer: .markdown,
+        replyTo: replyID, replyQuote: "Earlier update", fileData: Data("details".utf8), signingIdentity: identity
+    )
+    let decoded = try LXMFResourceEnvelope(encoded: envelope.encode())
+    #expect(decoded.renderer == .markdown)
+    #expect(decoded.replyTo == replyID)
+    #expect(decoded.replyQuote == "Earlier update")
+    #expect(decoded.validate(with: identity))
 }
 
 @Test func resourceHashMapUpdatesContinueBeyondAdvertisementWindow() throws {
@@ -1802,6 +1844,7 @@ import Testing
         body: "Reply",
         direction: .outgoing,
         state: .sent,
+        renderer: .markdown,
         lxmfID: lxmfID,
         replyTo: replyTo,
         replyQuote: "Original"
@@ -1812,6 +1855,7 @@ import Testing
     #expect(result.lxmfID == lxmfID)
     #expect(result.replyTo == replyTo)
     #expect(result.replyQuote == "Original")
+    #expect(result.renderer == .markdown)
 }
 
 @Test func cloudSnapshotMergeKeepsRoutingDiscoveriesDeviceLocal() {

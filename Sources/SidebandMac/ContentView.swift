@@ -1050,6 +1050,7 @@ private struct ConversationView: View {
     @State private var showingTelemetryMap = false
     @State private var paperMessageURI: String?
     @State private var replyingTo: Message?
+    @State private var composeAsMarkdown = false
     @State private var messagePendingDeletion: Message?
     @State private var inspectedMessage: Message?
     @State private var messageToForward: Message?
@@ -1160,7 +1161,7 @@ private struct ConversationView: View {
                                         .padding(.bottom, 2)
                                         .accessibilityLabel("Replying to: \(replyQuote)")
                                     }
-                                    if !message.body.isEmpty { Text(message.body) }
+                                    if !message.body.isEmpty { renderedBody(message) }
                                     if let telemetry = message.telemetry {
                                         Button { showingTelemetryMap = true } label: { TelemetryMessageCard(telemetry: telemetry) }
                                             .buttonStyle(.plain)
@@ -1293,6 +1294,12 @@ private struct ConversationView: View {
                     }
                     .help(voiceRecorder.isRecording ? "Finish voice message" : "Record voice message")
                     .disabled(voiceRecorder.isPreparing || (!voiceRecorder.isRecording && pendingAttachments.count >= SidebandMessageLimits.maximumAttachments))
+                    Button { composeAsMarkdown.toggle() } label: {
+                        Image(systemName: "textformat")
+                            .foregroundStyle(composeAsMarkdown ? Color.accentColor : .secondary)
+                    }
+                    .help(composeAsMarkdown ? "Markdown formatting enabled" : "Enable Markdown formatting")
+                    .accessibilityLabel(composeAsMarkdown ? "Disable Markdown formatting" : "Enable Markdown formatting")
                     TextField("Message", text: $draft, axis: .vertical).textFieldStyle(.roundedBorder).onSubmit(send)
                         .disabled(voiceRecorder.isRecording)
                     Button(action: send) { Image(systemName: "paperplane.fill") }.buttonStyle(.borderedProminent).disabled(!canSend || voiceRecorder.isRecording)
@@ -1444,7 +1451,16 @@ private struct ConversationView: View {
         store.updateDraft("", for: conversation.id)
         pendingAttachments = []
         replyingTo = nil
-        Task { await store.send(text, attachments: attachments, replyingTo: repliedMessage) }
+        let renderer: Message.Renderer = composeAsMarkdown ? .markdown : .plain
+        Task { await store.send(text, attachments: attachments, replyingTo: repliedMessage, renderer: renderer) }
+    }
+
+    @ViewBuilder private func renderedBody(_ message: Message) -> some View {
+        if message.renderer == .markdown, let attributed = try? AttributedString(markdown: message.body) {
+            Text(attributed)
+        } else {
+            Text(message.body)
+        }
     }
 
     private func replyPreview(_ message: Message) -> String {

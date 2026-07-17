@@ -67,6 +67,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
 public struct Message: Identifiable, Codable, Hashable, Sendable {
     public enum Direction: String, Codable, Sendable { case incoming, outgoing }
     public enum DeliveryState: String, Codable, Sendable { case queued, sent, delivered, failed }
+    public enum Renderer: UInt8, Codable, Sendable { case plain = 0x00, micron = 0x01, markdown = 0x02, bbcode = 0x03 }
 
     public let id: UUID
     public let conversationID: UUID
@@ -76,6 +77,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var state: DeliveryState
     public var attachments: [Attachment]
     public var telemetry: SidebandTelemetry?
+    public var renderer: Renderer
     /// Full LXMF message hash used by interoperable replies and references.
     public var lxmfID: Data?
     public var replyTo: Data?
@@ -83,7 +85,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var outboxOwnerID: String?
     public var outboxOwnerUpdatedAt: Date?
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
@@ -92,6 +94,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.state = state
         self.attachments = attachments
         self.telemetry = telemetry
+        self.renderer = renderer
         self.lxmfID = lxmfID
         self.replyTo = replyTo
         self.replyQuote = replyQuote
@@ -99,7 +102,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.outboxOwnerUpdatedAt = outboxOwnerUpdatedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, lxmfID, replyTo, replyQuote, outboxOwnerID, outboxOwnerUpdatedAt }
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, outboxOwnerID, outboxOwnerUpdatedAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -110,6 +113,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         state = try values.decode(DeliveryState.self, forKey: .state)
         attachments = try values.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
         telemetry = try values.decodeIfPresent(SidebandTelemetry.self, forKey: .telemetry)
+        renderer = try values.decodeIfPresent(Renderer.self, forKey: .renderer) ?? .plain
         lxmfID = try values.decodeIfPresent(Data.self, forKey: .lxmfID)
         replyTo = try values.decodeIfPresent(Data.self, forKey: .replyTo)
         replyQuote = try values.decodeIfPresent(String.self, forKey: .replyQuote)

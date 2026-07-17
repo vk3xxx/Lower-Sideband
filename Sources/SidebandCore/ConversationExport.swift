@@ -25,6 +25,7 @@ public struct SidebandConversationExport: Codable, Sendable {
         public var direction: Message.Direction
         public var state: Message.DeliveryState
         public var body: String
+        public var renderer: Message.Renderer
         public var replyTo: Data?
         public var replyQuote: String?
         public var telemetry: SidebandTelemetry?
@@ -54,6 +55,7 @@ public struct SidebandConversationExport: Codable, Sendable {
                 direction: message.direction,
                 state: message.state,
                 body: message.body,
+                renderer: message.renderer,
                 replyTo: message.replyTo,
                 replyQuote: message.replyQuote,
                 telemetry: message.telemetry,
