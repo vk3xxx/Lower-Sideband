@@ -64,6 +64,23 @@ struct LXSTVoiceTests {
         let decoded = try JSONDecoder().decode(AppSnapshot.self, from: data)
         #expect(decoded.voiceCallHistory == [call])
     }
+
+    @Test func callHistoryClassifiesOutcomesAndDuration() {
+        let conversationID = UUID()
+        let connected = Date(timeIntervalSince1970: 100)
+        let completed = VoiceCall(conversationID: conversationID, direction: .outgoing, state: .idle, connectedAt: connected, endedAt: connected.addingTimeInterval(65))
+        let missed = VoiceCall(conversationID: conversationID, direction: .incoming, state: .failed, endedAt: .now, failureReason: "Timed out")
+        let declined = VoiceCall(conversationID: conversationID, direction: .incoming, state: .idle, endedAt: .now)
+        let failed = VoiceCall(conversationID: conversationID, direction: .outgoing, state: .failed, endedAt: .now, failureReason: "No route")
+        let cancelled = VoiceCall(conversationID: conversationID, direction: .outgoing, state: .idle, endedAt: .now)
+
+        #expect(completed.historyOutcome == .completed)
+        #expect(completed.connectedDuration == 65)
+        #expect(missed.historyOutcome == .missed)
+        #expect(declined.historyOutcome == .declined)
+        #expect(failed.historyOutcome == .failed)
+        #expect(cancelled.historyOutcome == .cancelled)
+    }
 }
 
 private extension Data {

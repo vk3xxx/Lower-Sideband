@@ -25,9 +25,11 @@ private func copyToSystemClipboard(_ text: String) {
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var store: SidebandStore
     @State private var showingNewConversation = false
     @State private var showingNetwork = false
+    @State private var showingCallHistory = false
     @State private var conversationSearch = ""
     @State private var showingArchived = false
     @State private var renamingConversation: Conversation?
@@ -85,6 +87,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
         .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
+        .sheet(isPresented: $showingCallHistory) { CallHistoryView(store: store) }
         .sheet(isPresented: Binding(
             get: { store.voiceCall != nil },
             set: { presented in if !presented, store.voiceCall != nil { endVoiceCall() } }
@@ -196,6 +199,10 @@ struct ContentView: View {
         }
     }
 
+    private var missedCallCount: Int {
+        store.voiceCallHistory.count { $0.historyOutcome == .missed }
+    }
+
     private var localIdentityBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "person.text.rectangle")
@@ -214,12 +221,27 @@ struct ContentView: View {
             }
             Spacer(minLength: 4)
             Button {
-                copyToSystemClipboard(store.localDeliveryHash)
+                showingCallHistory = true
             } label: {
-                Label("Copy ID", systemImage: "doc.on.doc")
+                Image(systemName: "phone.badge.clock")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .layoutPriority(1)
+            .help(missedCallCount > 0 ? "Call history · \(missedCallCount) missed" : "Call history")
+            .accessibilityLabel(missedCallCount > 0 ? "Call history, \(missedCallCount) missed" : "Call history")
+            Button {
+                copyToSystemClipboard(store.localDeliveryHash)
+            } label: {
+                if horizontalSizeClass == .compact {
+                    Image(systemName: "doc.on.doc")
+                } else {
+                    Label("Copy ID", systemImage: "doc.on.doc")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .layoutPriority(1)
             .help("Copy current LXMF ID")
             .accessibilityLabel("Copy current LXMF ID")
         }
@@ -1335,6 +1357,105 @@ private struct ConversationView: View {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
         if store.networkState == .ready { return "network" }
         return "arrow.triangle.2.circlepath"
+    }
+}
+
+private struct CallHistoryView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var store: SidebandStore
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if store.voiceCallHistory.isEmpty {
+                    ContentUnavailableView("No Calls", systemImage: "phone", description: Text("Encrypted voice calls will appear here."))
+                } else {
+                    List(store.voiceCallHistory) { call in
+                        callRow(call)
+                    }
+                }
+            }
+            .navigationTitle("Calls")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 520, minHeight: 520)
+        #endif
+    }
+
+    @ViewBuilder private func callRow(_ call: VoiceCall) -> some View {
+        let conversation = store.conversations.first { $0.id == call.conversationID }
+        HStack(spacing: 12) {
+            Image(systemName: callIcon(call))
+                .foregroundStyle(callColor(call))
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(conversation?.displayName ?? "Unknown contact").font(.headline)
+                HStack(spacing: 5) {
+                    Text(outcomeText(call))
+                    if let duration = call.connectedDuration {
+                        Text("· \(durationText(duration))")
+                    }
+                }.font(.caption).foregroundStyle(.secondary)
+                Text(call.startedAt, format: .dateTime.day().month().year().hour().minute())
+                    .font(.caption2).foregroundStyle(.tertiary)
+                if let failure = call.failureReason, call.historyOutcome != .missed {
+                    Text(failure).font(.caption2).foregroundStyle(.orange).lineLimit(2)
+                }
+            }
+            Spacer()
+            if let conversation {
+                Button {
+                    dismiss()
+                    Task { await store.startVoiceCall(conversationID: conversation.id) }
+                } label: {
+                    Label(call.direction == .incoming ? "Call back" : "Call again", systemImage: "phone.fill")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!canCall(conversation))
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func canCall(_ conversation: Conversation) -> Bool {
+        store.voiceCall == nil && !conversation.isBlocked && store.networkState == .ready &&
+            store.discoveries.contains { $0.destinationHash == conversation.destinationHash && $0.publicKey != nil }
+    }
+
+    private func callIcon(_ call: VoiceCall) -> String {
+        switch call.historyOutcome {
+        case .missed: "phone.down.fill"
+        case .failed: "exclamationmark.circle.fill"
+        case .declined: "phone.down"
+        case .completed, .cancelled: call.direction == .incoming ? "phone.arrow.down.left" : "phone.arrow.up.right"
+        }
+    }
+
+    private func callColor(_ call: VoiceCall) -> Color {
+        switch call.historyOutcome {
+        case .missed: .red
+        case .failed: .orange
+        case .completed: .green
+        case .declined, .cancelled: .secondary
+        }
+    }
+
+    private func outcomeText(_ call: VoiceCall) -> String {
+        switch call.historyOutcome {
+        case .completed: call.direction == .incoming ? "Incoming" : "Outgoing"
+        case .missed: "Missed"
+        case .declined: "Declined"
+        case .failed: "Failed"
+        case .cancelled: "Cancelled"
+        }
+    }
+
+    private func durationText(_ duration: TimeInterval) -> String {
+        let seconds = Int(duration.rounded(.down))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }
 

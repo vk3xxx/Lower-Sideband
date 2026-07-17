@@ -166,6 +166,10 @@ public enum VoiceCallState: String, Codable, Sendable {
 
 public enum VoiceCallDirection: String, Codable, Sendable { case incoming, outgoing }
 
+public enum VoiceCallHistoryOutcome: String, Sendable {
+    case completed, missed, declined, failed, cancelled
+}
+
 public struct VoiceCall: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public let conversationID: UUID
@@ -187,6 +191,17 @@ public struct VoiceCall: Identifiable, Codable, Equatable, Sendable {
         self.connectedAt = connectedAt
         self.endedAt = endedAt
         self.failureReason = failureReason
+    }
+
+    public var historyOutcome: VoiceCallHistoryOutcome {
+        if connectedAt != nil { return failureReason == nil ? .completed : .failed }
+        if direction == .incoming { return failureReason == nil ? .declined : .missed }
+        return failureReason == nil ? .cancelled : .failed
+    }
+
+    public var connectedDuration: TimeInterval? {
+        guard let connectedAt, let endedAt else { return nil }
+        return max(0, endedAt.timeIntervalSince(connectedAt))
     }
 }
 
