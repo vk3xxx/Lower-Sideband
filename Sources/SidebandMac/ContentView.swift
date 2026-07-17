@@ -1088,12 +1088,14 @@ private struct ConversationView: View {
                 if store.contactLink(for: conversation.id) != nil {
                     Button { showingContactQR = true } label: { Image(systemName: "qrcode") }
                         .help("Show contact QR code")
+                        .accessibilityLabel("Show contact QR code")
                 }
                 Button { showingIdentityVerification = true } label: {
                     Image(systemName: store.isConversationIdentityVerified(conversation.id) ? "checkmark.shield.fill" : "shield")
                         .foregroundStyle(store.isConversationIdentityVerified(conversation.id) ? .green : .secondary)
                 }
                 .help(store.isConversationIdentityVerified(conversation.id) ? "Identity verified" : "Verify contact identity")
+                .accessibilityLabel(store.isConversationIdentityVerified(conversation.id) ? "Contact identity verified" : "Verify contact identity")
                 if !telemetryMessages.isEmpty {
                     Button { showingTelemetryMap = true } label: { Image(systemName: "map") }
                         .help("Show conversation telemetry map")
@@ -1103,6 +1105,7 @@ private struct ConversationView: View {
                         Image(systemName: "square.and.arrow.up")
                     }
                     .help("Export conversation transcript")
+                    .accessibilityLabel("Share conversation transcript")
                 }
                 Button {
                     do {
@@ -1113,14 +1116,17 @@ private struct ConversationView: View {
                     }
                 } label: { Image(systemName: "doc.badge.arrow.up") }
                 .help("Export structured conversation archive")
+                .accessibilityLabel("Export structured conversation archive")
                 Button { Task { await store.startVoiceCall(conversationID: conversation.id) } } label: {
                     Image(systemName: "phone.fill")
                 }
                 .buttonStyle(.plain)
                 .disabled(store.voiceCall != nil || conversation.isBlocked || store.networkState != .ready)
                 .help(conversation.isBlocked ? "Unblock this contact before calling" : "Start encrypted voice call")
+                .accessibilityLabel("Start encrypted voice call")
                 Label(routingStatus, systemImage: routingIcon)
                     .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityLabel("Routing status: \(routingStatus)")
             }.padding()
             Divider()
             ScrollViewReader { proxy in
@@ -1649,11 +1655,13 @@ private struct ContactIdentityVerificationView: View {
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                         .accessibilityLabel("Identity fingerprint \(fingerprint)")
                     Button { copyToSystemClipboard(fingerprint) } label: { Label("Copy Fingerprint", systemImage: "doc.on.doc") }
+                        .accessibilityHint("Copies the full identity fingerprint for comparison on a trusted channel")
                     Button(isVerified ? "Remove Verification" : "Mark Fingerprint Verified") {
                         _ = store.setConversationIdentityVerified(!isVerified, conversationID: conversation.id)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(isVerified ? .orange : .accentColor)
+                    .accessibilityHint(isVerified ? "Removes the locally pinned identity verification" : "Pins this exact public identity key as verified")
                 } else {
                     ContentUnavailableView(
                         "Public Identity Unknown",
@@ -2182,6 +2190,8 @@ private struct InlineAudioAttachmentView: View {
                 )
                 .frame(minWidth: 120)
                 .disabled(!player.isReady)
+                .accessibilityLabel("Playback position")
+                .accessibilityValue("\(format(player.currentTime)) of \(format(player.duration))")
                 Text("\(format(player.currentTime))/\(format(player.duration))")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -2242,6 +2252,8 @@ private struct InlineImageAttachmentView: View {
             .frame(maxWidth: 320, maxHeight: 240)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .accessibilityLabel("Image attachment \(attachment.filename)")
+            .accessibilityAddTraits(image == nil ? [] : .isButton)
+            .accessibilityHint(image == nil ? "Image is loading" : "Opens a full-size preview")
             .contentShape(Rectangle())
             .onTapGesture { if image != nil { showingPreview = true } }
             Text(attachment.filename).font(.caption).lineLimit(1)
