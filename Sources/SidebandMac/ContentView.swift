@@ -37,6 +37,19 @@ private func paperMessageError(_ result: PaperMessageImportResult) -> String? {
     }
 }
 
+private func appearanceColor(_ color: Conversation.AppearanceColor) -> Color {
+    switch color {
+    case .blue: .blue
+    case .green: .green
+    case .orange: .orange
+    case .purple: .purple
+    case .pink: .pink
+    case .red: .red
+    case .teal: .teal
+    case .gray: .gray
+    }
+}
+
 private enum DiscoverySort: String, CaseIterable, Identifiable {
     case recent = "Most Recent"
     case hops = "Fewest Hops"
@@ -57,6 +70,8 @@ struct ContentView: View {
     @State private var discoverySort: DiscoverySort = .recent
     @State private var renamingConversation: Conversation?
     @State private var renameDraft = ""
+    @State private var notingConversation: Conversation?
+    @State private var noteDraft = ""
     @State private var deletingConversation: Conversation?
     @State private var clearingConversation: Conversation?
     @State private var clearingTelemetryConversation: Conversation?
@@ -168,6 +183,18 @@ struct ContentView: View {
                 if let id = renamingConversation?.id { _ = store.renameConversation(id, to: renameDraft) }
                 renamingConversation = nil
             }
+        }
+        .alert("Contact Note", isPresented: Binding(get: { notingConversation != nil }, set: { if !$0 { notingConversation = nil } })) {
+            TextField("Private note", text: $noteDraft)
+            Button("Cancel", role: .cancel) { notingConversation = nil }
+            Button("Save") {
+                if let conversation = notingConversation {
+                    store.setConversationAppearance(conversationID: conversation.id, note: noteDraft, color: conversation.appearanceColor, symbol: conversation.appearanceSymbol)
+                }
+                notingConversation = nil
+            }
+        } message: {
+            Text("This note stays in your encrypted Sideband data and is never sent in messages or announces.")
         }
         .alert("Delete Conversation?", isPresented: Binding(get: { deletingConversation != nil }, set: { if !$0 { deletingConversation = nil } })) {
             Button("Cancel", role: .cancel) { deletingConversation = nil }
@@ -355,6 +382,12 @@ struct ContentView: View {
 
     @ViewBuilder private func conversationRow(_ conversation: Conversation) -> some View {
         HStack {
+            Image(systemName: conversation.appearanceSymbol.rawValue)
+                .font(.title3)
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(appearanceColor(conversation.appearanceColor), in: Circle())
+                .accessibilityLabel("\(conversation.appearanceColor.rawValue) \(conversation.appearanceSymbol.rawValue) contact icon")
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(conversation.displayName).font(.headline)
@@ -393,6 +426,11 @@ struct ContentView: View {
                         .lineLimit(1)
                 } else if let message = store.latestMessage(for: conversation.id) {
                     Text(messagePreview(message))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if !conversation.contactNote.isEmpty {
+                    Text(conversation.contactNote)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -468,6 +506,23 @@ struct ContentView: View {
             Button { copyToSystemClipboard(diagnostics) } label: { Label("Copy Delivery Diagnostics", systemImage: "stethoscope") }
         }
         Button { renameDraft = conversation.displayName; renamingConversation = conversation } label: { Label("Rename", systemImage: "pencil") }
+        Button { noteDraft = conversation.contactNote; notingConversation = conversation } label: { Label("Edit Private Note", systemImage: "note.text") }
+        Menu("Contact Icon", systemImage: conversation.appearanceSymbol.rawValue) {
+            ForEach(Conversation.AppearanceSymbol.allCases, id: \.self) { symbol in
+                Button {
+                    store.setConversationAppearance(conversationID: conversation.id, note: conversation.contactNote, color: conversation.appearanceColor, symbol: symbol)
+                } label: {
+                    Label(symbolLabel(symbol), systemImage: symbol.rawValue)
+                }
+            }
+        }
+        Menu("Contact Color", systemImage: "paintpalette") {
+            ForEach(Conversation.AppearanceColor.allCases, id: \.self) { color in
+                Button(color.rawValue.capitalized) {
+                    store.setConversationAppearance(conversationID: conversation.id, note: conversation.contactNote, color: color, symbol: conversation.appearanceSymbol)
+                }
+            }
+        }
         Button { store.setConversationTrusted(!conversation.isTrusted, conversationID: conversation.id) } label: {
             Label(conversation.isTrusted ? "Remove Trust" : "Mark as Trusted", systemImage: conversation.isTrusted ? "shield.slash" : "checkmark.shield")
         }
@@ -522,6 +577,19 @@ struct ContentView: View {
         }
         Button(role: .destructive) { clearingConversation = conversation } label: { Label("Clear History", systemImage: "eraser") }
         Button(role: .destructive) { deletingConversation = conversation } label: { Label("Delete Conversation", systemImage: "trash") }
+    }
+
+    private func symbolLabel(_ symbol: Conversation.AppearanceSymbol) -> String {
+        switch symbol {
+        case .person: "Person"
+        case .radio: "Radio"
+        case .antenna: "Antenna"
+        case .vehicle: "Vehicle"
+        case .home: "Home"
+        case .favorite: "Favorite"
+        case .team: "Team"
+        case .work: "Work"
+        }
     }
 
     private func prepareRestore(from url: URL) {
@@ -1210,9 +1278,18 @@ private struct ConversationView: View {
         let conversationMessages = filteredMessages
         VStack(spacing: 0) {
             HStack {
+                Image(systemName: conversation.appearanceSymbol.rawValue)
+                    .font(.title2)
+                    .foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(appearanceColor(conversation.appearanceColor), in: Circle())
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading) {
                     Text(conversation.displayName).font(.title2.bold())
                     if conversation.isTrusted { Label("Trusted", systemImage: "checkmark.shield.fill").font(.caption).foregroundStyle(.green) }
+                    if !conversation.contactNote.isEmpty {
+                        Text(conversation.contactNote).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
                     Text(conversation.destinationHash)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)

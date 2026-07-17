@@ -283,6 +283,30 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(conversation.identityVerifiedAt == nil)
 }
 
+@MainActor @Test func contactAppearancePersistsSyncsAndExportsWithoutRemoteOverwrite() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Field Team"))
+    let id = try #require(store.conversations.first?.id)
+    store.setConversationAppearance(conversationID: id, note: "Primary response crew", color: .orange, symbol: .team)
+    let reloaded = SidebandStore(persistenceURL: url)
+    #expect(reloaded.conversations.first?.contactNote == "Primary response crew")
+    #expect(reloaded.conversations.first?.appearanceColor == .orange)
+    #expect(reloaded.conversations.first?.appearanceSymbol == .team)
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let exported = try decoder.decode(SidebandContactCollection.self, from: reloaded.exportContactCollectionData())
+    #expect(exported.contacts.first?.contactNote == "Primary response crew")
+    #expect(exported.contacts.first?.appearanceColor == .orange)
+
+    let newer = Conversation(id: id, destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Field Team", pluginCommandsEnabled: true, contactNote: "Primary response crew", appearanceColor: .orange, appearanceSymbol: .team, updatedAt: Date(timeIntervalSince1970: 20))
+    let older = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Remote", contactNote: "Old", appearanceColor: .gray, appearanceSymbol: .person, updatedAt: Date(timeIntervalSince1970: 10))
+    let merged = AppSnapshot(conversations: [newer]).mergingCloudSnapshot(AppSnapshot(conversations: [older]))
+    #expect(merged.conversations.first?.contactNote == "Primary response crew")
+    #expect(merged.conversations.first?.pluginCommandsEnabled == true)
+}
+
 @MainActor @Test func snapshotValidationRejectsIdentityPinnedToDifferentDestination() throws {
     let identity = ReticulumIdentity()
     let conversation = Conversation(

@@ -8,12 +8,18 @@ public struct SidebandContactCollection: Codable, Sendable {
         public var displayName: String
         public var publicKey: Data?
         public var wasIdentityVerified: Bool
+        public var contactNote: String?
+        public var appearanceColor: Conversation.AppearanceColor?
+        public var appearanceSymbol: Conversation.AppearanceSymbol?
 
-        public init(destinationHash: String, displayName: String, publicKey: Data?, wasIdentityVerified: Bool) {
+        public init(destinationHash: String, displayName: String, publicKey: Data?, wasIdentityVerified: Bool, contactNote: String? = nil, appearanceColor: Conversation.AppearanceColor? = nil, appearanceSymbol: Conversation.AppearanceSymbol? = nil) {
             self.destinationHash = destinationHash
             self.displayName = displayName
             self.publicKey = publicKey
             self.wasIdentityVerified = wasIdentityVerified
+            self.contactNote = contactNote
+            self.appearanceColor = appearanceColor
+            self.appearanceSymbol = appearanceSymbol
         }
     }
 

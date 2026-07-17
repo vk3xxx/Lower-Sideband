@@ -247,6 +247,8 @@ public extension AppSnapshot {
                         isTrusted: local.isTrusted, isPinned: local.isPinned, isArchived: local.isArchived,
                         isBlocked: local.isBlocked, notificationsMuted: local.notificationsMuted,
                         telemetrySharingEnabled: local.telemetrySharingEnabled,
+                        pluginCommandsEnabled: local.pluginCommandsEnabled,
+                        contactNote: local.contactNote, appearanceColor: local.appearanceColor, appearanceSymbol: local.appearanceSymbol,
                         deliveryPreference: local.deliveryPreference,
                         verifiedIdentityKey: local.verifiedIdentityKey, identityVerifiedAt: local.identityVerifiedAt,
                         unreadCount: local.unreadCount, updatedAt: local.updatedAt

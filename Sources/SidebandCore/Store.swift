@@ -431,7 +431,10 @@ public final class SidebandStore {
                 destinationHash: conversation.destinationHash,
                 displayName: conversation.displayName,
                 publicKey: identityPublicKey(for: conversation.id),
-                wasIdentityVerified: isConversationIdentityVerified(conversation.id)
+                wasIdentityVerified: isConversationIdentityVerified(conversation.id),
+                contactNote: conversation.contactNote,
+                appearanceColor: conversation.appearanceColor,
+                appearanceSymbol: conversation.appearanceSymbol
             )
         }
         return try JSONEncoder.sideband.encode(SidebandContactCollection(contacts: contacts))
@@ -451,7 +454,18 @@ public final class SidebandStore {
                 displayName: String(contact.displayName.prefix(128)),
                 publicKey: contact.publicKey
             ) else { continue }
-            if openContactLink(link.url) { imported += 1 }
+            if openContactLink(link.url) {
+                if let existing = conversations.first(where: { $0.destinationHash == link.destinationHash }),
+                   contact.contactNote != nil || contact.appearanceColor != nil || contact.appearanceSymbol != nil {
+                    setConversationAppearance(
+                        conversationID: existing.id,
+                        note: contact.contactNote ?? existing.contactNote,
+                        color: contact.appearanceColor ?? existing.appearanceColor,
+                        symbol: contact.appearanceSymbol ?? existing.appearanceSymbol
+                    )
+                }
+                imported += 1
+            }
         }
         if let previousSelection, conversations.contains(where: { $0.id == previousSelection }) {
             selectedConversationID = previousSelection
@@ -771,6 +785,15 @@ public final class SidebandStore {
     public func setConversationPluginCommands(_ enabled: Bool, conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].pluginCommandsEnabled = enabled
+        save()
+    }
+
+    public func setConversationAppearance(conversationID: UUID, note: String, color: Conversation.AppearanceColor, symbol: Conversation.AppearanceSymbol) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].contactNote = String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(512))
+        conversations[index].appearanceColor = color
+        conversations[index].appearanceSymbol = symbol
+        conversations[index].updatedAt = .now
         save()
     }
 
@@ -1504,6 +1527,7 @@ public final class SidebandStore {
                   !$0.relativePath.isEmpty && URL(fileURLWithPath: $0.relativePath).lastPathComponent == $0.relativePath
               }),
               snapshot.conversations.allSatisfy({ conversation in
+                  guard conversation.contactNote.count <= 512, conversation.displayName.count <= 128 else { return false }
                   guard let key = conversation.verifiedIdentityKey else { return conversation.identityVerifiedAt == nil }
                   guard conversation.identityVerifiedAt != nil,
                         let identity = try? ReticulumIdentity(publicKey: key) else { return false }
