@@ -764,6 +764,10 @@ private struct NetworkView: View {
                     Text(store.lastNetworkReadyAt?.formatted(date: .abbreviated, time: .standard) ?? "Never")
                         .foregroundStyle(.secondary)
                 }
+                GridRow {
+                    Text("Background refresh")
+                    Text(backgroundRefreshSummary).foregroundStyle(.secondary)
+                }
             }.textFieldStyle(.roundedBorder).padding(6)
             }
             GroupBox("Routing") {
@@ -1191,6 +1195,11 @@ private struct NetworkView: View {
             if let port = store.activeNetworkPort { value += ":\(port)" }
         }
         return value
+    }
+    private var backgroundRefreshSummary: String {
+        guard let date = store.lastBackgroundRefreshAt else { return "Not run yet" }
+        let result = store.lastBackgroundRefreshSucceeded == true ? "succeeded" : "incomplete"
+        return "\(date.formatted(date: .abbreviated, time: .shortened)) · \(result)"
     }
     private func interfaceStateText(_ state: ReticulumTCPInterface.State) -> String {
         switch state {

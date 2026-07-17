@@ -58,6 +58,8 @@ public final class SidebandStore {
     public private(set) var deliveryTimeoutCount = 0
     public private(set) var reconnectDelaySeconds: Int?
     public private(set) var recoveredOutboundCount = 0
+    public private(set) var lastBackgroundRefreshAt: Date?
+    public private(set) var lastBackgroundRefreshSucceeded: Bool?
     public private(set) var incomingResourceProgress: [String: Double] = [:]
     public private(set) var isApplicationActive = true
     public private(set) var visibleConversationID: UUID?
@@ -215,6 +217,8 @@ public final class SidebandStore {
         richTextTrustedOnly = UserDefaults.standard.object(forKey: "lxmfRichTextTrustedOnly") as? Bool ?? true
         preferredVoiceProfile = LXSTVoice.Profile(rawValue: UInt64(UserDefaults.standard.integer(forKey: "lxstVoiceProfile"))) ?? .mediumQuality
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
+        lastBackgroundRefreshAt = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshAt") as? Date
+        lastBackgroundRefreshSucceeded = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshSucceeded") as? Bool
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
         preferredInternetGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredInternetGatewayID")
         receivedLXMFIDs = Set(UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? [])
@@ -222,7 +226,10 @@ public final class SidebandStore {
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
         lanDiscovery.setUpdateHandler { [weak self] gateways in self?.gatewayResultsChanged(gateways) }
         reachability.setStatusHandler { [weak self] status in self?.reachabilityChanged(status) }
-        backgroundRefresh.register { [weak self] in await self?.performBackgroundRefresh() }
+        backgroundRefresh.register { [weak self] in
+            guard let self else { return false }
+            return await self.performBackgroundRefresh()
+        }
         Task { try? await resourceStagingStore.removeStale(olderThan: Date(timeIntervalSinceNow: -86_400)) }
         Task { [weak self] in _ = await self?.cleanOrphanedAttachments() }
         syncUnreadBadge()
@@ -1231,6 +1238,7 @@ public final class SidebandStore {
         if autoInterfaceEnabled, !autoInterfaceDiscovery.isListening { autoInterfaceDiscovery.start() }
         startPeriodicPropagationSync()
         await syncPropagationNow()
+        if networkState == .ready { await flushQueuedMessages() }
         if iCloudSyncEnabled { await syncICloudNow() }
     }
 
@@ -1245,10 +1253,33 @@ public final class SidebandStore {
         backgroundRefresh.schedule()
     }
 
-    private func performBackgroundRefresh() async {
+    private func performBackgroundRefresh() async -> Bool {
+        let startedAt = Date.now
+        defer {
+            lastBackgroundRefreshAt = startedAt
+            UserDefaults.standard.set(startedAt, forKey: "sidebandLastBackgroundRefreshAt")
+            if let lastBackgroundRefreshSucceeded {
+                UserDefaults.standard.set(lastBackgroundRefreshSucceeded, forKey: "sidebandLastBackgroundRefreshSucceeded")
+            }
+        }
         if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while networkState != .ready, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        guard networkState == .ready, !Task.isCancelled else {
+            lastBackgroundRefreshSucceeded = false
+            backgroundRefresh.schedule()
+            return false
+        }
+        await announceLocalDeliveryDestination()
         await syncPropagationNow()
+        await flushQueuedMessages()
+        for conversation in conversations { await propagateQueued(for: conversation.id) }
         if iCloudSyncEnabled { await syncICloudNow() }
+        lastBackgroundRefreshSucceeded = !Task.isCancelled
+        backgroundRefresh.schedule()
+        return !Task.isCancelled
     }
 
     /// Performs the bounded work allowed after an iOS silent wake. The push
@@ -1492,7 +1523,8 @@ public final class SidebandStore {
             "Plugins: \(pluginRegistry.manifests.count) loaded, \(pluginRegistry.rejectedPluginDescriptions.count) rejected, \(pluginAuditEvents.count) audit events",
             "Propagation node: \(propagationNodeHash.isEmpty ? "not discovered" : propagationNodeHash) (\(propagationNodeIsAutomatic ? "automatic" : "manual"))",
             "Remote wake token: \(UserDefaults.standard.string(forKey: "sidebandAPNsDeviceToken") == nil ? "not registered" : "registered")",
-            "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")"
+            "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")",
+            "Background refresh: \(lastBackgroundRefreshAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never") · \(lastBackgroundRefreshSucceeded.map { $0 ? "succeeded" : "incomplete" } ?? "not run")"
         ].joined(separator: "\n")
     }
 
