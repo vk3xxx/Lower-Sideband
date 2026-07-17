@@ -145,6 +145,19 @@ import Testing
     #expect(restored.isConversationIdentityVerified(restoredConversation.id))
 }
 
+@MainActor @Test func perContactDeliveryPreferencePersists() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Remote Peer"))
+    let conversation = try #require(store.selectedConversation)
+
+    store.setConversationDeliveryPreference(.propagationPreferred, conversationID: conversation.id)
+    #expect(store.selectedConversation?.deliveryPreference == .propagationPreferred)
+
+    let restored = SidebandStore(persistenceURL: url)
+    #expect(restored.conversations.first?.deliveryPreference == .propagationPreferred)
+}
+
 @MainActor @Test func discoveryCleanupProtectsConversationDestinations() async throws {
     let now = Date.now.addingTimeInterval(8 * 24 * 60 * 60)
     let firstIdentity = ReticulumIdentity()

@@ -448,6 +448,15 @@ struct ContentView: View {
         Button { store.setConversationTelemetrySharing(!conversation.telemetrySharingEnabled, conversationID: conversation.id) } label: {
             Label(conversation.telemetrySharingEnabled ? "Disable Telemetry Sharing" : "Enable Telemetry Sharing", systemImage: conversation.telemetrySharingEnabled ? "location.slash" : "location")
         }
+        Button {
+            let preference: Conversation.DeliveryPreference = conversation.deliveryPreference == .automatic ? .propagationPreferred : .automatic
+            store.setConversationDeliveryPreference(preference, conversationID: conversation.id)
+        } label: {
+            Label(
+                conversation.deliveryPreference == .propagationPreferred ? "Use Automatic Delivery" : "Prefer Propagation Node",
+                systemImage: conversation.deliveryPreference == .propagationPreferred ? "arrow.triangle.branch" : "shippingbox"
+            )
+        }
         Button { store.setConversationBlocked(!conversation.isBlocked, conversationID: conversation.id) } label: {
             Label(conversation.isBlocked ? "Unblock Contact" : "Block Contact", systemImage: conversation.isBlocked ? "hand.raised.slash" : "hand.raised")
         }

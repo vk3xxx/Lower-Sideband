@@ -661,6 +661,14 @@ public final class SidebandStore {
         save()
     }
 
+    public func setConversationDeliveryPreference(_ preference: Conversation.DeliveryPreference, conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].deliveryPreference = preference
+        conversations[index].updatedAt = .now
+        save()
+        if preference == .propagationPreferred { Task { await attemptDelivery(for: conversationID) } }
+    }
+
     public func shouldNotifyIncoming(for conversationID: UUID) -> Bool {
         guard conversations.first(where: { $0.id == conversationID })?.notificationsMuted == false else { return false }
         return !isApplicationActive || visibleConversationID != conversationID
@@ -2383,7 +2391,6 @@ public final class SidebandStore {
             $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0)
         }
         guard !pending.isEmpty else { return }
-        let queued = pending.filter { $0.attachments.isEmpty }
         let attachmentMessages = pending.filter { !$0.attachments.isEmpty }
         guard let destination = Data(hexadecimal: conversation.destinationHash),
               let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated }),
@@ -2397,8 +2404,15 @@ public final class SidebandStore {
         }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
+        if conversation.deliveryPreference == .propagationPreferred,
+           activeLinks.values.contains(where: { $0.destinationHash.hex == propagationNodeHash }) {
+            await propagateQueued(for: conversationID)
+        }
+        let remainingQueued = messages.filter {
+            $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty && ownsOutbox($0)
+        }
         var requiresLink = !attachmentMessages.isEmpty
-        for item in queued {
+        for item in remainingQueued {
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)
@@ -2417,7 +2431,7 @@ public final class SidebandStore {
             return
         }
         guard let session = activeSession(to: conversation.destinationHash) else { return }
-        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ownsOutbox($0) }) {
+        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && $0.attachments.isEmpty && ownsOutbox($0) }) {
             guard item.attachments.isEmpty else { continue }
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item))
