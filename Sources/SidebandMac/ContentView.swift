@@ -1087,12 +1087,20 @@ private struct NetworkView: View {
 }
 
 private struct ConversationView: View {
+    private enum SearchScope: String, CaseIterable { case all = "All", text = "Text", attachments = "Files", telemetry = "Telemetry", reactions = "Reactions" }
+    private struct ReactionSummary: Identifiable {
+        let content: String
+        let count: Int
+        var id: String { content }
+    }
+
     @Bindable var store: SidebandStore
     let conversation: Conversation
     @State private var draft = ""
     @State private var pendingAttachments: [Attachment] = []
     @State private var showingFileImporter = false
     @State private var messageSearch = ""
+    @State private var messageSearchScope: SearchScope = .all
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var previewAttachmentURL: URL?
     @State private var previewAttachment: Attachment?
@@ -1132,6 +1140,12 @@ private struct ConversationView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 220)
                 if !messageSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Picker("Search scope", selection: $messageSearchScope) {
+                        ForEach(SearchScope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .help("Limit message search")
                     Text("\(conversationMessages.count) \(conversationMessages.count == 1 ? "result" : "results")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1244,15 +1258,15 @@ private struct ConversationView: View {
                                             AttachmentShareButton(store: store.attachmentStore, attachment: attachment)
                                         }
                                     }
-                                    if !reactions(for: message).isEmpty {
+                                    if !reactionSummaries(for: message).isEmpty {
                                         HStack(spacing: 5) {
-                                            ForEach(reactions(for: message), id: \.id) { reaction in
-                                                Text(reaction.reactionContent ?? "")
+                                            ForEach(reactionSummaries(for: message)) { reaction in
+                                                Text(reaction.count > 1 ? "\(reaction.content) \(reaction.count)" : reaction.content)
                                                     .font(.caption)
                                                     .padding(.horizontal, 7)
                                                     .padding(.vertical, 3)
                                                     .background(.thinMaterial, in: Capsule())
-                                                    .accessibilityLabel("Reaction \(reaction.reactionContent ?? "")")
+                                                    .accessibilityLabel("Reaction \(reaction.content), \(reaction.count) \(reaction.count == 1 ? "person" : "people")")
                                             }
                                         }
                                     }
@@ -1265,6 +1279,8 @@ private struct ConversationView: View {
                                 }
                                 .padding(10)
                                 .background(message.direction == .outgoing ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel(messageAccessibilityLabel(message))
                                 .contextMenu {
                                     if !message.body.isEmpty {
                                         Button { copyToSystemClipboard(message.body) } label: { Label("Copy Message", systemImage: "doc.on.doc") }
@@ -1386,9 +1402,10 @@ private struct ConversationView: View {
                             .font(.caption)
                     }
                     Spacer()
-                    Text("\(draft.count)/\(SidebandMessageLimits.maximumTextCharacters)")
+                    Text("\(remainingDraftCharacters.formatted()) characters remaining")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(draft.count == SidebandMessageLimits.maximumTextCharacters ? .orange : .secondary)
+                        .foregroundStyle(remainingDraftCharacters <= 256 ? .orange : .secondary)
+                        .accessibilityLabel("\(remainingDraftCharacters) message characters remaining")
                 }
             }.padding()
         }
@@ -1494,7 +1511,19 @@ private struct ConversationView: View {
         let query = messageSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return all }
         return all.filter { message in
-            message.body.localizedCaseInsensitiveContains(query) || message.attachments.contains { $0.filename.localizedCaseInsensitiveContains(query) }
+            let textMatch = message.body.localizedCaseInsensitiveContains(query) || (message.replyQuote?.localizedCaseInsensitiveContains(query) ?? false)
+            let attachmentMatch = message.attachments.contains { $0.filename.localizedCaseInsensitiveContains(query) || ($0.mimeType?.localizedCaseInsensitiveContains(query) ?? false) }
+            let telemetryMatch = message.telemetry.map { telemetry in
+                String(describing: telemetry).localizedCaseInsensitiveContains(query)
+            } ?? false
+            let reactionMatch = reactions(for: message).contains { $0.reactionContent?.localizedCaseInsensitiveContains(query) == true }
+            switch messageSearchScope {
+            case .all: return textMatch || attachmentMatch || telemetryMatch || reactionMatch
+            case .text: return textMatch
+            case .attachments: return attachmentMatch
+            case .telemetry: return telemetryMatch
+            case .reactions: return reactionMatch
+            }
         }
     }
 
@@ -1503,6 +1532,11 @@ private struct ConversationView: View {
         return store.messages(for: conversation.id).filter {
             $0.reactionTo == messageID && $0.reactionContent?.isEmpty == false
         }
+    }
+
+    private func reactionSummaries(for message: Message) -> [ReactionSummary] {
+        let grouped = Dictionary(grouping: reactions(for: message), by: { $0.reactionContent ?? "" })
+        return grouped.keys.sorted().map { ReactionSummary(content: $0, count: grouped[$0]?.count ?? 0) }
     }
 
     private var telemetryMessages: [Message] {
@@ -1598,7 +1632,34 @@ private struct ConversationView: View {
         }
     }
 
-    private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty }
+    private var remainingDraftCharacters: Int {
+        max(0, SidebandMessageLimits.maximumTextCharacters - draft.count)
+    }
+
+    private var canSend: Bool {
+        !conversation.isBlocked &&
+        draft.count <= SidebandMessageLimits.maximumTextCharacters &&
+        (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty)
+    }
+
+    private func messageAccessibilityLabel(_ message: Message) -> String {
+        var parts = [
+            message.direction == .outgoing ? "You" : conversation.displayName,
+            message.body.isEmpty ? "Message" : message.body
+        ]
+        if let quote = message.replyQuote { parts.append("Replying to \(quote)") }
+        if !message.attachments.isEmpty {
+            parts.append("Attachments: \(message.attachments.map(\.filename).joined(separator: ", "))")
+        }
+        if message.telemetry != nil { parts.append("Includes telemetry") }
+        let summaries = reactionSummaries(for: message)
+        if !summaries.isEmpty {
+            parts.append("Reactions: " + summaries.map { "\($0.content) \($0.count)" }.joined(separator: ", "))
+        }
+        parts.append(message.state.rawValue)
+        parts.append(message.timestamp.formatted(date: .omitted, time: .shortened))
+        return parts.joined(separator: ", ")
+    }
 
     private func messageMetadata(_ message: Message) -> String {
         let formatter = ISO8601DateFormatter()
