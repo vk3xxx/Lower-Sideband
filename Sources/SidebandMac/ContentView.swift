@@ -432,6 +432,9 @@ struct ContentView: View {
         Button { store.setConversationNotificationsMuted(!conversation.notificationsMuted, conversationID: conversation.id) } label: {
             Label(conversation.notificationsMuted ? "Unmute Notifications" : "Mute Notifications", systemImage: conversation.notificationsMuted ? "bell" : "bell.slash")
         }
+        Button { store.setConversationTelemetrySharing(!conversation.telemetrySharingEnabled, conversationID: conversation.id) } label: {
+            Label(conversation.telemetrySharingEnabled ? "Disable Telemetry Sharing" : "Enable Telemetry Sharing", systemImage: conversation.telemetrySharingEnabled ? "location.slash" : "location")
+        }
         Button { store.setConversationBlocked(!conversation.isBlocked, conversationID: conversation.id) } label: {
             Label(conversation.isBlocked ? "Unblock Contact" : "Block Contact", systemImage: conversation.isBlocked ? "hand.raised.slash" : "hand.raised")
         }
@@ -1190,7 +1193,7 @@ private struct ConversationView: View {
                         else { Image(systemName: "location.fill") }
                     }
                     .help("Share current location and device telemetry")
-                    .disabled(telemetryCapture.isRequesting)
+                    .disabled(telemetryCapture.isRequesting || !conversation.telemetrySharingEnabled)
                     Button { showingFileImporter = true } label: { Image(systemName: "paperclip") }
                         .help("Attach files")
                         .disabled(pendingAttachments.count >= SidebandMessageLimits.maximumAttachments)

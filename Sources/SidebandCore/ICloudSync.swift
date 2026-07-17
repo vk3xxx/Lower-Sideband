@@ -246,6 +246,7 @@ public extension AppSnapshot {
                         id: canonicalID, destinationHash: local.destinationHash, displayName: local.displayName,
                         isTrusted: local.isTrusted, isPinned: local.isPinned, isArchived: local.isArchived,
                         isBlocked: local.isBlocked, notificationsMuted: local.notificationsMuted,
+                        telemetrySharingEnabled: local.telemetrySharingEnabled,
                         unreadCount: local.unreadCount, updatedAt: local.updatedAt
                     )
                     : remoteConversation

@@ -864,6 +864,20 @@ import Testing
     #expect(store.shouldNotifyIncoming(for: id))
 }
 
+@MainActor @Test func telemetrySharingPolicyPersistsAndBlocksSend() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let conversation = try #require(store.selectedConversation)
+    store.setConversationTelemetrySharing(false, conversationID: conversation.id)
+
+    await store.send("Shared telemetry", attachments: [], telemetry: SidebandTelemetry())
+
+    #expect(store.messages(for: conversation.id).isEmpty)
+    #expect(store.lastError == "Telemetry sharing is disabled for this contact.")
+    #expect(SidebandStore(persistenceURL: url).conversations.first?.telemetrySharingEnabled == false)
+}
+
 @MainActor @Test func conversationDraftPersistsAndClears() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

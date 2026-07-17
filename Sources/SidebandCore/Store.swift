@@ -596,6 +596,12 @@ public final class SidebandStore {
         save()
     }
 
+    public func setConversationTelemetrySharing(_ enabled: Bool, conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].telemetrySharingEnabled = enabled
+        save()
+    }
+
     public func shouldNotifyIncoming(for conversationID: UUID) -> Bool {
         guard conversations.first(where: { $0.id == conversationID })?.notificationsMuted == false else { return false }
         return !isApplicationActive || visibleConversationID != conversationID
@@ -623,6 +629,10 @@ public final class SidebandStore {
         guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil), let conversation = selectedConversation else { return }
         guard !conversation.isBlocked else {
             lastError = "Unblock this contact before sending a message."
+            return
+        }
+        guard telemetry == nil || conversation.telemetrySharingEnabled else {
+            lastError = "Telemetry sharing is disabled for this contact."
             return
         }
         guard body.count <= SidebandMessageLimits.maximumTextCharacters else {
