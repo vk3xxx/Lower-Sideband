@@ -200,6 +200,48 @@ import Testing
     #expect(decoded.schemaVersion == AppSnapshot.currentSchemaVersion)
 }
 
+@Test func messagesMigrateAndPersistLXMFReplyMetadata() throws {
+    let conversationID = UUID()
+    let lxmfID = Data(repeating: 0x11, count: 32)
+    let replyID = Data(repeating: 0x22, count: 32)
+    let message = Message(
+        conversationID: conversationID,
+        body: "Reply body",
+        direction: .incoming,
+        state: .delivered,
+        lxmfID: lxmfID,
+        replyTo: replyID,
+        replyQuote: "Original body"
+    )
+    let decoded = try JSONDecoder().decode(Message.self, from: JSONEncoder().encode(message))
+    #expect(decoded.lxmfID == lxmfID)
+    #expect(decoded.replyTo == replyID)
+    #expect(decoded.replyQuote == "Original body")
+
+    let legacy = #"{"id":"\#(UUID().uuidString)","conversationID":"\#(conversationID.uuidString)","body":"Old","timestamp":0,"direction":"incoming","state":"delivered","attachments":[]}"#
+    let migrated = try JSONDecoder().decode(Message.self, from: Data(legacy.utf8))
+    #expect(migrated.lxmfID == nil)
+    #expect(migrated.replyTo == nil)
+    #expect(migrated.replyQuote == nil)
+}
+
+@Test func lxmfReplyFieldsRoundTripWithUpstreamFieldIDs() throws {
+    let sender = ReticulumIdentity()
+    let replyID = Data(repeating: 0xAB, count: 32)
+    let quote = Data("Quoted message".utf8)
+    let message = try LXMFMessage(
+        destinationHash: Data(repeating: 0x01, count: 16),
+        sourceHash: Data(repeating: 0x02, count: 16),
+        sourceIdentity: sender,
+        content: Data("Reply".utf8),
+        fields: [0x30: replyID, 0x31: quote]
+    )
+    let received = try LXMFReceivedMessage(packed: message.packed)
+    #expect(received.binaryField(0x30) == replyID)
+    #expect(received.binaryField(0x31) == quote)
+    #expect(received.validate(with: sender))
+}
+
 @MainActor @Test func exportedSnapshotDataRoundTripsCurrentState() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

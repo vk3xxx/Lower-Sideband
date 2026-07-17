@@ -918,6 +918,7 @@ private struct ConversationView: View {
     @State private var voiceRecorder = VoiceMessageRecorder()
     @State private var showingTelemetryMap = false
     @State private var paperMessageURI: String?
+    @State private var replyingTo: Message?
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -997,6 +998,14 @@ private struct ConversationView: View {
                             HStack {
                                 if message.direction == .outgoing { Spacer(minLength: 80) }
                                 VStack(alignment: .leading, spacing: 5) {
+                                    if let replyQuote = message.replyQuote {
+                                        HStack(spacing: 5) {
+                                            Rectangle().fill(Color.accentColor).frame(width: 3)
+                                            Text(replyQuote).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        }
+                                        .padding(.bottom, 2)
+                                        .accessibilityLabel("Replying to: \(replyQuote)")
+                                    }
                                     if !message.body.isEmpty { Text(message.body) }
                                     if let telemetry = message.telemetry {
                                         Button { showingTelemetryMap = true } label: { TelemetryMessageCard(telemetry: telemetry) }
@@ -1038,6 +1047,9 @@ private struct ConversationView: View {
                                     if !message.body.isEmpty {
                                         Button { copyToSystemClipboard(message.body) } label: { Label("Copy Message", systemImage: "doc.on.doc") }
                                     }
+                                    if message.lxmfID != nil {
+                                        Button { replyingTo = message } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+                                    }
                                     Button { copyToSystemClipboard(messageMetadata(message)) } label: {
                                         Label("Copy Message Details", systemImage: "info.square")
                                     }
@@ -1070,6 +1082,21 @@ private struct ConversationView: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 8) {
+                if let replyingTo {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrowshape.turn.up.left.fill").foregroundStyle(Color.accentColor)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Replying to \(replyingTo.direction == .incoming ? conversation.displayName : "yourself")")
+                                .font(.caption.bold())
+                            Text(replyPreview(replyingTo)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        Button { self.replyingTo = nil } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).accessibilityLabel("Cancel reply")
+                    }
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                }
                 if !pendingAttachments.isEmpty {
                     ScrollView(.horizontal) {
                         HStack {
@@ -1213,11 +1240,21 @@ private struct ConversationView: View {
     private func send() {
         let text = draft
         let attachments = pendingAttachments
+        let repliedMessage = replyingTo
         draftSaveTask?.cancel()
         draft = ""
         store.updateDraft("", for: conversation.id)
         pendingAttachments = []
-        Task { await store.send(text, attachments: attachments) }
+        replyingTo = nil
+        Task { await store.send(text, attachments: attachments, replyingTo: repliedMessage) }
+    }
+
+    private func replyPreview(_ message: Message) -> String {
+        let body = message.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty { return String(body.prefix(280)) }
+        if let attachment = message.attachments.first { return "Attachment: \(attachment.filename)" }
+        if message.telemetry != nil { return "Shared telemetry" }
+        return "Message"
     }
 
     private func shareTelemetry() {

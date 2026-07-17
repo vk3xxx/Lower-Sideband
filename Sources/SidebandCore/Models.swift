@@ -59,10 +59,14 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var state: DeliveryState
     public var attachments: [Attachment]
     public var telemetry: SidebandTelemetry?
+    /// Full LXMF message hash used by interoperable replies and references.
+    public var lxmfID: Data?
+    public var replyTo: Data?
+    public var replyQuote: String?
     public var outboxOwnerID: String?
     public var outboxOwnerUpdatedAt: Date?
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
@@ -71,11 +75,14 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.state = state
         self.attachments = attachments
         self.telemetry = telemetry
+        self.lxmfID = lxmfID
+        self.replyTo = replyTo
+        self.replyQuote = replyQuote
         self.outboxOwnerID = outboxOwnerID
         self.outboxOwnerUpdatedAt = outboxOwnerUpdatedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, outboxOwnerID, outboxOwnerUpdatedAt }
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, lxmfID, replyTo, replyQuote, outboxOwnerID, outboxOwnerUpdatedAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -86,6 +93,9 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         state = try values.decode(DeliveryState.self, forKey: .state)
         attachments = try values.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
         telemetry = try values.decodeIfPresent(SidebandTelemetry.self, forKey: .telemetry)
+        lxmfID = try values.decodeIfPresent(Data.self, forKey: .lxmfID)
+        replyTo = try values.decodeIfPresent(Data.self, forKey: .replyTo)
+        replyQuote = try values.decodeIfPresent(String.self, forKey: .replyQuote)
         outboxOwnerID = try values.decodeIfPresent(String.self, forKey: .outboxOwnerID)
         outboxOwnerUpdatedAt = try values.decodeIfPresent(Date.self, forKey: .outboxOwnerUpdatedAt)
     }
