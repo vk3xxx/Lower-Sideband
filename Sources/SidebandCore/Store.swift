@@ -390,6 +390,41 @@ public final class SidebandStore {
         return try JSONEncoder.sideband.encode(archive)
     }
 
+    public func exportContactCollectionData() throws -> Data {
+        let contacts = conversations.map { conversation in
+            SidebandContactCollection.Contact(
+                destinationHash: conversation.destinationHash,
+                displayName: conversation.displayName,
+                publicKey: identityPublicKey(for: conversation.id),
+                wasIdentityVerified: isConversationIdentityVerified(conversation.id)
+            )
+        }
+        return try JSONEncoder.sideband.encode(SidebandContactCollection(contacts: contacts))
+    }
+
+    @discardableResult
+    public func importContactCollectionData(_ data: Data) throws -> Int {
+        let collection = try JSONDecoder.sideband.decode(SidebandContactCollection.self, from: data)
+        guard collection.version <= SidebandContactCollection.currentVersion, collection.contacts.count <= 10_000 else {
+            throw SnapshotError.unsupportedVersion
+        }
+        let previousSelection = selectedConversationID
+        var imported = 0
+        for contact in collection.contacts {
+            guard let link = SidebandContactLink(
+                destinationHash: contact.destinationHash,
+                displayName: String(contact.displayName.prefix(128)),
+                publicKey: contact.publicKey
+            ) else { continue }
+            if openContactLink(link.url) { imported += 1 }
+        }
+        if let previousSelection, conversations.contains(where: { $0.id == previousSelection }) {
+            selectedConversationID = previousSelection
+        }
+        if imported == 0 { throw SnapshotError.invalidData }
+        return imported
+    }
+
     public func paperMessageURI(for messageID: UUID) throws -> String {
         guard let message = messages.first(where: { $0.id == messageID }),
               let conversation = conversations.first(where: { $0.id == message.conversationID }) else {

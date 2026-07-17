@@ -188,6 +188,25 @@ import Testing
     #expect(!text.contains("outboxOwnerID"))
 }
 
+@MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
+    let identity = ReticulumIdentity()
+    let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+    let destination = ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex
+    let source = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "source.json"))
+    let link = try #require(SidebandContactLink(destinationHash: destination, displayName: "Portable Peer", publicKey: identity.publicKey))
+    #expect(source.openContactLink(link.url))
+    let sourceConversation = try #require(source.selectedConversation)
+    #expect(source.setConversationIdentityVerified(true, conversationID: sourceConversation.id))
+
+    let data = try source.exportContactCollectionData()
+    let destinationStore = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "destination.json"))
+    #expect(try destinationStore.importContactCollectionData(data) == 1)
+    let imported = try #require(destinationStore.selectedConversation)
+    #expect(imported.displayName == "Portable Peer")
+    #expect(destinationStore.identityPublicKey(for: imported.id) == identity.publicKey)
+    #expect(!destinationStore.isConversationIdentityVerified(imported.id))
+}
+
 @MainActor @Test func discoveryCleanupProtectsConversationDestinations() async throws {
     let now = Date.now.addingTimeInterval(8 * 24 * 60 * 60)
     let firstIdentity = ReticulumIdentity()

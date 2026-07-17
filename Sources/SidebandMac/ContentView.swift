@@ -63,6 +63,9 @@ struct ContentView: View {
     @State private var backupDocument = SnapshotBackupDocument(data: Data())
     @State private var showingBackupExporter = false
     @State private var showingBackupImporter = false
+    @State private var contactCollectionDocument = SnapshotBackupDocument(data: Data())
+    @State private var showingContactCollectionExporter = false
+    @State private var showingContactCollectionImporter = false
     @State private var pendingRestoreData: Data?
 
     var body: some View {
@@ -116,6 +119,11 @@ struct ContentView: View {
                         .help("Export Sideband backup")
                     Button { showingBackupImporter = true } label: { Label("Restore backup", systemImage: "externaldrive.badge.timemachine") }
                         .help("Restore Sideband backup")
+                    Menu {
+                        Button(action: exportContacts) { Label("Export Contacts", systemImage: "person.2.badge.gearshape") }
+                        Button { showingContactCollectionImporter = true } label: { Label("Import Contacts", systemImage: "person.crop.circle.badge.plus") }
+                    } label: { Label("Contacts", systemImage: "person.2") }
+                    .help("Import or export contacts")
                     Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
                 }
             } detail: {
@@ -140,6 +148,15 @@ struct ContentView: View {
         .fileImporter(isPresented: $showingBackupImporter, allowedContentTypes: [.json]) { result in
             if case let .success(url) = result { prepareRestore(from: url) }
             if case let .failure(error) = result { store.lastError = "Could not open backup: \(error.localizedDescription)" }
+        }
+        .fileExporter(isPresented: $showingContactCollectionExporter, document: contactCollectionDocument, contentType: .json, defaultFilename: "Sideband-Contacts") { result in
+            if case let .failure(error) = result { store.lastError = "Could not export contacts: \(error.localizedDescription)" }
+        }
+        .fileImporter(isPresented: $showingContactCollectionImporter, allowedContentTypes: [.json]) { result in
+            switch result {
+            case .success(let url): importContacts(from: url)
+            case .failure(let error): store.lastError = "Could not open contacts: \(error.localizedDescription)"
+            }
         }
         .alert("Sideband", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.clearError() } })) {
             Button("OK") { store.clearError() }
@@ -313,6 +330,26 @@ struct ContentView: View {
             showingBackupExporter = true
         } catch {
             store.lastError = "Could not prepare backup: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportContacts() {
+        do {
+            contactCollectionDocument = SnapshotBackupDocument(data: try store.exportContactCollectionData())
+            showingContactCollectionExporter = true
+        } catch {
+            store.lastError = "Could not prepare contacts: \(error.localizedDescription)"
+        }
+    }
+
+    private func importContacts(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let count = try store.importContactCollectionData(Data(contentsOf: url))
+            store.lastError = "Imported \(count) contact\(count == 1 ? "" : "s"). Re-verify fingerprints after transferring contacts."
+        } catch {
+            store.lastError = "Could not import contacts: \(error.localizedDescription)"
         }
     }
 
