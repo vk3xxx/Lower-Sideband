@@ -989,6 +989,46 @@ import Testing
     #expect(SidebandStore(persistenceURL: url).conversations[0].isTrusted)
 }
 
+@MainActor @Test func richTextRenderingDefaultsToTrustedIncomingContacts() {
+    let defaults = UserDefaults.standard
+    let key = "lxmfRichTextTrustedOnly"
+    let previous = defaults.object(forKey: key)
+    defaults.removeObject(forKey: key)
+    defer {
+        if let previous { defaults.set(previous, forKey: key) }
+        else { defaults.removeObject(forKey: key) }
+    }
+
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let conversationID = store.conversations[0].id
+    let incoming = Message(conversationID: conversationID, body: "[site](https://example.com)", direction: .incoming, state: .delivered, renderer: .markdown)
+    let outgoing = Message(conversationID: conversationID, body: "**hello**", direction: .outgoing, state: .sent, renderer: .markdown)
+
+    #expect(store.richTextTrustedOnly)
+    #expect(!store.shouldRenderRichText(incoming, conversationID: conversationID))
+    #expect(store.shouldRenderRichText(outgoing, conversationID: conversationID))
+    store.setConversationTrusted(true, conversationID: conversationID)
+    #expect(store.shouldRenderRichText(incoming, conversationID: conversationID))
+}
+
+@MainActor @Test func richTextTrustPolicyCanBeDisabledAndPersists() {
+    let defaults = UserDefaults.standard
+    let key = "lxmfRichTextTrustedOnly"
+    let previous = defaults.object(forKey: key)
+    defer {
+        if let previous { defaults.set(previous, forKey: key) }
+        else { defaults.removeObject(forKey: key) }
+    }
+
+    let firstURL = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: firstURL)
+    store.setRichTextTrustedOnly(false)
+    let reloaded = SidebandStore(persistenceURL: firstURL)
+    #expect(!reloaded.richTextTrustedOnly)
+}
+
 @MainActor @Test func pinnedConversationsSortFirstAndPersist() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

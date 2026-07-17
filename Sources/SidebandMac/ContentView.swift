@@ -767,6 +767,17 @@ private struct NetworkView: View {
                     }
                 }.padding(6)
             }
+            GroupBox("Message security") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Render rich text only from trusted or verified contacts", isOn: Binding(
+                        get: { store.richTextTrustedOnly },
+                        set: { store.setRichTextTrustedOnly($0) }
+                    ))
+                    Text("Unknown senders' Markdown is shown as literal text by default, preventing disguised links from becoming interactive.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }.padding(6)
+            }
             GroupBox("Notifications") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
@@ -1456,7 +1467,9 @@ private struct ConversationView: View {
     }
 
     @ViewBuilder private func renderedBody(_ message: Message) -> some View {
-        if message.renderer == .markdown, let attributed = try? AttributedString(markdown: message.body) {
+        if message.renderer == .markdown,
+           store.shouldRenderRichText(message, conversationID: conversation.id),
+           let attributed = try? AttributedString(markdown: message.body) {
             Text(attributed)
         } else {
             Text(message.body)

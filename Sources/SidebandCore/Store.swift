@@ -67,6 +67,7 @@ public final class SidebandStore {
     public private(set) var voiceCall: VoiceCall?
     public private(set) var voiceCallHistory: [VoiceCall] = []
     public private(set) var voiceTrustedOnly: Bool
+    public private(set) var richTextTrustedOnly: Bool
     public private(set) var preferredVoiceProfile: LXSTVoice.Profile
     public var networkHost: String
     public var networkIPv6Host: String
@@ -206,6 +207,7 @@ public final class SidebandStore {
         propagationNodeIsAutomatic = UserDefaults.standard.object(forKey: "lxmfPropagationNodeAutomatic") as? Bool ?? true
         localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Sideband Swift"
         voiceTrustedOnly = UserDefaults.standard.bool(forKey: "lxstVoiceTrustedOnly")
+        richTextTrustedOnly = UserDefaults.standard.object(forKey: "lxmfRichTextTrustedOnly") as? Bool ?? true
         preferredVoiceProfile = LXSTVoice.Profile(rawValue: UInt64(UserDefaults.standard.integer(forKey: "lxstVoiceProfile"))) ?? .mediumQuality
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
@@ -230,6 +232,18 @@ public final class SidebandStore {
     public func setVoiceTrustedOnly(_ enabled: Bool) {
         voiceTrustedOnly = enabled
         UserDefaults.standard.set(enabled, forKey: "lxstVoiceTrustedOnly")
+    }
+
+    public func setRichTextTrustedOnly(_ enabled: Bool) {
+        richTextTrustedOnly = enabled
+        UserDefaults.standard.set(enabled, forKey: "lxmfRichTextTrustedOnly")
+    }
+
+    public func shouldRenderRichText(_ message: Message, conversationID: UUID) -> Bool {
+        guard message.renderer != .plain else { return false }
+        if message.direction == .outgoing || !richTextTrustedOnly { return true }
+        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return false }
+        return conversation.isTrusted || isConversationIdentityVerified(conversationID)
     }
 
     public func setPreferredVoiceProfile(_ profile: LXSTVoice.Profile) {
