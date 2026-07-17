@@ -894,6 +894,31 @@ private struct NetworkView: View {
                     }
                 }.padding(6)
             }
+            GroupBox("Attachment storage") {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let report = store.attachmentStorageReport {
+                        Label(report.isHealthy ? "Storage healthy" : "Storage needs attention", systemImage: report.isHealthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(report.isHealthy ? .green : .orange)
+                        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                            GridRow { Text("Attachments"); Text(report.attachmentCount.formatted()) }
+                            GridRow { Text("Logical size"); Text(ByteCountFormatter.string(fromByteCount: Int64(report.logicalBytes), countStyle: .file)) }
+                            GridRow { Text("Encrypted files"); Text(ByteCountFormatter.string(fromByteCount: Int64(report.storedBytes), countStyle: .file)) }
+                            GridRow { Text("Missing / corrupt"); Text("\(report.missingCount) / \(report.corruptCount)") }
+                            GridRow { Text("Orphans"); Text("\(report.orphanCount) · \(ByteCountFormatter.string(fromByteCount: Int64(report.orphanBytes), countStyle: .file))") }
+                        }
+                    } else {
+                        Text("Inspect attachment storage to calculate encrypted disk usage and integrity.").foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button("Inspect") { Task { await store.refreshAttachmentStorageReport() } }
+                        Button("Remove Orphans") { Task { _ = await store.cleanupOrphanedAttachmentFiles() } }
+                            .disabled(store.attachmentStorageReport?.orphanCount == 0)
+                        Button("Remove Failed Metadata") { Task { _ = await store.removeFailedAttachmentMetadata() } }
+                            .disabled(!store.messages.contains { $0.attachments.contains { $0.state == .failed } })
+                        Button("Copy Report") { copyToSystemClipboard(store.attachmentStorageDiagnostics) }
+                    }
+                }.padding(6)
+            }
             GroupBox("LXMF propagation") {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Select a propagation node automatically", isOn: Binding(

@@ -393,6 +393,35 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(store.messages.first?.conversationID == first.id)
 }
 
+@Test func attachmentStorageReportFindsMissingCorruptAndOrphanFiles() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let store = AttachmentStore(directory: directory)
+    let available = try await store.save(data: Data("valid".utf8), filename: "valid.txt", mimeType: "text/plain")
+    let missing = Attachment(filename: "missing.txt", byteCount: 7, relativePath: "missing.sbenc", state: .failed)
+    try Data("orphan".utf8).write(to: directory.appending(path: "orphan.sbenc"))
+    let corrupt = try await store.save(data: Data("original".utf8), filename: "corrupt.txt", mimeType: "text/plain")
+    try Data("tampered".utf8).write(to: await store.url(for: corrupt))
+
+    let report = await store.storageReport(for: [available, missing, corrupt])
+    #expect(report.attachmentCount == 3)
+    #expect(report.missingCount == 1)
+    #expect(report.corruptCount == 1)
+    #expect(report.orphanCount == 1)
+    #expect(!report.isHealthy)
+    #expect(try await store.removeOrphans(referencedRelativePaths: Set([available.relativePath, corrupt.relativePath])) == 1)
+}
+
+@MainActor @Test func storeRemovesFailedAttachmentMetadataWithoutRemovingMessages() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    let store = SidebandStore(persistenceURL: root.appending(path: "store.json"))
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let attachment = Attachment(filename: "missing.txt", byteCount: 7, relativePath: "missing.sbenc", state: .failed)
+    #expect(await store.send("Keep message", attachments: [attachment]))
+    #expect(await store.removeFailedAttachmentMetadata() == 1)
+    #expect(store.messages.count == 1)
+    #expect(store.messages.first?.attachments.isEmpty == true)
+}
+
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
     let identity = ReticulumIdentity()
     let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))

@@ -117,6 +117,37 @@ public actor AttachmentStore {
         return removedCount
     }
 
+    public func storageReport(for attachments: [Attachment]) -> AttachmentStorageReport {
+        let referencedNames = Set(attachments.map { URL(fileURLWithPath: $0.relativePath).lastPathComponent })
+        var storedBytes = 0
+        var orphanBytes = 0
+        var orphanCount = 0
+        if let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) {
+            for file in files {
+                guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]),
+                      values.isRegularFile == true, values.isSymbolicLink != true else { continue }
+                let size = max(0, values.fileSize ?? 0)
+                storedBytes += size
+                if !referencedNames.contains(file.lastPathComponent) { orphanCount += 1; orphanBytes += size }
+            }
+        }
+        var missing = 0
+        var corrupt = 0
+        for attachment in attachments {
+            guard FileManager.default.fileExists(atPath: url(for: attachment).path) else { missing += 1; continue }
+            if (try? read(attachment)) == nil { corrupt += 1 }
+        }
+        return AttachmentStorageReport(
+            attachmentCount: attachments.count,
+            logicalBytes: attachments.reduce(0) { $0 + max(0, $1.byteCount) },
+            storedBytes: storedBytes,
+            missingCount: missing,
+            corruptCount: corrupt,
+            orphanCount: orphanCount,
+            orphanBytes: orphanBytes
+        )
+    }
+
     private func encrypted(_ data: Data, for id: UUID) throws -> Data {
         try localDataCipher.seal(data, context: encryptionContext(for: id))
     }
@@ -144,6 +175,18 @@ public actor AttachmentStore {
         let fileExtension = URL(fileURLWithPath: filename).pathExtension
         return fileExtension.isEmpty ? nil : UTType(filenameExtension: fileExtension)?.preferredMIMEType
     }
+}
+
+public struct AttachmentStorageReport: Sendable, Equatable {
+    public let attachmentCount: Int
+    public let logicalBytes: Int
+    public let storedBytes: Int
+    public let missingCount: Int
+    public let corruptCount: Int
+    public let orphanCount: Int
+    public let orphanBytes: Int
+
+    public var isHealthy: Bool { missingCount == 0 && corruptCount == 0 && orphanCount == 0 }
 }
 
 public enum AttachmentStoreError: LocalizedError {

@@ -93,6 +93,7 @@ public final class SidebandStore {
     public let backgroundRefresh = BackgroundRefreshCoordinator()
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
+    public private(set) var attachmentStorageReport: AttachmentStorageReport?
     public let resourceStagingStore: ReticulumResourceStagingStore
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
@@ -364,6 +365,47 @@ public final class SidebandStore {
         messages.reduce(0) { count, message in
             count + message.attachments.count(where: { $0.state == .queued || $0.state == .transferring })
         }
+    }
+    public func attachmentBytes(for conversationID: UUID) -> Int {
+        messages(for: conversationID).flatMap(\.attachments).reduce(0) { $0 + max(0, $1.byteCount) }
+    }
+
+    public func refreshAttachmentStorageReport() async {
+        attachmentStorageReport = await attachmentStore.storageReport(for: messages.flatMap(\.attachments))
+    }
+
+    @discardableResult
+    public func cleanupOrphanedAttachmentFiles() async -> Int {
+        let paths = Set(messages.flatMap(\.attachments).map(\.relativePath))
+        let removed = (try? await attachmentStore.removeOrphans(referencedRelativePaths: paths)) ?? 0
+        await refreshAttachmentStorageReport()
+        return removed
+    }
+
+    @discardableResult
+    public func removeFailedAttachmentMetadata() async -> Int {
+        var removed = 0
+        for messageIndex in messages.indices {
+            let failed = messages[messageIndex].attachments.filter { $0.state == .failed }
+            for attachment in failed { try? await attachmentStore.remove(attachment) }
+            removed += failed.count
+            messages[messageIndex].attachments.removeAll { $0.state == .failed }
+        }
+        if removed > 0 { save() }
+        await refreshAttachmentStorageReport()
+        return removed
+    }
+
+    public var attachmentStorageDiagnostics: String {
+        guard let report = attachmentStorageReport else { return "Attachment storage has not been inspected this session." }
+        return [
+            "Attachments: \(report.attachmentCount)",
+            "Logical payload: \(ByteCountFormatter.string(fromByteCount: Int64(report.logicalBytes), countStyle: .file))",
+            "Encrypted storage: \(ByteCountFormatter.string(fromByteCount: Int64(report.storedBytes), countStyle: .file))",
+            "Missing: \(report.missingCount)",
+            "Corrupt: \(report.corruptCount)",
+            "Orphans: \(report.orphanCount) (\(ByteCountFormatter.string(fromByteCount: Int64(report.orphanBytes), countStyle: .file)))"
+        ].joined(separator: "\n")
     }
     public var deliverySuccessRate: Double? {
         let terminal = deliveredMessageCount + failedMessageCount
