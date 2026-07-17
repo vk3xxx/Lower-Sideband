@@ -401,6 +401,49 @@ import Testing
     #expect(received.validate(with: sender))
 }
 
+@Test func lxmfReactionFieldMatchesUpstreamMapShape() throws {
+    let sender = ReticulumIdentity()
+    let target = Data(repeating: 0xAB, count: 32)
+    let content = Data("👍".utf8)
+    let reaction = MessagePack.map([
+        (0x00, MessagePack.binary(target)),
+        (0x01, MessagePack.binary(content))
+    ])
+    let message = try LXMFMessage(
+        destinationHash: Data(repeating: 0x01, count: 16),
+        sourceHash: Data(repeating: 0x02, count: 16),
+        sourceIdentity: sender,
+        content: Data(),
+        encodedFields: [0x40: reaction]
+    )
+    let received = try LXMFReceivedMessage(packed: message.packed)
+    #expect(received.binaryMapField(0x40, key: 0x00) == target)
+    #expect(received.binaryMapField(0x40, key: 0x01) == content)
+    #expect(received.validate(with: sender))
+}
+
+@MainActor @Test func reactionsAreBoundedQueuedAndPersisted() async {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Reaction Peer"))
+    let conversationID = store.conversations[0].id
+    let targetHash = Data(repeating: 0xCD, count: 32)
+    let target = Message(conversationID: conversationID, body: "Hello", direction: .incoming, state: .delivered, lxmfID: targetHash)
+
+    await store.sendReaction(" 👍 ", to: target)
+    #expect(store.messages.count == 1)
+    #expect(store.messages[0].reactionTo == targetHash)
+    #expect(store.messages[0].reactionContent == "👍")
+    #expect(store.messages[0].state == .queued)
+    let reloaded = SidebandStore(persistenceURL: url)
+    #expect(reloaded.messages[0].reactionTo == targetHash)
+    #expect(reloaded.messages[0].reactionContent == "👍")
+
+    await store.sendReaction("123456789", to: target)
+    #expect(store.messages.count == 1)
+    #expect(store.lastError == "A reaction must contain between 1 and 8 characters.")
+}
+
 @MainActor @Test func markdownComposerPrefixIsStrippedAndPersisted() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

@@ -82,10 +82,13 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var lxmfID: Data?
     public var replyTo: Data?
     public var replyQuote: String?
+    /// Standard LXMF FIELD_REACTION target and UTF-8 content.
+    public var reactionTo: Data?
+    public var reactionContent: String?
     public var outboxOwnerID: String?
     public var outboxOwnerUpdatedAt: Date?
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
@@ -98,11 +101,13 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.lxmfID = lxmfID
         self.replyTo = replyTo
         self.replyQuote = replyQuote
+        self.reactionTo = reactionTo
+        self.reactionContent = reactionContent
         self.outboxOwnerID = outboxOwnerID
         self.outboxOwnerUpdatedAt = outboxOwnerUpdatedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, outboxOwnerID, outboxOwnerUpdatedAt }
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, outboxOwnerID, outboxOwnerUpdatedAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -117,6 +122,8 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         lxmfID = try values.decodeIfPresent(Data.self, forKey: .lxmfID)
         replyTo = try values.decodeIfPresent(Data.self, forKey: .replyTo)
         replyQuote = try values.decodeIfPresent(String.self, forKey: .replyQuote)
+        reactionTo = try values.decodeIfPresent(Data.self, forKey: .reactionTo)
+        reactionContent = try values.decodeIfPresent(String.self, forKey: .reactionContent)
         outboxOwnerID = try values.decodeIfPresent(String.self, forKey: .outboxOwnerID)
         outboxOwnerUpdatedAt = try values.decodeIfPresent(Date.self, forKey: .outboxOwnerUpdatedAt)
     }

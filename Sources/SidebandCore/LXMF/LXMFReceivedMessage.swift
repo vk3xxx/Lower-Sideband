@@ -42,6 +42,15 @@ public struct LXMFReceivedMessage: Sendable {
         guard case let .unsigned(value) = fields[fieldID] else { return nil }
         return value
     }
+    public func binaryMapField(_ fieldID: UInt64, key requestedKey: UInt64) -> Data? {
+        guard case let .map(entries) = fields[fieldID] else { return nil }
+        for (key, value) in entries {
+            guard case let .unsigned(keyValue) = key, keyValue == requestedKey,
+                  case let .binary(data) = value else { continue }
+            return data
+        }
+        return nil
+    }
     public enum ParseError: Error { case truncated, invalidPayload }
 }
 

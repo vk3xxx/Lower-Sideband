@@ -1200,6 +1200,18 @@ private struct ConversationView: View {
                                             AttachmentShareButton(store: store.attachmentStore, attachment: attachment)
                                         }
                                     }
+                                    if !reactions(for: message).isEmpty {
+                                        HStack(spacing: 5) {
+                                            ForEach(reactions(for: message), id: \.id) { reaction in
+                                                Text(reaction.reactionContent ?? "")
+                                                    .font(.caption)
+                                                    .padding(.horizontal, 7)
+                                                    .padding(.vertical, 3)
+                                                    .background(.thinMaterial, in: Capsule())
+                                                    .accessibilityLabel("Reaction \(reaction.reactionContent ?? "")")
+                                            }
+                                        }
+                                    }
                                     HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
@@ -1215,6 +1227,11 @@ private struct ConversationView: View {
                                     }
                                     if message.lxmfID != nil {
                                         Button { replyingTo = message } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+                                        Menu("React", systemImage: "face.smiling") {
+                                            ForEach(["👍", "❤️", "😂", "😮", "😢", "👎"], id: \.self) { reaction in
+                                                Button(reaction) { Task { await store.sendReaction(reaction, to: message) } }
+                                            }
+                                        }
                                     }
                                     Button { messageToForward = message } label: { Label("Forward", systemImage: "arrowshape.turn.up.right") }
                                     Button { copyToSystemClipboard(messageMetadata(message)) } label: {
@@ -1429,11 +1446,18 @@ private struct ConversationView: View {
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
 
     private var filteredMessages: [Message] {
-        let all = store.messages(for: conversation.id)
+        let all = store.messages(for: conversation.id).filter { $0.reactionTo == nil }
         let query = messageSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return all }
         return all.filter { message in
             message.body.localizedCaseInsensitiveContains(query) || message.attachments.contains { $0.filename.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private func reactions(for message: Message) -> [Message] {
+        guard let messageID = message.lxmfID else { return [] }
+        return store.messages(for: conversation.id).filter {
+            $0.reactionTo == messageID && $0.reactionContent?.isEmpty == false
         }
     }
 

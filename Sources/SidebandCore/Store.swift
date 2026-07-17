@@ -819,6 +819,35 @@ public final class SidebandStore {
         await attemptDelivery(for: conversation.id)
     }
 
+    public func sendReaction(_ content: String, to target: Message) async {
+        let reaction = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let targetHash = target.lxmfID,
+              target.conversationID == selectedConversationID,
+              let conversation = selectedConversation,
+              !conversation.isBlocked else {
+            lastError = "Reactions require a delivered LXMF message in the open conversation."
+            return
+        }
+        guard !reaction.isEmpty, reaction.count <= 8, reaction.utf8.count <= 64 else {
+            lastError = "A reaction must contain between 1 and 8 characters."
+            return
+        }
+        let message = Message(
+            conversationID: conversation.id,
+            body: "",
+            direction: .outgoing,
+            state: .queued,
+            reactionTo: targetHash,
+            reactionContent: reaction,
+            outboxOwnerID: syncDeviceID,
+            outboxOwnerUpdatedAt: .now
+        )
+        messages.append(message)
+        touch(conversation.id)
+        save()
+        await attemptDelivery(for: conversation.id)
+    }
+
     public func validateAttachmentSelection(currentCount: Int, adding newCount: Int) -> Bool {
         guard currentCount + newCount <= SidebandMessageLimits.maximumAttachments else {
             lastError = "Messages are limited to \(SidebandMessageLimits.maximumAttachments) attachments."
@@ -2402,6 +2431,8 @@ public final class SidebandStore {
         guard let conversation = conversations.first(where: { $0.destinationHash == source }), let body = String(data: message.content, encoding: .utf8) else { return false }
         let telemetry = message.binaryField(0x02).flatMap { try? SidebandTelemetry(packed: $0) }
         let replyQuote = message.binaryField(0x31).flatMap { String(data: $0, encoding: .utf8) }
+        let reactionTarget = message.binaryMapField(0x40, key: 0x00)
+        let reactionContent = message.binaryMapField(0x40, key: 0x01).flatMap { String(data: $0, encoding: .utf8) }
         let renderer = message.unsignedField(0x0F).flatMap { UInt8(exactly: $0) }.flatMap(Message.Renderer.init(rawValue:)) ?? .plain
         let incomingMessage = Message(
             conversationID: conversation.id,
@@ -2413,7 +2444,9 @@ public final class SidebandStore {
             renderer: renderer,
             lxmfID: message.messageID,
             replyTo: message.binaryField(0x30),
-            replyQuote: replyQuote
+            replyQuote: replyQuote,
+            reactionTo: reactionTarget,
+            reactionContent: reactionContent
         )
         messages.append(incomingMessage)
         noteIncomingActivity(in: conversation.id)
@@ -2865,7 +2898,14 @@ public final class SidebandStore {
     }
 
     private func lxmfEncodedFields(for message: Message) -> [UInt64: Data] {
-        message.renderer == .plain ? [:] : [0x0F: MessagePack.unsigned(UInt64(message.renderer.rawValue))]
+        var fields: [UInt64: Data] = message.renderer == .plain ? [:] : [0x0F: MessagePack.unsigned(UInt64(message.renderer.rawValue))]
+        if let target = message.reactionTo, let content = message.reactionContent {
+            fields[0x40] = MessagePack.map([
+                (0x00, MessagePack.binary(target)),
+                (0x01, MessagePack.binary(Data(content.utf8)))
+            ])
+        }
+        return fields
     }
 
     private func replyQuote(for message: Message) -> String {
