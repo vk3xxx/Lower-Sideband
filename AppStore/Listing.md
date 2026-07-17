@@ -14,10 +14,11 @@
 - Product metadata and screenshots: Complete
 - App Privacy and age rating: Complete
 - App Store build: Complete
-- App Review contact phone: Required before submission
-- EU Digital Services Act trader status: Confirm in App Store Connect before submission
-- Upstream licensing: Confirm App Store distribution permission for the CC BY-NC-SA-derived work before submission
-- Final Add for Review / Submit for Review action: Not yet performed
+- App Review contact: Complete, including phone number
+- EU Digital Services Act status: Non-trader, active
+- Content rights: Necessary third-party content rights confirmed by the developer
+- Add for Review: Complete; version status is Ready for Review
+- Final Submit for Review action: Not yet performed
 
 ## Product page
 
@@ -64,6 +65,7 @@ Keywords:
 
 - Contact: Mark Beacham
 - Email: sepus@hotmail.com
+- Phone: +61 428 091 786
 - Sign-in required: No
 
 Review notes:
