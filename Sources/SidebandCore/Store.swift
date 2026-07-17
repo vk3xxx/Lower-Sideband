@@ -411,7 +411,10 @@ public final class SidebandStore {
             "Delivery policy: \(conversation.deliveryPreference == .propagationPreferred ? "prefer propagation" : "automatic direct with propagation fallback")",
             "Propagation node: \(DestinationHash.isValid(propagationNodeHash) ? (propagationNodeHasPath ? "reachable" : "configured, path unknown") : "not configured")",
             "Outgoing states: \(queued) queued, \(sent) sent, \(delivered) delivered, \(failed) failed",
-            "Latest message: \(latest.map { "\($0.direction.rawValue), \($0.state.rawValue), \(ISO8601DateFormatter().string(from: $0.timestamp))" } ?? "none")"
+            "Latest message: \(latest.map { "\($0.direction.rawValue), \($0.state.rawValue), \(ISO8601DateFormatter().string(from: $0.timestamp))" } ?? "none")",
+            "Latest delivery attempt: \(latest?.lastDeliveryAttemptAt.map { ISO8601DateFormatter().string(from: $0) } ?? "none")",
+            "Latest delivery mode: \(latest?.lastDeliveryMode?.rawValue ?? "none")",
+            "Latest delivery failure: \(latest?.lastDeliveryFailure ?? "none")"
         ].joined(separator: "\n")
     }
 
@@ -1516,6 +1519,9 @@ public final class SidebandStore {
               destinations.allSatisfy(DestinationHash.isValid),
               snapshot.messages.allSatisfy({ conversationIDs.contains($0.conversationID) }),
               snapshot.messages.compactMap(\.telemetry).allSatisfy({ $0.validationError == nil }),
+              snapshot.messages.allSatisfy({ message in
+                  (0...10_000).contains(message.deliveryAttemptCount) && (message.lastDeliveryFailure?.count ?? 0) <= 256
+              }),
               snapshot.drafts.keys.allSatisfy({ conversationIDs.contains($0) }),
               snapshot.pluginAuditEvents.count <= 200,
               snapshot.pluginAuditEvents.allSatisfy({ event in
@@ -2705,10 +2711,15 @@ public final class SidebandStore {
                 guard raw.count <= 500 else { requiresLink = true; continue }
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .opportunistic, destinationHash: conversation.destinationHash)
+                recordDeliveryAttempt(item.id, mode: .opportunistic)
                 try await transmitDestinationPacket(raw, destinationHash: destination)
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
-            } catch { requiresLink = true }
+            } catch {
+                removePendingReceipts(for: item.id)
+                recordDeliveryFailure(item.id, reason: "Opportunistic send failed; trying an encrypted link.")
+                requiresLink = true
+            }
         }
         guard requiresLink else { return }
         if !activeLinkHashes.contains(conversation.destinationHash) {
@@ -2724,10 +2735,15 @@ public final class SidebandStore {
                 let raw = try session.encryptedPacket(lxmf.packed)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
+                recordDeliveryAttempt(item.id, mode: .directLink)
                 try await transmitRawPacket(raw)
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
-            } catch { lastError = "LXMF delivery failed: \(error.localizedDescription)" }
+            } catch {
+                removePendingReceipts(for: item.id)
+                recordDeliveryFailure(item.id, reason: "Encrypted-link delivery failed.")
+                lastError = "LXMF delivery failed: \(error.localizedDescription)"
+            }
         }
         for message in attachmentMessages { await advertiseAttachments(for: message, session: session) }
     }
@@ -2742,9 +2758,11 @@ public final class SidebandStore {
                 let segments = try ReticulumResourceSegmentPlanner.prepare(data: envelope, session: session, hasMetadata: true)
                 guard let first = segments.first else { continue }
                 registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: message.id, attachmentID: attachment.id, session: session)
+                recordDeliveryAttempt(message.id, mode: .resource)
                 updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .transferring, progress: 0)
                 try await transmitRawPacket(try session.resourceAdvertisementPacket(first.advertisement))
             } catch {
+                recordDeliveryFailure(message.id, reason: "Attachment transfer could not start.")
                 updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .failed, progress: 0)
             }
         }
@@ -2980,6 +2998,7 @@ public final class SidebandStore {
         deliveryTimeoutCount += 1
         if let index = messages.firstIndex(where: { $0.id == receipt.messageID }) {
             messages[index].state = .queued
+            messages[index].lastDeliveryFailure = "Delivery proof timed out; retry scheduled."
         }
         pendingReceiptRetryKinds[receipt.destinationHash, default: []].insert(receipt.kind)
         scheduleReceiptRetry(for: receipt.destinationHash)
@@ -3033,10 +3052,15 @@ public final class SidebandStore {
                 let raw = try propagationSession.encryptedPacket(envelope)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .propagation, destinationHash: propagationNodeHash)
+                recordDeliveryAttempt(item.id, mode: .propagation)
                 try await transmitRawPacket(raw)
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
-            } catch { lastError = "Propagation upload failed: \(error.localizedDescription)" }
+            } catch {
+                removePendingReceipts(for: item.id)
+                recordDeliveryFailure(item.id, reason: "Propagation-node upload failed.")
+                lastError = "Propagation upload failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -3177,7 +3201,29 @@ public final class SidebandStore {
     private func updateMessage(_ id: UUID, state: Message.DeliveryState) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         messages[index].state = state
+        if state == .delivered { messages[index].lastDeliveryFailure = nil }
         save()
+    }
+
+    private func recordDeliveryAttempt(_ id: UUID, mode: Message.DeliveryMode) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        messages[index].deliveryAttemptCount = min(10_000, messages[index].deliveryAttemptCount + 1)
+        messages[index].lastDeliveryAttemptAt = .now
+        messages[index].lastDeliveryMode = mode
+    }
+
+    private func recordDeliveryFailure(_ id: UUID, reason: String) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        messages[index].lastDeliveryFailure = String(reason.prefix(256))
+        save()
+    }
+
+    private func removePendingReceipts(for messageID: UUID) {
+        let hashes = pendingReceipts.compactMap { $0.value.messageID == messageID ? $0.key : nil }
+        for hash in hashes {
+            pendingReceipts.removeValue(forKey: hash)
+            receiptTimeoutTasks.removeValue(forKey: hash)?.cancel()
+        }
     }
 
     private func ownsOutbox(_ message: Message) -> Bool {

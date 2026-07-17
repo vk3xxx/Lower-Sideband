@@ -957,6 +957,28 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(store.deliverySuccessRate == 0.5)
 }
 
+@Test func deliveryAttemptMetadataIsLegacySafeAndCloudMergeKeepsNewestEvidence() throws {
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let legacy = Message(conversationID: conversation.id, body: "legacy", direction: .outgoing, state: .queued)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(Message.self, from: encoder.encode(legacy))
+    #expect(decoded.deliveryAttemptCount == 0)
+    #expect(decoded.lastDeliveryAttemptAt == nil)
+
+    let older = Message(id: legacy.id, conversationID: conversation.id, body: "send", direction: .outgoing, state: .queued, deliveryAttemptCount: 1, lastDeliveryAttemptAt: Date(timeIntervalSince1970: 10), lastDeliveryMode: .opportunistic, lastDeliveryFailure: "Timed out")
+    let newer = Message(id: legacy.id, conversationID: conversation.id, body: "send", direction: .outgoing, state: .delivered, deliveryAttemptCount: 2, lastDeliveryAttemptAt: Date(timeIntervalSince1970: 20), lastDeliveryMode: .directLink)
+    let merged = AppSnapshot(conversations: [conversation], messages: [newer]).mergingCloudSnapshot(AppSnapshot(conversations: [conversation], messages: [older]))
+    let result = try #require(merged.messages.first)
+    #expect(result.state == .delivered)
+    #expect(result.deliveryAttemptCount == 2)
+    #expect(result.lastDeliveryAttemptAt == Date(timeIntervalSince1970: 20))
+    #expect(result.lastDeliveryMode == .directLink)
+    #expect(result.lastDeliveryFailure == nil)
+}
+
 @MainActor @Test func duplicateAttachmentsAreRejectedByContentHash() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)

@@ -267,7 +267,11 @@ public extension AppSnapshot {
                 timestamp: message.timestamp, direction: message.direction, state: message.state,
                 attachments: message.attachments, telemetry: message.telemetry, renderer: message.renderer,
                 lxmfID: message.lxmfID, replyTo: message.replyTo, replyQuote: message.replyQuote,
-                outboxOwnerID: message.outboxOwnerID, outboxOwnerUpdatedAt: message.outboxOwnerUpdatedAt
+                reactionTo: message.reactionTo, reactionContent: message.reactionContent,
+                commentTo: message.commentTo, continuationOf: message.continuationOf, commands: message.commands,
+                outboxOwnerID: message.outboxOwnerID, outboxOwnerUpdatedAt: message.outboxOwnerUpdatedAt,
+                deliveryAttemptCount: message.deliveryAttemptCount, lastDeliveryAttemptAt: message.lastDeliveryAttemptAt,
+                lastDeliveryMode: message.lastDeliveryMode, lastDeliveryFailure: message.lastDeliveryFailure
             )
         }
 
@@ -279,6 +283,8 @@ public extension AppSnapshot {
             let preferred = local.timestamp >= remoteMessage.timestamp ? local : remoteMessage
             let ownerSource = (local.outboxOwnerUpdatedAt ?? .distantPast) >= (remoteMessage.outboxOwnerUpdatedAt ?? .distantPast)
                 ? local : remoteMessage
+            let localAttemptIsNewest = (local.lastDeliveryAttemptAt ?? .distantPast) >= (remoteMessage.lastDeliveryAttemptAt ?? .distantPast)
+            let latestAttemptAt = [local.lastDeliveryAttemptAt, remoteMessage.lastDeliveryAttemptAt].compactMap { $0 }.max()
             messagesByID[local.id] = Message(
                 id: preferred.id, conversationID: preferred.conversationID, body: preferred.body,
                 timestamp: preferred.timestamp, direction: preferred.direction, state: state,
@@ -288,7 +294,16 @@ public extension AppSnapshot {
                 lxmfID: preferred.lxmfID ?? local.lxmfID ?? remoteMessage.lxmfID,
                 replyTo: preferred.replyTo ?? local.replyTo ?? remoteMessage.replyTo,
                 replyQuote: preferred.replyQuote ?? local.replyQuote ?? remoteMessage.replyQuote,
-                outboxOwnerID: ownerSource.outboxOwnerID, outboxOwnerUpdatedAt: ownerSource.outboxOwnerUpdatedAt
+                reactionTo: preferred.reactionTo ?? local.reactionTo ?? remoteMessage.reactionTo,
+                reactionContent: preferred.reactionContent ?? local.reactionContent ?? remoteMessage.reactionContent,
+                commentTo: preferred.commentTo ?? local.commentTo ?? remoteMessage.commentTo,
+                continuationOf: preferred.continuationOf ?? local.continuationOf ?? remoteMessage.continuationOf,
+                commands: preferred.commands.isEmpty ? (local.commands.isEmpty ? remoteMessage.commands : local.commands) : preferred.commands,
+                outboxOwnerID: ownerSource.outboxOwnerID, outboxOwnerUpdatedAt: ownerSource.outboxOwnerUpdatedAt,
+                deliveryAttemptCount: max(local.deliveryAttemptCount, remoteMessage.deliveryAttemptCount),
+                lastDeliveryAttemptAt: latestAttemptAt,
+                lastDeliveryMode: localAttemptIsNewest ? local.lastDeliveryMode : remoteMessage.lastDeliveryMode,
+                lastDeliveryFailure: state == .delivered ? nil : (localAttemptIsNewest ? local.lastDeliveryFailure : remoteMessage.lastDeliveryFailure)
             )
         }
 

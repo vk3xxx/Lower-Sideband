@@ -1453,7 +1453,19 @@ private struct ConversationView: View {
                                             }
                                         }
                                     }
-                                    HStack { Text(message.timestamp, style: .time); Text(message.state.rawValue.capitalized) }
+                                    HStack {
+                                        Text(message.timestamp, style: .time)
+                                        Text(message.state.rawValue.capitalized)
+                                        if message.deliveryAttemptCount > 1 {
+                                            Text("· \(message.deliveryAttemptCount) attempts")
+                                        }
+                                        if let failure = message.lastDeliveryFailure {
+                                            Image(systemName: "exclamationmark.circle.fill")
+                                                .foregroundStyle(.orange)
+                                                .help(failure)
+                                                .accessibilityLabel("Last delivery issue: \(failure)")
+                                        }
+                                    }
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .accessibilityElement(children: .ignore)
@@ -1854,6 +1866,10 @@ private struct ConversationView: View {
             "Timestamp: \(formatter.string(from: message.timestamp))"
         ]
         if let lxmfID = message.lxmfID { lines.append("LXMF message hash: \(lxmfID.sidebandHex)") }
+        if message.deliveryAttemptCount > 0 { lines.append("Delivery attempts: \(message.deliveryAttemptCount)") }
+        if let attempt = message.lastDeliveryAttemptAt { lines.append("Last delivery attempt: \(formatter.string(from: attempt))") }
+        if let mode = message.lastDeliveryMode { lines.append("Last delivery mode: \(mode.rawValue)") }
+        if let failure = message.lastDeliveryFailure { lines.append("Last delivery issue: \(failure)") }
         if let replyTo = message.replyTo { lines.append("Reply to LXMF hash: \(replyTo.sidebandHex)") }
         if let replyQuote = message.replyQuote { lines.append("Reply quote: \(replyQuote)") }
         if !message.attachments.isEmpty {

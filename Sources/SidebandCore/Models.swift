@@ -95,6 +95,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public enum Direction: String, Codable, Sendable { case incoming, outgoing }
     public enum DeliveryState: String, Codable, Sendable { case queued, sent, delivered, failed }
     public enum Renderer: UInt8, Codable, Sendable { case plain = 0x00, micron = 0x01, markdown = 0x02, bbcode = 0x03 }
+    public enum DeliveryMode: String, Codable, Sendable { case opportunistic, directLink, propagation, resource }
 
     public let id: UUID
     public let conversationID: UUID
@@ -117,8 +118,12 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var commands: [LXMFCommand]
     public var outboxOwnerID: String?
     public var outboxOwnerUpdatedAt: Date?
+    public var deliveryAttemptCount: Int
+    public var lastDeliveryAttemptAt: Date?
+    public var lastDeliveryMode: DeliveryMode?
+    public var lastDeliveryFailure: String?
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, commentTo: Data? = nil, continuationOf: Data? = nil, commands: [LXMFCommand] = [], outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, commentTo: Data? = nil, continuationOf: Data? = nil, commands: [LXMFCommand] = [], outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil, deliveryAttemptCount: Int = 0, lastDeliveryAttemptAt: Date? = nil, lastDeliveryMode: DeliveryMode? = nil, lastDeliveryFailure: String? = nil) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
@@ -138,9 +143,13 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.commands = commands
         self.outboxOwnerID = outboxOwnerID
         self.outboxOwnerUpdatedAt = outboxOwnerUpdatedAt
+        self.deliveryAttemptCount = max(0, deliveryAttemptCount)
+        self.lastDeliveryAttemptAt = lastDeliveryAttemptAt
+        self.lastDeliveryMode = lastDeliveryMode
+        self.lastDeliveryFailure = lastDeliveryFailure.map { String($0.prefix(256)) }
     }
 
-    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, commentTo, continuationOf, commands, outboxOwnerID, outboxOwnerUpdatedAt }
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, commentTo, continuationOf, commands, outboxOwnerID, outboxOwnerUpdatedAt, deliveryAttemptCount, lastDeliveryAttemptAt, lastDeliveryMode, lastDeliveryFailure }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -162,6 +171,10 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         commands = try values.decodeIfPresent([LXMFCommand].self, forKey: .commands) ?? []
         outboxOwnerID = try values.decodeIfPresent(String.self, forKey: .outboxOwnerID)
         outboxOwnerUpdatedAt = try values.decodeIfPresent(Date.self, forKey: .outboxOwnerUpdatedAt)
+        deliveryAttemptCount = max(0, try values.decodeIfPresent(Int.self, forKey: .deliveryAttemptCount) ?? 0)
+        lastDeliveryAttemptAt = try values.decodeIfPresent(Date.self, forKey: .lastDeliveryAttemptAt)
+        lastDeliveryMode = try values.decodeIfPresent(DeliveryMode.self, forKey: .lastDeliveryMode)
+        lastDeliveryFailure = try values.decodeIfPresent(String.self, forKey: .lastDeliveryFailure).map { String($0.prefix(256)) }
     }
 
     public static func isValidReaction(content: String, target: Data) -> Bool {
