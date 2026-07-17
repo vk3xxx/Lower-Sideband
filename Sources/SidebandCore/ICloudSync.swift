@@ -247,6 +247,7 @@ public extension AppSnapshot {
                         isTrusted: local.isTrusted, isPinned: local.isPinned, isArchived: local.isArchived,
                         isBlocked: local.isBlocked, notificationsMuted: local.notificationsMuted,
                         telemetrySharingEnabled: local.telemetrySharingEnabled,
+                        verifiedIdentityKey: local.verifiedIdentityKey, identityVerifiedAt: local.identityVerifiedAt,
                         unreadCount: local.unreadCount, updatedAt: local.updatedAt
                     )
                     : remoteConversation

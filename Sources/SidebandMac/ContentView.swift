@@ -332,6 +332,9 @@ struct ContentView: View {
                     if conversation.isTrusted {
                         Image(systemName: "checkmark.shield.fill").foregroundStyle(.green).accessibilityLabel("Trusted contact")
                     }
+                    if store.isConversationIdentityVerified(conversation.id) {
+                        Image(systemName: "person.badge.shield.checkmark.fill").foregroundStyle(.green).accessibilityLabel("Identity fingerprint verified")
+                    }
                     Spacer()
                     if let message = store.latestMessage(for: conversation.id) {
                         if message.direction == .outgoing {
@@ -990,6 +993,7 @@ private struct ConversationView: View {
     @State private var previewAttachmentURL: URL?
     @State private var previewAttachment: Attachment?
     @State private var showingContactQR = false
+    @State private var showingIdentityVerification = false
     @State private var telemetryCapture = TelemetryCapture()
     @State private var voiceRecorder = VoiceMessageRecorder()
     @State private var showingTelemetryMap = false
@@ -1034,6 +1038,11 @@ private struct ConversationView: View {
                     Button { showingContactQR = true } label: { Image(systemName: "qrcode") }
                         .help("Show contact QR code")
                 }
+                Button { showingIdentityVerification = true } label: {
+                    Image(systemName: store.isConversationIdentityVerified(conversation.id) ? "checkmark.shield.fill" : "shield")
+                        .foregroundStyle(store.isConversationIdentityVerified(conversation.id) ? .green : .secondary)
+                }
+                .help(store.isConversationIdentityVerified(conversation.id) ? "Identity verified" : "Verify contact identity")
                 if !telemetryMessages.isEmpty {
                     Button { showingTelemetryMap = true } label: { Image(systemName: "map") }
                         .help("Show conversation telemetry map")
@@ -1282,6 +1291,9 @@ private struct ConversationView: View {
             if let contactLink = store.contactLink(for: conversation.id) {
                 ContactQRCodeView(name: conversation.displayName, link: contactLink.url)
             }
+        }
+        .sheet(isPresented: $showingIdentityVerification) {
+            ContactIdentityVerificationView(store: store, conversation: conversation)
         }
         .sheet(isPresented: $showingTelemetryMap) {
             ConversationTelemetryMapView(conversationName: conversation.displayName, messages: telemetryMessages)
@@ -1540,6 +1552,55 @@ private struct ConversationView: View {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
         if store.networkState == .ready { return "network" }
         return "arrow.triangle.2.circlepath"
+    }
+}
+
+private struct ContactIdentityVerificationView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var store: SidebandStore
+    let conversation: Conversation
+
+    private var isVerified: Bool { store.isConversationIdentityVerified(conversation.id) }
+    private var fingerprint: String? { store.identityFingerprint(for: conversation.id) }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                Label(isVerified ? "Identity verified" : "Identity not verified", systemImage: isVerified ? "checkmark.shield.fill" : "shield")
+                    .font(.title2.bold())
+                    .foregroundStyle(isVerified ? .green : .secondary)
+                Text("Compare this fingerprint with \(conversation.displayName) over a separate trusted channel or in person. A matching fingerprint confirms the public key used to authenticate encrypted LXMF messages.")
+                    .foregroundStyle(.secondary)
+                if let fingerprint {
+                    Text(fingerprint)
+                        .font(.body.monospaced().weight(.semibold))
+                        .textSelection(.enabled)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityLabel("Identity fingerprint \(fingerprint)")
+                    Button { copyToSystemClipboard(fingerprint) } label: { Label("Copy Fingerprint", systemImage: "doc.on.doc") }
+                    Button(isVerified ? "Remove Verification" : "Mark Fingerprint Verified") {
+                        _ = store.setConversationIdentityVerified(!isVerified, conversationID: conversation.id)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(isVerified ? .orange : .accentColor)
+                } else {
+                    ContentUnavailableView(
+                        "Public Identity Unknown",
+                        systemImage: "person.crop.circle.badge.questionmark",
+                        description: Text("Scan the contact's keyed Sideband QR code or receive a validated announce before verifying them.")
+                    )
+                }
+                Spacer()
+            }
+            .padding(24)
+            .navigationTitle("Verify Contact")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        #if os(macOS)
+        .frame(minWidth: 540, minHeight: 450)
+        #endif
     }
 }
 

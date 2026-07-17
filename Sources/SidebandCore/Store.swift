@@ -401,6 +401,10 @@ public final class SidebandStore {
             "LXMF Destination: \(conversation.destinationHash)",
             "Trusted: \(conversation.isTrusted ? "yes" : "no")"
         ]
+        if let fingerprint = identityFingerprint(for: conversationID) {
+            lines.append("Identity Fingerprint: \(fingerprint)")
+            lines.append("Identity Verified: \(isConversationIdentityVerified(conversationID) ? "yes" : "no")")
+        }
         if let link = contactLink(for: conversationID) {
             lines.append("Contact Link: \(link.url.absoluteString)")
         }
@@ -411,6 +415,42 @@ public final class SidebandStore {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
         let publicKey = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated })?.publicKey
         return SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName, publicKey: publicKey)
+    }
+
+    public func identityPublicKey(for conversationID: UUID) -> Data? {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        return discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated })?.publicKey
+            ?? conversation.verifiedIdentityKey
+    }
+
+    public func identityFingerprint(for conversationID: UUID) -> String? {
+        identityPublicKey(for: conversationID).flatMap { ReticulumIdentity.fingerprint(of: $0) }
+    }
+
+    public func isConversationIdentityVerified(_ conversationID: UUID) -> Bool {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }),
+              let verified = conversation.verifiedIdentityKey,
+              conversation.identityVerifiedAt != nil,
+              let current = identityPublicKey(for: conversationID) else { return false }
+        return verified == current
+    }
+
+    @discardableResult
+    public func setConversationIdentityVerified(_ verified: Bool, conversationID: UUID) -> Bool {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return false }
+        if verified {
+            guard let key = identityPublicKey(for: conversationID) else {
+                lastError = "Receive or scan this contact's verified public identity before marking it verified."
+                return false
+            }
+            conversations[index].verifiedIdentityKey = key
+            conversations[index].identityVerifiedAt = .now
+        } else {
+            conversations[index].verifiedIdentityKey = nil
+            conversations[index].identityVerifiedAt = nil
+        }
+        save()
+        return true
     }
 
     public func draft(for conversationID: UUID) -> String { drafts[conversationID] ?? "" }
@@ -477,6 +517,12 @@ public final class SidebandStore {
             return false
         }
         if let publicKey = contact.publicKey {
+            if let conversation = conversations.first(where: { $0.destinationHash == contact.destinationHash }),
+               let verifiedKey = conversation.verifiedIdentityKey,
+               verifiedKey != publicKey {
+                lastError = "This contact link does not match the identity key you previously verified."
+                return false
+            }
             let appData = contact.displayName.map { ReticulumAnnounceBuilder.lxmfAppData(displayName: $0) }
             if let index = discoveries.firstIndex(where: { $0.destinationHash == contact.destinationHash }) {
                 discoveries[index].publicKey = publicKey
@@ -1221,6 +1267,13 @@ public final class SidebandStore {
               snapshot.drafts.keys.allSatisfy({ conversationIDs.contains($0) }),
               snapshot.messages.flatMap(\.attachments).allSatisfy({
                   !$0.relativePath.isEmpty && URL(fileURLWithPath: $0.relativePath).lastPathComponent == $0.relativePath
+              }),
+              snapshot.conversations.allSatisfy({ conversation in
+                  guard let key = conversation.verifiedIdentityKey else { return conversation.identityVerifiedAt == nil }
+                  guard conversation.identityVerifiedAt != nil,
+                        let identity = try? ReticulumIdentity(publicKey: key) else { return false }
+                  let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+                  return ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex == conversation.destinationHash
               }) else { throw SnapshotError.invalidData }
         return snapshot
     }

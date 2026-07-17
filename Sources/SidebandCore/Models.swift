@@ -16,10 +16,12 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var isBlocked: Bool
     public var notificationsMuted: Bool
     public var telemetrySharingEnabled: Bool
+    public var verifiedIdentityKey: Data?
+    public var identityVerifiedAt: Date?
     public var unreadCount: Int
     public var updatedAt: Date
 
-    public init(id: UUID = UUID(), destinationHash: String, displayName: String, isTrusted: Bool = false, isPinned: Bool = false, isArchived: Bool = false, isBlocked: Bool = false, notificationsMuted: Bool = false, telemetrySharingEnabled: Bool = true, unreadCount: Int = 0, updatedAt: Date = .now) {
+    public init(id: UUID = UUID(), destinationHash: String, displayName: String, isTrusted: Bool = false, isPinned: Bool = false, isArchived: Bool = false, isBlocked: Bool = false, notificationsMuted: Bool = false, telemetrySharingEnabled: Bool = true, verifiedIdentityKey: Data? = nil, identityVerifiedAt: Date? = nil, unreadCount: Int = 0, updatedAt: Date = .now) {
         self.id = id
         self.destinationHash = destinationHash.lowercased()
         self.displayName = displayName
@@ -29,11 +31,13 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.isBlocked = isBlocked
         self.notificationsMuted = notificationsMuted
         self.telemetrySharingEnabled = telemetrySharingEnabled
+        self.verifiedIdentityKey = verifiedIdentityKey
+        self.identityVerifiedAt = identityVerifiedAt
         self.unreadCount = unreadCount
         self.updatedAt = updatedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, destinationHash, displayName, isTrusted, isPinned, isArchived, isBlocked, notificationsMuted, telemetrySharingEnabled, unreadCount, updatedAt }
+    private enum CodingKeys: String, CodingKey { case id, destinationHash, displayName, isTrusted, isPinned, isArchived, isBlocked, notificationsMuted, telemetrySharingEnabled, verifiedIdentityKey, identityVerifiedAt, unreadCount, updatedAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -45,6 +49,8 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         isBlocked = try values.decodeIfPresent(Bool.self, forKey: .isBlocked) ?? false
         notificationsMuted = try values.decodeIfPresent(Bool.self, forKey: .notificationsMuted) ?? false
         telemetrySharingEnabled = try values.decodeIfPresent(Bool.self, forKey: .telemetrySharingEnabled) ?? true
+        verifiedIdentityKey = try values.decodeIfPresent(Data.self, forKey: .verifiedIdentityKey)
+        identityVerifiedAt = try values.decodeIfPresent(Date.self, forKey: .identityVerifiedAt)
         unreadCount = try values.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         updatedAt = try values.decodeIfPresent(Date.self, forKey: .updatedAt) ?? .distantPast
     }

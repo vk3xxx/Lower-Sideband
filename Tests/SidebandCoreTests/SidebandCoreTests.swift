@@ -91,6 +91,16 @@ import Testing
     #expect(SidebandContactLink(string: "sideband://contact/\(hash)?key=not+base64") == nil)
 }
 
+@Test func identityFingerprintsAreStableAndHumanComparable() throws {
+    let identity = ReticulumIdentity()
+    let fingerprint = try #require(ReticulumIdentity.fingerprint(of: identity.publicKey))
+
+    #expect(fingerprint.split(separator: " ").count == 16)
+    #expect(fingerprint.replacingOccurrences(of: " ", with: "").count == 64)
+    #expect(fingerprint == ReticulumIdentity.fingerprint(of: identity.publicKey))
+    #expect(ReticulumIdentity.fingerprint(of: Data(repeating: 0, count: 10)) == nil)
+}
+
 @MainActor @Test func storeOpensSidebandContactLinks() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
@@ -114,6 +124,25 @@ import Testing
     #expect(discovery.isValidated)
     #expect(discovery.publicKey == identity.publicKey)
     #expect(store.contactLink(for: try #require(store.selectedConversationID)) == contact)
+}
+
+@MainActor @Test func contactIdentityVerificationPinsPublicKey() throws {
+    let identity = ReticulumIdentity()
+    let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+    let hash = ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex
+    let contact = try #require(SidebandContactLink(destinationHash: hash, displayName: "Verified Peer", publicKey: identity.publicKey))
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.openContactLink(contact.url))
+    let conversation = try #require(store.selectedConversation)
+
+    #expect(store.setConversationIdentityVerified(true, conversationID: conversation.id))
+    #expect(store.isConversationIdentityVerified(conversation.id))
+    #expect(store.identityFingerprint(for: conversation.id) == ReticulumIdentity.fingerprint(of: identity.publicKey))
+
+    let restored = SidebandStore(persistenceURL: url)
+    let restoredConversation = try #require(restored.conversations.first)
+    #expect(restored.isConversationIdentityVerified(restoredConversation.id))
 }
 
 @MainActor @Test func discoveryCleanupProtectsConversationDestinations() async throws {

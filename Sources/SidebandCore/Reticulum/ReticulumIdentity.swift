@@ -9,6 +9,17 @@ public struct ReticulumIdentity: Sendable {
 
     public var hash: Data { Data(SHA256.hash(data: publicKey).prefix(16)) }
 
+    /// A human-comparable full SHA-256 fingerprint of a public identity key.
+    public static func fingerprint(of publicKey: Data) -> String? {
+        guard (try? ReticulumIdentity(publicKey: publicKey)) != nil else { return nil }
+        let hex = SHA256.hash(data: publicKey).map { String(format: "%02X", $0) }.joined()
+        return stride(from: 0, to: hex.count, by: 4).map { offset in
+            let start = hex.index(hex.startIndex, offsetBy: offset)
+            let end = hex.index(start, offsetBy: min(4, hex.count - offset))
+            return String(hex[start..<end])
+        }.joined(separator: " ")
+    }
+
     public init() {
         let encryption = Curve25519.KeyAgreement.PrivateKey()
         let signing = Curve25519.Signing.PrivateKey()
