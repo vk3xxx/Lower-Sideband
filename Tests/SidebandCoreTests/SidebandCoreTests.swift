@@ -2319,6 +2319,48 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(!ReticulumInterfaceDiscovery.isSafeAutomaticPublicHost("gateway.local"))
 }
 
+@MainActor @Test func bulkConversationOrganizationIsSafeAndPersists() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let pinned = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Pinned", isPinned: true)
+    let unread = Conversation(destinationHash: "1123456789abcdef0123456789abcdef", displayName: "Unread", unreadCount: 3)
+    let read = Conversation(destinationHash: "2123456789abcdef0123456789abcdef", displayName: "Read")
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try encoder.encode(AppSnapshot(conversations: [pinned, unread, read])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(store.markAllConversationsRead() == 1)
+    #expect(store.totalUnreadCount == 0)
+    #expect(store.archiveReadConversations() == 2)
+    #expect(store.conversations.first(where: { $0.id == pinned.id })?.isArchived == false)
+    #expect(store.unarchiveAllConversations() == 2)
+    let reloaded = SidebandStore(persistenceURL: url)
+    #expect(!reloaded.conversations.contains { $0.isArchived })
+}
+
+@MainActor @Test func conversationSearchIncludesPrivateNotesMessagesQuotesAndAttachments() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(
+        destinationHash: "0123456789abcdef0123456789abcdef",
+        displayName: "Station",
+        contactNote: "Emergency coordinator"
+    )
+    let attachment = Attachment(filename: "field-map.png", byteCount: 4, relativePath: "field-map.png", state: .available)
+    let message = Message(conversationID: conversation.id, body: "Meet at checkpoint", direction: .incoming, state: .delivered, attachments: [attachment], replyQuote: "Original schedule")
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [message])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(store.conversationMatchesSearch(conversation.id, query: "coordinator"))
+    #expect(store.conversationMatchesSearch(conversation.id, query: "checkpoint"))
+    #expect(store.conversationMatchesSearch(conversation.id, query: "schedule"))
+    #expect(store.conversationMatchesSearch(conversation.id, query: "field-map"))
+    #expect(!store.conversationMatchesSearch(conversation.id, query: "unrelated"))
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
     init(hex: String) {

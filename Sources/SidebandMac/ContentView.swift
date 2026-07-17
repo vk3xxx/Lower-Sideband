@@ -57,6 +57,23 @@ private enum DiscoverySort: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+private enum ConversationFilter: String, CaseIterable, Identifiable {
+    case all = "All"
+    case unread = "Unread"
+    case pinned = "Pinned"
+    case trusted = "Trusted"
+    case muted = "Muted"
+    case blocked = "Blocked"
+    var id: Self { self }
+}
+
+private enum ConversationSort: String, CaseIterable, Identifiable {
+    case activity = "Recent Activity"
+    case name = "Name"
+    case unread = "Unread First"
+    var id: Self { self }
+}
+
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -66,7 +83,8 @@ struct ContentView: View {
     @State private var showingCallHistory = false
     @State private var conversationSearch = ""
     @State private var showingArchived = false
-    @State private var showingUnreadOnly = false
+    @State private var conversationFilter: ConversationFilter = .all
+    @State private var conversationSort: ConversationSort = .activity
     @State private var discoverySort: DiscoverySort = .recent
     @State private var renamingConversation: Conversation?
     @State private var renameDraft = ""
@@ -112,10 +130,23 @@ struct ContentView: View {
                         Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
                     }
                     .help(showingArchived ? "Hide archived conversations" : "Show archived conversations")
-                    Button { showingUnreadOnly.toggle() } label: {
-                        Label(showingUnreadOnly ? "Show all conversations" : "Show unread conversations", systemImage: showingUnreadOnly ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    Menu {
+                        Picker("Filter", selection: $conversationFilter) {
+                            ForEach(ConversationFilter.allCases) { filter in Text(filter.rawValue).tag(filter) }
+                        }
+                        Picker("Sort", selection: $conversationSort) {
+                            ForEach(ConversationSort.allCases) { sort in Text(sort.rawValue).tag(sort) }
+                        }
+                        Divider()
+                        Button("Mark All Read", systemImage: "envelope.open") { _ = store.markAllConversationsRead() }
+                            .disabled(store.totalUnreadCount == 0)
+                        Button("Archive Read Conversations", systemImage: "archivebox") { _ = store.archiveReadConversations() }
+                        Button("Unarchive All", systemImage: "tray.and.arrow.up") { _ = store.unarchiveAllConversations() }
+                            .disabled(!store.conversations.contains(where: \.isArchived))
+                    } label: {
+                        Label("Filter conversations", systemImage: conversationFilter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                     }
-                    .help(showingUnreadOnly ? "Show all conversations" : "Show unread conversations only")
+                    .help("Filter, sort, or organize conversations")
                     Menu {
                         Picker("Discovery sorting", selection: $discoverySort) {
                             ForEach(DiscoverySort.allCases) { option in Text(option.rawValue).tag(option) }
@@ -606,18 +637,39 @@ struct ContentView: View {
 
     private var filteredConversations: [Conversation] {
         let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        let visible = store.conversations.filter {
-            (showingArchived || !$0.isArchived) && (!showingUnreadOnly || $0.unreadCount > 0)
+        var visible = store.conversations.filter { conversation in
+            guard showingArchived || !conversation.isArchived else { return false }
+            switch conversationFilter {
+            case .all: return true
+            case .unread: return conversation.unreadCount > 0
+            case .pinned: return conversation.isPinned
+            case .trusted: return conversation.isTrusted
+            case .muted: return conversation.notificationsMuted
+            case .blocked: return conversation.isBlocked
+            }
         }
-        guard !query.isEmpty else { return visible }
-        return visible.filter {
-            $0.displayName.localizedCaseInsensitiveContains(query) || $0.destinationHash.localizedCaseInsensitiveContains(query)
+        if !query.isEmpty {
+            visible = visible.filter { store.conversationMatchesSearch($0.id, query: query) }
+        }
+        return visible.sorted { left, right in
+            if left.isPinned != right.isPinned { return left.isPinned }
+            switch conversationSort {
+            case .activity:
+                if left.updatedAt != right.updatedAt { return left.updatedAt > right.updatedAt }
+            case .name:
+                let order = left.displayName.localizedCaseInsensitiveCompare(right.displayName)
+                if order != .orderedSame { return order == .orderedAscending }
+            case .unread:
+                if left.unreadCount != right.unreadCount { return left.unreadCount > right.unreadCount }
+                if left.updatedAt != right.updatedAt { return left.updatedAt > right.updatedAt }
+            }
+            return left.destinationHash < right.destinationHash
         }
     }
 
     private var filteredDiscoveries: [DiscoveredDestination] {
         let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        if showingUnreadOnly { return [] }
+        if conversationFilter == .unread { return [] }
         let messageDestinations = store.discoveries.filter { !$0.isLXSTVoiceDestination }
         let matching = query.isEmpty ? messageDestinations : messageDestinations.filter {
             $0.destinationHash.localizedCaseInsensitiveContains(query)

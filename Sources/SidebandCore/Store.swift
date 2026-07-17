@@ -700,6 +700,58 @@ public final class SidebandStore {
     }
 
     @discardableResult
+    public func markAllConversationsRead() -> Int {
+        let unreadIDs = conversations.filter { $0.unreadCount > 0 }.map(\.id)
+        guard !unreadIDs.isEmpty else { return 0 }
+        for index in conversations.indices { conversations[index].unreadCount = 0 }
+        save()
+        syncUnreadBadge()
+        Task {
+            for conversationID in unreadIDs { await notifications.removeNotifications(for: conversationID) }
+        }
+        return unreadIDs.count
+    }
+
+    @discardableResult
+    public func archiveReadConversations() -> Int {
+        let candidates = conversations.indices.filter {
+            !conversations[$0].isArchived && !conversations[$0].isPinned && conversations[$0].unreadCount == 0
+        }
+        guard !candidates.isEmpty else { return 0 }
+        for index in candidates { conversations[index].isArchived = true }
+        if let selectedConversationID,
+           conversations.first(where: { $0.id == selectedConversationID })?.isArchived == true {
+            self.selectedConversationID = conversations.first(where: { !$0.isArchived })?.id
+        }
+        save()
+        return candidates.count
+    }
+
+    @discardableResult
+    public func unarchiveAllConversations() -> Int {
+        let archived = conversations.indices.filter { conversations[$0].isArchived }
+        guard !archived.isEmpty else { return 0 }
+        for index in archived { conversations[index].isArchived = false }
+        sortConversations()
+        save()
+        return archived.count
+    }
+
+    public func conversationMatchesSearch(_ conversationID: UUID, query: String) -> Bool {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty,
+              let conversation = conversations.first(where: { $0.id == conversationID }) else { return false }
+        if conversation.displayName.localizedCaseInsensitiveContains(needle)
+            || conversation.destinationHash.localizedCaseInsensitiveContains(needle)
+            || conversation.contactNote.localizedCaseInsensitiveContains(needle) { return true }
+        return messages(for: conversationID).contains { message in
+            message.body.localizedCaseInsensitiveContains(needle)
+                || (message.replyQuote?.localizedCaseInsensitiveContains(needle) ?? false)
+                || message.attachments.contains { $0.filename.localizedCaseInsensitiveContains(needle) }
+        }
+    }
+
+    @discardableResult
     public func renameConversation(_ conversationID: UUID, to displayName: String) -> Bool {
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return false }
