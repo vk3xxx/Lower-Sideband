@@ -344,7 +344,7 @@ struct ContentView: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button { copyToSystemClipboard(discovery.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
-            if let contactLink = SidebandContactLink(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName) {
+            if let contactLink = SidebandContactLink(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName, publicKey: discovery.isValidated ? discovery.publicKey : nil) {
                 Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
                 ShareLink(item: contactLink.url) { Label("Share Contact Link", systemImage: "square.and.arrow.up") }
             }
@@ -365,7 +365,7 @@ struct ContentView: View {
 
     @ViewBuilder private func conversationMenu(_ conversation: Conversation) -> some View {
         Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
-        if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+        if let contactLink = store.contactLink(for: conversation.id) {
             Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
         }
         if let contactCard = store.conversationContactCard(conversation.id) {
@@ -931,7 +931,7 @@ private struct ConversationView: View {
                         .foregroundStyle(.secondary)
                         .contextMenu {
                             Button { copyToSystemClipboard(conversation.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
-                            if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+                            if let contactLink = store.contactLink(for: conversation.id) {
                                 Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
                             }
                         }
@@ -950,7 +950,7 @@ private struct ConversationView: View {
                         .help("Clear message search")
                         .accessibilityLabel("Clear message search")
                 }
-                if SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) != nil {
+                if store.contactLink(for: conversation.id) != nil {
                     Button { showingContactQR = true } label: { Image(systemName: "qrcode") }
                         .help("Show contact QR code")
                 }
@@ -1166,7 +1166,7 @@ private struct ConversationView: View {
             Task { await store.attachmentStore.removeMaterializedFile(for: attachment) }
         }
         .sheet(isPresented: $showingContactQR) {
-            if let contactLink = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+            if let contactLink = store.contactLink(for: conversation.id) {
                 ContactQRCodeView(name: conversation.displayName, link: contactLink.url)
             }
         }

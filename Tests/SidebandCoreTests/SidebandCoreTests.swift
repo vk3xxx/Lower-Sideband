@@ -77,6 +77,20 @@ import Testing
     #expect(SidebandContactLink(destinationHash: "invalid") == nil)
 }
 
+@Test func sidebandContactLinksCarryVerifiableIdentityKeys() throws {
+    let identity = ReticulumIdentity()
+    let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+    let hash = ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex
+    let contact = try #require(SidebandContactLink(destinationHash: hash, displayName: "Offline Peer", publicKey: identity.publicKey))
+    let decoded = try #require(SidebandContactLink(url: contact.url))
+
+    #expect(decoded == contact)
+    #expect(decoded.publicKey == identity.publicKey)
+    #expect(contact.url.absoluteString.contains("key="))
+    #expect(SidebandContactLink(destinationHash: "0123456789abcdef0123456789abcdef", publicKey: identity.publicKey) == nil)
+    #expect(SidebandContactLink(string: "sideband://contact/\(hash)?key=not+base64") == nil)
+}
+
 @MainActor @Test func storeOpensSidebandContactLinks() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
@@ -85,6 +99,21 @@ import Testing
     #expect(store.openContactLink(contactURL))
     #expect(store.selectedConversation?.displayName == "Deep Link")
     #expect(!store.openContactLink(URL(string: "https://example.com")!))
+}
+
+@MainActor @Test func storeTrustsIdentityBoundByContactLink() throws {
+    let identity = ReticulumIdentity()
+    let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+    let hash = ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex
+    let contact = try #require(SidebandContactLink(destinationHash: hash, displayName: "Paper Peer", publicKey: identity.publicKey))
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(store.openContactLink(contact.url))
+    let discovery = try #require(store.discoveries.first(where: { $0.destinationHash == hash }))
+    #expect(discovery.isValidated)
+    #expect(discovery.publicKey == identity.publicKey)
+    #expect(store.contactLink(for: try #require(store.selectedConversationID)) == contact)
 }
 
 @MainActor @Test func localDisplayNameIsNormalizedAndPersisted() {
@@ -151,6 +180,7 @@ import Testing
 
     #expect(store.localContactLink.destinationHash == store.localDeliveryHash)
     #expect(store.localContactLink.displayName == "My Device")
+    #expect(store.localContactLink.publicKey?.count == 64)
 }
 
 @MainActor @Test func diagnosticsReportContainsSafeRoutingContext() {

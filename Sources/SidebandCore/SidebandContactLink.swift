@@ -2,24 +2,41 @@ import Foundation
 
 public struct SidebandContactLink: Equatable, Sendable {
     public static let scheme = "sideband"
+    private static let deliveryNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
 
     public let destinationHash: String
     public let displayName: String?
+    /// The Reticulum identity public key bound to `destinationHash`, when supplied by the contact.
+    public let publicKey: Data?
 
-    public init?(destinationHash: String, displayName: String? = nil) {
+    public init?(destinationHash: String, displayName: String? = nil, publicKey: Data? = nil) {
         let normalizedHash = destinationHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard DestinationHash.isValid(normalizedHash) else { return nil }
+        if let publicKey {
+            guard let identity = try? ReticulumIdentity(publicKey: publicKey),
+                  ReticulumIdentity.truncatedHash(Self.deliveryNameHash + identity.hash).map({ String(format: "%02x", $0) }).joined() == normalizedHash else { return nil }
+        }
         self.destinationHash = normalizedHash
         let normalizedName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.displayName = normalizedName?.isEmpty == false ? normalizedName : nil
+        self.publicKey = publicKey
     }
 
     public init?(url: URL) {
         guard url.scheme?.lowercased() == Self.scheme,
               url.host?.lowercased() == "contact" else { return nil }
         let hash = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "name" })?.value
-        self.init(destinationHash: hash, displayName: name)
+        let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        let name = queryItems?.first(where: { $0.name == "name" })?.value
+        let encodedKey = queryItems?.first(where: { $0.name == "key" })?.value
+        let publicKey: Data?
+        if let encodedKey {
+            guard let decoded = Self.decodeBase64URL(encodedKey) else { return nil }
+            publicKey = decoded
+        } else {
+            publicKey = nil
+        }
+        self.init(destinationHash: hash, displayName: name, publicKey: publicKey)
     }
 
     public init?(string: String) {
@@ -32,7 +49,24 @@ public struct SidebandContactLink: Equatable, Sendable {
         components.scheme = Self.scheme
         components.host = "contact"
         components.path = "/\(destinationHash)"
-        if let displayName { components.queryItems = [URLQueryItem(name: "name", value: displayName)] }
+        var queryItems: [URLQueryItem] = []
+        if let displayName { queryItems.append(URLQueryItem(name: "name", value: displayName)) }
+        if let publicKey { queryItems.append(URLQueryItem(name: "key", value: Self.encodeBase64URL(publicKey))) }
+        if !queryItems.isEmpty { components.queryItems = queryItems }
         return components.url!
+    }
+
+    private static func encodeBase64URL(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private static func decodeBase64URL(_ value: String) -> Data? {
+        guard !value.isEmpty, value.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else { return nil }
+        var base64 = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        return Data(base64Encoded: base64)
     }
 }

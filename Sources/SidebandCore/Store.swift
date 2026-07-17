@@ -401,10 +401,16 @@ public final class SidebandStore {
             "LXMF Destination: \(conversation.destinationHash)",
             "Trusted: \(conversation.isTrusted ? "yes" : "no")"
         ]
-        if let link = SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName) {
+        if let link = contactLink(for: conversationID) {
             lines.append("Contact Link: \(link.url.absoluteString)")
         }
         return lines.joined(separator: "\n")
+    }
+
+    public func contactLink(for conversationID: UUID) -> SidebandContactLink? {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
+        let publicKey = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated })?.publicKey
+        return SidebandContactLink(destinationHash: conversation.destinationHash, displayName: conversation.displayName, publicKey: publicKey)
     }
 
     public func draft(for conversationID: UUID) -> String { drafts[conversationID] ?? "" }
@@ -445,6 +451,23 @@ public final class SidebandStore {
         guard let contact = SidebandContactLink(url: url) else {
             lastError = "This is not a valid Sideband contact link."
             return false
+        }
+        if let publicKey = contact.publicKey {
+            let appData = contact.displayName.map { ReticulumAnnounceBuilder.lxmfAppData(displayName: $0) }
+            if let index = discoveries.firstIndex(where: { $0.destinationHash == contact.destinationHash }) {
+                discoveries[index].publicKey = publicKey
+                discoveries[index].isValidated = true
+                discoveries[index].lastSeen = .now
+                if let appData { discoveries[index].appData = appData }
+            } else {
+                discoveries.insert(DiscoveredDestination(
+                    destinationHash: contact.destinationHash,
+                    hops: 0,
+                    isValidated: true,
+                    publicKey: publicKey,
+                    appData: appData
+                ), at: 0)
+            }
         }
         return addConversation(destinationHash: contact.destinationHash, displayName: contact.displayName ?? "")
     }
@@ -1036,7 +1059,9 @@ public final class SidebandStore {
         return ReticulumIdentity.truncatedHash(nameHash + messagingIdentity.hash).hex
     }
     public var localAnnounceAppData: Data { ReticulumAnnounceBuilder.lxmfAppData(displayName: localDisplayName) }
-    public var localContactLink: SidebandContactLink { SidebandContactLink(destinationHash: localDeliveryHash, displayName: localDisplayName)! }
+    public var localContactLink: SidebandContactLink {
+        SidebandContactLink(destinationHash: localDeliveryHash, displayName: localDisplayName, publicKey: messagingIdentity.publicKey)!
+    }
     public var networkDiagnosticsReport: String {
         let state: String
         switch networkState {
