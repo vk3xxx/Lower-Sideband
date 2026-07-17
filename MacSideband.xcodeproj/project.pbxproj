@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F1A000000000000000000011 /* ConversationExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A000000000000000000001 /* ConversationExport.swift */; };
+		F1A000000000000000000012 /* ConversationExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A000000000000000000001 /* ConversationExport.swift */; };
+		F1A000000000000000000013 /* ContactCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A000000000000000000002 /* ContactCollection.swift */; };
+		F1A000000000000000000014 /* ContactCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A000000000000000000002 /* ContactCollection.swift */; };
 		01E564776CA9E776B55ED75B /* ReticulumIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */; };
 		026DAF6778C7172BBEB38D1D /* VoiceMessageAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59439F9438760DD48AD116BC /* VoiceMessageAudio.swift */; };
 		03301265781053B5497105C0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
@@ -162,6 +166,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F1A000000000000000000001 /* ConversationExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationExport.swift; sourceTree = "<group>"; };
+		F1A000000000000000000002 /* ContactCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactCollection.swift; sourceTree = "<group>"; };
 		0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPathTable.swift; sourceTree = "<group>"; };
 		0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResource.swift; sourceTree = "<group>"; };
 		148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPInterface.swift; sourceTree = "<group>"; };
@@ -327,6 +333,8 @@
 			isa = PBXGroup;
 			children = (
 				CE0ECBE696BC5125A2E74BB6 /* AttachmentStore.swift */,
+				F1A000000000000000000002 /* ContactCollection.swift */,
+				F1A000000000000000000001 /* ConversationExport.swift */,
 				1C0E0FB12227F73FE535F484 /* BackgroundRefreshCoordinator.swift */,
 				2E194B906C9B4844994C97C4 /* DestinationHash.swift */,
 				8FDA34BD01D0B7839C37388F /* ICloudSync.swift */,
@@ -542,6 +550,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				046FAAE4F5A84EB7639357D2 /* AttachmentStore.swift in Sources */,
+				F1A000000000000000000013 /* ContactCollection.swift in Sources */,
+				F1A000000000000000000011 /* ConversationExport.swift in Sources */,
 				48EB119C7D1716383DA637A8 /* AutoInterfaceDiscovery.swift in Sources */,
 				851A3DB3680E62E8B3785D4E /* BackgroundRefreshCoordinator.swift in Sources */,
 				C3AED9F45A9A29D7881185E2 /* DestinationHash.swift in Sources */,
@@ -618,6 +628,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				98C2C3D02CE6C20EDFA20EA6 /* AttachmentStore.swift in Sources */,
+				F1A000000000000000000014 /* ContactCollection.swift in Sources */,
+				F1A000000000000000000012 /* ConversationExport.swift in Sources */,
 				2C5914900748A5C63010085D /* AutoInterfaceDiscovery.swift in Sources */,
 				2D6DB176F5FFA98038C37617 /* BackgroundRefreshCoordinator.swift in Sources */,
 				3F17F52D6CC7281CCF48B0B6 /* DestinationHash.swift in Sources */,
