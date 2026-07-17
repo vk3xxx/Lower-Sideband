@@ -112,6 +112,54 @@ public enum LXSTVoice {
     public enum DecodeError: Error { case invalidEnvelope, invalidSignal, invalidFrame }
 }
 
+/// A small bounded FIFO that absorbs normal packet-arrival jitter without allowing
+/// call latency to grow indefinitely. After an underrun it deliberately buffers a
+/// few frames again before resuming playback.
+public struct LXSTJitterBuffer: Sendable {
+    public let targetDepth: Int
+    public let maximumDepth: Int
+    public private(set) var droppedFrameCount = 0
+    public private(set) var underrunCount = 0
+    public private(set) var isPrimed = false
+    private var frames: [Data] = []
+
+    public init(targetDepth: Int = 3, maximumDepth: Int = 12) {
+        self.targetDepth = max(1, targetDepth)
+        self.maximumDepth = max(self.targetDepth, maximumDepth)
+    }
+
+    public var count: Int { frames.count }
+
+    public mutating func enqueue(_ frame: Data) {
+        guard !frame.isEmpty else { return }
+        frames.append(frame)
+        if frames.count > maximumDepth {
+            frames.removeFirst(frames.count - maximumDepth)
+            droppedFrameCount += 1
+        }
+    }
+
+    public mutating func nextFrame() -> Data? {
+        if !isPrimed {
+            guard frames.count >= targetDepth else { return nil }
+            isPrimed = true
+        }
+        guard !frames.isEmpty else {
+            isPrimed = false
+            underrunCount += 1
+            return nil
+        }
+        return frames.removeFirst()
+    }
+
+    public mutating func reset() {
+        frames.removeAll(keepingCapacity: true)
+        droppedFrameCount = 0
+        underrunCount = 0
+        isPrimed = false
+    }
+}
+
 public enum VoiceCallState: String, Codable, Sendable {
     case idle, findingRoute, connecting, ringing, incoming, active, ending, failed
 }

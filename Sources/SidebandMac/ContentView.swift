@@ -1340,6 +1340,10 @@ private struct VoiceCallView: View {
                 Text(statusText).foregroundStyle(.secondary)
                 if call?.state == .active {
                     Text(callDuration).font(.title3.monospacedDigit())
+                    if audio.isPlaybackRecovering || audio.droppedPlaybackFrames > 0 {
+                        Label(callQualityText, systemImage: "waveform.badge.exclamationmark")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 }
                 Label("End-to-end encrypted LXST call", systemImage: "lock.shield.fill")
                     .font(.caption).foregroundStyle(.secondary)
@@ -1394,6 +1398,11 @@ private struct VoiceCallView: View {
 
     private var callDuration: String {
         String(format: "%02d:%02d", elapsed / 60, elapsed % 60)
+    }
+
+    private var callQualityText: String {
+        if audio.droppedPlaybackFrames > 0 { return "Network congestion detected" }
+        return "Audio connection recovering"
     }
 
     private func configureAudio(for state: VoiceCallState?) {

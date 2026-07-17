@@ -3,6 +3,29 @@ import Testing
 @testable import SidebandCore
 
 struct LXSTVoiceTests {
+    @Test func jitterBufferPrimesDrainsAndReprimesAfterUnderrun() {
+        var buffer = LXSTJitterBuffer(targetDepth: 3, maximumDepth: 5)
+        buffer.enqueue(Data([1]))
+        buffer.enqueue(Data([2]))
+        #expect(buffer.nextFrame() == nil)
+        buffer.enqueue(Data([3]))
+        #expect(buffer.nextFrame() == Data([1]))
+        #expect(buffer.nextFrame() == Data([2]))
+        #expect(buffer.nextFrame() == Data([3]))
+        #expect(buffer.nextFrame() == nil)
+        #expect(buffer.underrunCount == 1)
+        buffer.enqueue(Data([4]))
+        #expect(buffer.nextFrame() == nil)
+    }
+
+    @Test func jitterBufferBoundsLatencyByDroppingOldestFrames() {
+        var buffer = LXSTJitterBuffer(targetDepth: 2, maximumDepth: 3)
+        for value in 1...5 { buffer.enqueue(Data([UInt8(value)])) }
+        #expect(buffer.count == 3)
+        #expect(buffer.droppedFrameCount == 2)
+        #expect(buffer.nextFrame() == Data([3]))
+    }
+
     @Test func pythonCompatibleSignallingFixtures() throws {
         #expect(LXSTVoice.signalling([LXSTVoice.Signal.available.rawValue]).hexString == "81009103")
         #expect(LXSTVoice.preferredProfile(.mediumQuality).hexString == "810091cd013f")

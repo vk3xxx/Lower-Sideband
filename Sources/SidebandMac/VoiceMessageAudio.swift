@@ -1,6 +1,7 @@
 @preconcurrency import AVFoundation
 import Foundation
 import Observation
+import SidebandCore
 
 private final class AudioConverterInputBox: @unchecked Sendable {
     private var buffer: AVAudioBuffer?
@@ -188,6 +189,10 @@ final class LiveVoiceAudioEngine {
     private(set) var isRunning = false
     var isMuted = false
     var onEncodedFrame: ((Data) -> Void)?
+    private(set) var bufferedFrameCount = 0
+    private(set) var playbackUnderruns = 0
+    private(set) var droppedPlaybackFrames = 0
+    private(set) var isPlaybackRecovering = false
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -195,6 +200,8 @@ final class LiveVoiceAudioEngine {
     private var encoder: AVAudioConverter?
     private var decoder: AVAudioConverter?
     private var pendingSamples: [Float] = []
+    private var jitterBuffer = LXSTJitterBuffer()
+    private var playbackTask: Task<Void, Never>?
     private let sampleRate = 24_000.0
     private let frameLength = 1_440 // 60 ms, matching LXST's default profile.
     private let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!
@@ -240,19 +247,28 @@ final class LiveVoiceAudioEngine {
         try engine.start()
         player.play()
         isRunning = true
+        startPlaybackLoop()
     }
 
     func stop() {
-        guard isRunning else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        player.stop()
-        engine.stop()
-        engine.disconnectNodeOutput(player)
-        engine.detach(player)
+        playbackTask?.cancel()
+        playbackTask = nil
+        if isRunning {
+            engine.inputNode.removeTap(onBus: 0)
+            player.stop()
+            engine.stop()
+            engine.disconnectNodeOutput(player)
+            engine.detach(player)
+        }
         captureConverter = nil
         encoder = nil
         decoder = nil
         pendingSamples.removeAll(keepingCapacity: false)
+        jitterBuffer.reset()
+        bufferedFrameCount = 0
+        playbackUnderruns = 0
+        droppedPlaybackFrames = 0
+        isPlaybackRecovering = false
         isRunning = false
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -260,7 +276,14 @@ final class LiveVoiceAudioEngine {
     }
 
     func play(opus payload: Data) {
-        guard isRunning, !payload.isEmpty, let opusFormat, let decoder else { return }
+        guard !payload.isEmpty else { return }
+        jitterBuffer.enqueue(payload)
+        bufferedFrameCount = jitterBuffer.count
+        droppedPlaybackFrames = jitterBuffer.droppedFrameCount
+    }
+
+    private func decodeAndSchedule(_ payload: Data) {
+        guard isRunning, let opusFormat, let decoder else { return }
         let compressed = AVAudioCompressedBuffer(format: opusFormat, packetCapacity: 1, maximumPacketSize: max(1_275, payload.count))
         payload.copyBytes(to: compressed.data.assumingMemoryBound(to: UInt8.self), count: payload.count)
         compressed.byteLength = UInt32(payload.count)
@@ -278,7 +301,7 @@ final class LiveVoiceAudioEngine {
     }
 
     private func consumeInput(_ input: AVAudioPCMBuffer) {
-        guard isRunning, !isMuted, let captureConverter else { return }
+        guard isRunning, let captureConverter else { return }
         let capacity = AVAudioFrameCount(ceil(Double(input.frameLength) * sampleRate / input.format.sampleRate)) + 8
         guard let converted = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: capacity) else { return }
         let inputBox = AudioConverterInputBox(input)
@@ -287,11 +310,30 @@ final class LiveVoiceAudioEngine {
             inputBox.next(inputStatus)
         }
         guard status != .error, let samples = converted.floatChannelData?[0] else { return }
-        pendingSamples.append(contentsOf: UnsafeBufferPointer(start: samples, count: Int(converted.frameLength)))
+        if isMuted {
+            pendingSamples.append(contentsOf: repeatElement(0, count: Int(converted.frameLength)))
+        } else {
+            pendingSamples.append(contentsOf: UnsafeBufferPointer(start: samples, count: Int(converted.frameLength)))
+        }
         while pendingSamples.count >= frameLength {
             let frame = Array(pendingSamples.prefix(frameLength))
             pendingSamples.removeFirst(frameLength)
             if let encoded = encode(frame) { onEncodedFrame?(encoded) }
+        }
+    }
+
+    private func startPlaybackLoop() {
+        playbackTask?.cancel()
+        playbackTask = Task { @MainActor [weak self] in
+            while let self, self.isRunning, !Task.isCancelled {
+                if let payload = self.jitterBuffer.nextFrame() {
+                    self.decodeAndSchedule(payload)
+                }
+                self.bufferedFrameCount = self.jitterBuffer.count
+                self.playbackUnderruns = self.jitterBuffer.underrunCount
+                self.isPlaybackRecovering = self.playbackUnderruns > 0 && !self.jitterBuffer.isPrimed
+                try? await Task.sleep(for: .milliseconds(60))
+            }
         }
     }
 
