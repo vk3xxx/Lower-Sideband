@@ -1,7 +1,7 @@
 import Foundation
 
 public struct SidebandConversationExport: Codable, Sendable {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 
     public struct Contact: Codable, Sendable {
         public var displayName: String
@@ -16,6 +16,7 @@ public struct SidebandConversationExport: Codable, Sendable {
         public var mimeType: String?
         public var byteCount: Int
         public var contentHash: Data?
+        public var state: Attachment.TransferState?
     }
 
     public struct ExportedMessage: Codable, Sendable {
@@ -28,8 +29,17 @@ public struct SidebandConversationExport: Codable, Sendable {
         public var renderer: Message.Renderer
         public var replyTo: Data?
         public var replyQuote: String?
+        public var reactionTo: Data?
+        public var reactionContent: String?
+        public var commentTo: Data?
+        public var continuationOf: Data?
+        public var commands: [LXMFCommand]?
         public var telemetry: SidebandTelemetry?
         public var attachments: [ExportedAttachment]
+        public var deliveryAttemptCount: Int?
+        public var lastDeliveryAttemptAt: Date?
+        public var lastDeliveryMode: Message.DeliveryMode?
+        public var lastDeliveryFailure: String?
     }
 
     public var version: Int
@@ -58,10 +68,19 @@ public struct SidebandConversationExport: Codable, Sendable {
                 renderer: message.renderer,
                 replyTo: message.replyTo,
                 replyQuote: message.replyQuote,
+                reactionTo: message.reactionTo,
+                reactionContent: message.reactionContent,
+                commentTo: message.commentTo,
+                continuationOf: message.continuationOf,
+                commands: message.commands.isEmpty ? nil : message.commands,
                 telemetry: message.telemetry,
                 attachments: message.attachments.map {
-                    ExportedAttachment(filename: $0.filename, mimeType: $0.mimeType, byteCount: $0.byteCount, contentHash: $0.contentHash)
-                }
+                    ExportedAttachment(filename: $0.filename, mimeType: $0.mimeType, byteCount: $0.byteCount, contentHash: $0.contentHash, state: $0.state)
+                },
+                deliveryAttemptCount: message.deliveryAttemptCount,
+                lastDeliveryAttemptAt: message.lastDeliveryAttemptAt,
+                lastDeliveryMode: message.lastDeliveryMode,
+                lastDeliveryFailure: message.lastDeliveryFailure
             )
         }
     }

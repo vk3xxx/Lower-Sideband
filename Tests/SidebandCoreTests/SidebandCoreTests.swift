@@ -250,6 +250,42 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(!text.contains("outboxOwnerID"))
 }
 
+@Test func structuredConversationExportVersionTwoPreservesPortableMessageMetadata() throws {
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Archive Peer")
+    let reference = Data(repeating: 0x22, count: 32)
+    let message = Message(
+        conversationID: conversation.id,
+        body: "status",
+        direction: .outgoing,
+        state: .failed,
+        attachments: [Attachment(filename: "map.png", mimeType: "image/png", byteCount: 42, relativePath: "local.sbenc", state: .failed, contentHash: Data(repeating: 7, count: 32))],
+        replyTo: reference,
+        replyQuote: "earlier",
+        reactionTo: reference,
+        reactionContent: "👍",
+        commentTo: reference,
+        continuationOf: reference,
+        commands: [.ping],
+        deliveryAttemptCount: 3,
+        lastDeliveryAttemptAt: Date(timeIntervalSince1970: 1_234),
+        lastDeliveryMode: .propagation,
+        lastDeliveryFailure: "No route"
+    )
+
+    let archive = SidebandConversationExport(conversation: conversation, fingerprint: nil, messages: [message])
+    let exported = try #require(archive.messages.first)
+    #expect(archive.version == 2)
+    #expect(exported.replyTo == reference)
+    #expect(exported.reactionContent == "👍")
+    #expect(exported.commentTo == reference)
+    #expect(exported.continuationOf == reference)
+    #expect(exported.commands == [.ping])
+    #expect(exported.attachments.first?.state == .failed)
+    #expect(exported.deliveryAttemptCount == 3)
+    #expect(exported.lastDeliveryMode == .propagation)
+    #expect(exported.lastDeliveryFailure == "No route")
+}
+
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
     let identity = ReticulumIdentity()
     let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
