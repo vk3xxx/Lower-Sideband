@@ -442,6 +442,29 @@ import Testing
     #expect(received.validate(with: sender))
 }
 
+@Test func typedLXMFCommandsMatchPythonSidebandFieldShape() throws {
+    let encoded = try #require(LXMFCommand.encode([.ping, .echo("hello"), .signalReport]))
+    let sender = ReticulumIdentity()
+    let message = try LXMFMessage(
+        destinationHash: Data(repeating: 0x01, count: 16),
+        sourceHash: Data(repeating: 0x02, count: 16),
+        sourceIdentity: sender,
+        content: Data(),
+        encodedFields: [0x09: encoded]
+    )
+    let received = try LXMFReceivedMessage(packed: message.packed)
+    #expect(LXMFCommand.decode(received.fields[0x09]) == [.ping, .echo("hello"), .signalReport])
+    #expect(received.validate(with: sender))
+}
+
+@Test func pluginAndOversizedCommandsAreNeverDecoded() {
+    let plugin = MessagePack.array([MessagePack.map([(0x00, MessagePack.binary(Data("shell".utf8)))])])
+    let oversized = MessagePack.array([MessagePack.map([(0x03, MessagePack.binary(Data(repeating: 0x61, count: 1_025)))])])
+    #expect(LXMFCommand.decode(try? MessagePackDecoder.decode(plugin)).isEmpty)
+    #expect(LXMFCommand.decode(try? MessagePackDecoder.decode(oversized)).isEmpty)
+    #expect(LXMFCommand.encode(Array(repeating: .ping, count: 9)) == nil)
+}
+
 @MainActor @Test func reactionsAreBoundedQueuedAndPersisted() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
@@ -479,6 +502,23 @@ import Testing
     #expect(store.messages[0].replyTo == targetHash)
     #expect(store.messages[0].commentTo == targetHash)
     #expect(SidebandStore(persistenceURL: url).messages[0].commentTo == targetHash)
+}
+
+@MainActor @Test func commandRequestsAreProtocolOnlyBoundedAndPersisted() async {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Command Peer"))
+    let conversationID = store.conversations[0].id
+
+    await store.sendCommand(.ping, conversationID: conversationID)
+    #expect(store.messages.count == 1)
+    #expect(store.messages[0].body.isEmpty)
+    #expect(store.messages[0].commands == [.ping])
+    #expect(SidebandStore(persistenceURL: url).messages[0].commands == [.ping])
+
+    await store.sendCommand(.echo(String(repeating: "x", count: 257)), conversationID: conversationID)
+    #expect(store.messages.count == 1)
+    #expect(store.lastError?.contains("256") == true)
 }
 
 @MainActor @Test func markdownComposerPrefixIsStrippedAndPersisted() async throws {

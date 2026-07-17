@@ -89,10 +89,11 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var reactionContent: String?
     public var commentTo: Data?
     public var continuationOf: Data?
+    public var commands: [LXMFCommand]
     public var outboxOwnerID: String?
     public var outboxOwnerUpdatedAt: Date?
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, commentTo: Data? = nil, continuationOf: Data? = nil, outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, commentTo: Data? = nil, continuationOf: Data? = nil, commands: [LXMFCommand] = [], outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
@@ -109,11 +110,12 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.reactionContent = reactionContent
         self.commentTo = commentTo
         self.continuationOf = continuationOf
+        self.commands = commands
         self.outboxOwnerID = outboxOwnerID
         self.outboxOwnerUpdatedAt = outboxOwnerUpdatedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, commentTo, continuationOf, outboxOwnerID, outboxOwnerUpdatedAt }
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, commentTo, continuationOf, commands, outboxOwnerID, outboxOwnerUpdatedAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -132,6 +134,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         reactionContent = try values.decodeIfPresent(String.self, forKey: .reactionContent)
         commentTo = try values.decodeIfPresent(Data.self, forKey: .commentTo)
         continuationOf = try values.decodeIfPresent(Data.self, forKey: .continuationOf)
+        commands = try values.decodeIfPresent([LXMFCommand].self, forKey: .commands) ?? []
         outboxOwnerID = try values.decodeIfPresent(String.self, forKey: .outboxOwnerID)
         outboxOwnerUpdatedAt = try values.decodeIfPresent(Date.self, forKey: .outboxOwnerUpdatedAt)
     }

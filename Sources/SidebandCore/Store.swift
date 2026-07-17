@@ -145,6 +145,7 @@ public final class SidebandStore {
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
     private var receivedLXMFIDs: Set<String> = []
+    private var lastCommandResponseAt: [UUID: Date] = [:]
     private var inboundRemoteIdentities: [String: ReticulumIdentity] = [:]
     private var inboundLinkIDs: Set<String> = []
     private var voiceLinkIDs: Set<String> = []
@@ -867,6 +868,31 @@ public final class SidebandStore {
         touch(conversation.id)
         save()
         await attemptDelivery(for: conversation.id)
+    }
+
+    public func sendCommand(_ command: LXMFCommand, conversationID: UUID) async {
+        guard let conversation = conversations.first(where: { $0.id == conversationID }),
+              !conversation.isBlocked else {
+            lastError = "Unblock this contact before sending a command request."
+            return
+        }
+        if case let .echo(value) = command,
+           value.isEmpty || value.count > LXMFCommand.maximumEchoCharacters {
+            lastError = "Echo requests are limited to \(LXMFCommand.maximumEchoCharacters) characters."
+            return
+        }
+        let message = Message(
+            conversationID: conversationID,
+            body: "",
+            direction: .outgoing,
+            state: .queued,
+            commands: [command],
+            outboxOwnerID: syncDeviceID,
+            outboxOwnerUpdatedAt: .now
+        )
+        messages.append(message)
+        save()
+        await attemptDelivery(for: conversationID)
     }
 
     public func validateAttachmentSelection(currentCount: Int, adding newCount: Int) -> Bool {
@@ -2470,6 +2496,7 @@ public final class SidebandStore {
         let reactionContent = message.binaryMapField(0x40, key: 0x01).flatMap { String(data: $0, encoding: .utf8) }
         let commentTo = message.binaryMapField(0x41, key: 0x00)
         let continuationOf = message.binaryMapField(0x42, key: 0x00)
+        let commands = LXMFCommand.decode(message.fields[0x09])
         if message.fields[0x40] != nil {
             guard let reactionTarget, let reactionContent,
                   Message.isValidReaction(content: reactionContent, target: reactionTarget) else { return false }
@@ -2497,9 +2524,19 @@ public final class SidebandStore {
             reactionTo: reactionTarget,
             reactionContent: reactionContent,
             commentTo: commentTo,
-            continuationOf: continuationOf
+            continuationOf: continuationOf,
+            commands: commands
         )
         messages.append(incomingMessage)
+        if message.fields[0x09] != nil {
+            receivedLXMFIDs.insert(message.messageID.hex)
+            UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
+            save()
+            if conversation.isTrusted, isConversationIdentityVerified(conversation.id), !commands.isEmpty {
+                Task { await handleIncomingCommands(commands, conversationID: conversation.id) }
+            }
+            return true
+        }
         noteIncomingActivity(in: conversation.id)
         receivedLXMFIDs.insert(message.messageID.hex)
         UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
@@ -2962,7 +2999,41 @@ public final class SidebandStore {
         if let target = message.continuationOf {
             fields[0x42] = MessagePack.map([(0x00, MessagePack.binary(target))])
         }
+        if let commands = LXMFCommand.encode(message.commands) { fields[0x09] = commands }
         return fields
+    }
+
+    private func handleIncomingCommands(_ commands: [LXMFCommand], conversationID: UUID) async {
+        let now = Date.now
+        if let previous = lastCommandResponseAt[conversationID], now.timeIntervalSince(previous) < 5 { return }
+        lastCommandResponseAt[conversationID] = now
+        for command in commands {
+            let response: String
+            switch command {
+            case .ping:
+                response = "Ping reply"
+            case .echo(let value):
+                response = "Echo reply: \(value)"
+            case .signalReport:
+                let route = hasPath(to: conversations.first(where: { $0.id == conversationID })?.destinationHash ?? "") ? "available" : "unknown"
+                response = "Signal report: Reticulum route \(route). RSSI and SNR are not exposed by Apple Network.framework."
+            }
+            enqueueAutomatedResponse(response, conversationID: conversationID)
+        }
+        await attemptDelivery(for: conversationID)
+    }
+
+    private func enqueueAutomatedResponse(_ body: String, conversationID: UUID) {
+        messages.append(Message(
+            conversationID: conversationID,
+            body: body,
+            direction: .outgoing,
+            state: .queued,
+            outboxOwnerID: syncDeviceID,
+            outboxOwnerUpdatedAt: .now
+        ))
+        touch(conversationID)
+        save()
     }
 
     private func replyQuote(for message: Message) -> String {

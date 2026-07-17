@@ -1194,6 +1194,15 @@ private struct ConversationView: View {
                 .disabled(store.voiceCall != nil || conversation.isBlocked || store.networkState != .ready)
                 .help(conversation.isBlocked ? "Unblock this contact before calling" : "Start encrypted voice call")
                 .accessibilityLabel("Start encrypted voice call")
+                Menu {
+                    Button { Task { await store.sendCommand(.ping, conversationID: conversation.id) } } label: {
+                        Label("Ping contact", systemImage: "wave.3.right")
+                    }
+                    Button { Task { await store.sendCommand(.signalReport, conversationID: conversation.id) } } label: {
+                        Label("Request signal report", systemImage: "chart.bar")
+                    }
+                } label: { Image(systemName: "ellipsis.circle") }
+                .help("Interoperable LXMF requests")
                 Label(routingStatus, systemImage: routingIcon)
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityLabel("Routing status: \(routingStatus)")
@@ -1507,7 +1516,7 @@ private struct ConversationView: View {
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
 
     private var filteredMessages: [Message] {
-        let all = store.messages(for: conversation.id).filter { $0.reactionTo == nil }
+        let all = store.messages(for: conversation.id).filter { $0.reactionTo == nil && $0.commands.isEmpty }
         let query = messageSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return all }
         return all.filter { message in
