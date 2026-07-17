@@ -1005,6 +1005,18 @@ private struct NetworkView: View {
             }
             GroupBox("Message security") {
                 VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Require device authentication to open Sideband", isOn: Binding(
+                        get: { store.privacyLock.isEnabled },
+                        set: { enabled in Task { await store.privacyLock.setEnabled(enabled) } }
+                    ))
+                    .disabled(store.privacyLock.isAuthenticating)
+                    Text(store.privacyLock.availabilityDescription)
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let error = store.privacyLock.lastError {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                    Divider()
                     Toggle("Render rich text only from trusted or verified contacts", isOn: Binding(
                         get: { store.richTextTrustedOnly },
                         set: { store.setRichTextTrustedOnly($0) }

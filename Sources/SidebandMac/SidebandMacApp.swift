@@ -9,6 +9,7 @@ import UIKit
 
 @main
 struct SidebandApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var store = SidebandStore()
 #if os(iOS)
     @UIApplicationDelegateAdaptor(SidebandAppDelegate.self) private var appDelegate
@@ -22,7 +23,7 @@ struct SidebandApp: App {
     var body: some Scene {
         #if os(macOS)
         WindowGroup("Sideband") {
-            ContentView(store: store)
+            protectedContent
                 .frame(minWidth: 850, minHeight: 560)
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
@@ -32,7 +33,7 @@ struct SidebandApp: App {
         .defaultSize(width: 1080, height: 720)
         #else
         WindowGroup("Sideband") {
-            ContentView(store: store)
+            protectedContent
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
                     await store.notifications.prepare()
@@ -41,6 +42,42 @@ struct SidebandApp: App {
                 }
         }
         #endif
+    }
+
+    @ViewBuilder private var protectedContent: some View {
+        Group {
+            if store.privacyLock.isUnlocked { ContentView(store: store) }
+            else { PrivacyLockView(lock: store.privacyLock) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { store.privacyLock.lock() }
+        }
+    }
+}
+
+private struct PrivacyLockView: View {
+    @Bindable var lock: AppPrivacyLock
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "lock.shield.fill").font(.system(size: 52)).foregroundStyle(.tint)
+            Text("Sideband Locked").font(.title.bold())
+            Text("Authenticate with your device passcode or biometrics to view encrypted conversations.")
+                .multilineTextAlignment(.center).foregroundStyle(.secondary).frame(maxWidth: 420)
+            Button {
+                Task { await lock.unlock() }
+            } label: {
+                if lock.isAuthenticating { ProgressView().controlSize(.small) }
+                else { Label("Unlock Sideband", systemImage: "lock.open") }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(lock.isAuthenticating)
+            .keyboardShortcut(.defaultAction)
+            if let error = lock.lastError { Text(error).font(.caption).foregroundStyle(.orange).multilineTextAlignment(.center) }
+        }
+        .padding(32)
+        .task { await lock.unlock() }
+        .accessibilityElement(children: .contain)
     }
 }
 

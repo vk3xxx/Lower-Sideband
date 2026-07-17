@@ -90,6 +90,7 @@ public final class SidebandStore {
     public let autoInterfaceDiscovery = AutoInterfaceDiscovery()
     public let reachability = NetworkReachability()
     public let notifications = LocalNotificationManager()
+    public let privacyLock = AppPrivacyLock()
     public let backgroundRefresh = BackgroundRefreshCoordinator()
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore

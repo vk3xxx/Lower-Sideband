@@ -473,6 +473,29 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(try decoder.decode(Conversation.self, from: json).tags.isEmpty)
 }
 
+@MainActor @Test func privacyLockPersistsOnlySuccessfulAuthenticatedChangesAndRelocks() throws {
+    let suite = "SidebandPrivacyLockTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let lock = AppPrivacyLock(defaults: defaults)
+    #expect(!lock.isEnabled)
+    #expect(lock.isUnlocked)
+
+    lock.applyAuthenticationResult(false, enabling: true)
+    #expect(!lock.isEnabled)
+    lock.applyAuthenticationResult(true, enabling: true)
+    #expect(lock.isEnabled)
+    lock.lock()
+    #expect(!lock.isUnlocked)
+
+    let restored = AppPrivacyLock(defaults: defaults)
+    #expect(restored.isEnabled)
+    #expect(!restored.isUnlocked)
+    restored.applyAuthenticationResult(true, enabling: false)
+    #expect(!restored.isEnabled)
+    #expect(restored.isUnlocked)
+}
+
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
     let identity = ReticulumIdentity()
     let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
