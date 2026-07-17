@@ -925,6 +925,7 @@ private struct ConversationView: View {
     @State private var replyingTo: Message?
     @State private var messagePendingDeletion: Message?
     @State private var inspectedMessage: Message?
+    @State private var messageToForward: Message?
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -1056,6 +1057,7 @@ private struct ConversationView: View {
                                     if message.lxmfID != nil {
                                         Button { replyingTo = message } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
                                     }
+                                    Button { messageToForward = message } label: { Label("Forward", systemImage: "arrowshape.turn.up.right") }
                                     Button { copyToSystemClipboard(messageMetadata(message)) } label: {
                                         Label("Copy Message Details", systemImage: "info.square")
                                     }
@@ -1241,6 +1243,9 @@ private struct ConversationView: View {
                 message: message,
                 details: messageMetadata(message)
             )
+        }
+        .sheet(item: $messageToForward) { message in
+            ForwardMessageView(store: store, sourceConversationID: conversation.id, message: message)
         }
     }
 
@@ -1523,6 +1528,54 @@ private struct MessageDetailsView: View {
             else { Text(value).textSelection(.enabled) }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ForwardMessageView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var store: SidebandStore
+    let sourceConversationID: UUID
+    let message: Message
+    @State private var query = ""
+    @State private var isForwarding = false
+
+    private var destinations: [Conversation] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return store.conversations.filter {
+            $0.id != sourceConversationID && !$0.isArchived && !$0.isBlocked &&
+                (normalized.isEmpty || $0.displayName.localizedCaseInsensitiveContains(normalized) || $0.destinationHash.localizedCaseInsensitiveContains(normalized))
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List(destinations) { conversation in
+                Button {
+                    isForwarding = true
+                    Task {
+                        if await store.forwardMessage(message.id, to: conversation.id) { dismiss() }
+                        isForwarding = false
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(conversation.displayName).font(.headline)
+                        Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .disabled(isForwarding)
+            }
+            .overlay {
+                if destinations.isEmpty {
+                    ContentUnavailableView("No Other Conversations", systemImage: "arrowshape.turn.up.right", description: Text("Start another conversation before forwarding this message."))
+                }
+            }
+            .searchable(text: $query, prompt: "Find a conversation")
+            .navigationTitle("Forward Message")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+        #if os(macOS)
+        .frame(minWidth: 480, minHeight: 480)
+        #endif
     }
 }
 

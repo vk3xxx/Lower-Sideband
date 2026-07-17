@@ -737,6 +737,43 @@ public final class SidebandStore {
         save()
     }
 
+    @discardableResult
+    public func forwardMessage(_ messageID: UUID, to conversationID: UUID) async -> Bool {
+        guard let source = messages.first(where: { $0.id == messageID }),
+              let destination = conversations.first(where: { $0.id == conversationID }),
+              !destination.isBlocked else { return false }
+        var forwardedAttachments: [Attachment] = []
+        do {
+            for attachment in source.attachments {
+                let data = try await attachmentStore.read(attachment)
+                var copy = try await attachmentStore.save(data: data, filename: attachment.filename, mimeType: attachment.mimeType)
+                copy.state = .local
+                copy.progress = 0
+                forwardedAttachments.append(copy)
+            }
+        } catch {
+            for attachment in forwardedAttachments { try? await attachmentStore.remove(attachment) }
+            lastError = "Could not forward the attachment: \(error.localizedDescription)"
+            return false
+        }
+        let forwarded = Message(
+            conversationID: conversationID,
+            body: source.body,
+            direction: .outgoing,
+            state: .queued,
+            attachments: forwardedAttachments,
+            telemetry: source.telemetry,
+            outboxOwnerID: syncDeviceID,
+            outboxOwnerUpdatedAt: .now
+        )
+        messages.append(forwarded)
+        touch(conversationID)
+        selectedConversationID = conversationID
+        save()
+        await attemptDelivery(for: conversationID)
+        return true
+    }
+
     public func cancelAttachment(messageID: UUID, attachmentID: UUID) async {
         await cancelActiveResources(messageID: messageID, attachmentID: attachmentID)
         updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .failed, progress: 0)

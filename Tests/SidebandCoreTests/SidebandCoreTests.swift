@@ -567,6 +567,25 @@ import Testing
     #expect(store.conversations.contains(where: { $0.id == conversation.id }))
 }
 
+@MainActor @Test func forwardingCreatesIndependentQueuedMessage() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Source"))
+    let source = try #require(store.selectedConversation)
+    await store.send("Forward this")
+    let original = try #require(store.messages(for: source.id).first)
+    #expect(store.addConversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Destination"))
+    let destination = try #require(store.selectedConversation)
+
+    #expect(await store.forwardMessage(original.id, to: destination.id))
+
+    let forwarded = try #require(store.messages(for: destination.id).first)
+    #expect(forwarded.id != original.id)
+    #expect(forwarded.body == original.body)
+    #expect(forwarded.direction == .outgoing)
+    #expect(forwarded.state == .queued)
+}
+
 @MainActor @Test func messageSummaryIndexesRefreshAfterMessageRemoval() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
