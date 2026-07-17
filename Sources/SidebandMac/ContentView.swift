@@ -37,6 +37,13 @@ private func paperMessageError(_ result: PaperMessageImportResult) -> String? {
     }
 }
 
+private enum DiscoverySort: String, CaseIterable, Identifiable {
+    case recent = "Most Recent"
+    case hops = "Fewest Hops"
+    case name = "Name"
+    var id: Self { self }
+}
+
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -47,6 +54,7 @@ struct ContentView: View {
     @State private var conversationSearch = ""
     @State private var showingArchived = false
     @State private var showingUnreadOnly = false
+    @State private var discoverySort: DiscoverySort = .recent
     @State private var renamingConversation: Conversation?
     @State private var renameDraft = ""
     @State private var deletingConversation: Conversation?
@@ -89,6 +97,14 @@ struct ContentView: View {
                         Label(showingUnreadOnly ? "Show all conversations" : "Show unread conversations", systemImage: showingUnreadOnly ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                     }
                     .help(showingUnreadOnly ? "Show all conversations" : "Show unread conversations only")
+                    Menu {
+                        Picker("Discovery sorting", selection: $discoverySort) {
+                            ForEach(DiscoverySort.allCases) { option in Text(option.rawValue).tag(option) }
+                        }
+                    } label: {
+                        Label("Sort discoveries", systemImage: "arrow.up.arrow.down")
+                    }
+                    .help("Sort discovered LXMF destinations")
                     Button(action: exportBackup) { Label("Export backup", systemImage: "externaldrive.badge.plus") }
                         .help("Export Sideband backup")
                     Button { showingBackupImporter = true } label: { Label("Restore backup", systemImage: "externaldrive.badge.timemachine") }
@@ -445,10 +461,24 @@ struct ContentView: View {
         let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         if showingUnreadOnly { return [] }
         let messageDestinations = store.discoveries.filter { !$0.isLXSTVoiceDestination }
-        guard !query.isEmpty else { return messageDestinations }
-        return messageDestinations.filter {
+        let matching = query.isEmpty ? messageDestinations : messageDestinations.filter {
             $0.destinationHash.localizedCaseInsensitiveContains(query)
                 || ($0.announcedDisplayName?.localizedCaseInsensitiveContains(query) ?? false)
+        }
+        return matching.sorted { left, right in
+            switch discoverySort {
+            case .recent:
+                if left.lastSeen != right.lastSeen { return left.lastSeen > right.lastSeen }
+            case .hops:
+                if left.hops != right.hops { return left.hops < right.hops }
+                if left.lastSeen != right.lastSeen { return left.lastSeen > right.lastSeen }
+            case .name:
+                let leftName = left.announcedDisplayName ?? left.destinationHash
+                let rightName = right.announcedDisplayName ?? right.destinationHash
+                let order = leftName.localizedCaseInsensitiveCompare(rightName)
+                if order != .orderedSame { return order == .orderedAscending }
+            }
+            return left.destinationHash < right.destinationHash
         }
     }
 
