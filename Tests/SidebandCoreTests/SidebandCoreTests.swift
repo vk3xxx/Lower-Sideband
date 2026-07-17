@@ -422,6 +422,26 @@ import Testing
     #expect(received.validate(with: sender))
 }
 
+@Test func lxmfCommentAndContinuationFieldsMatchUpstreamMaps() throws {
+    let sender = ReticulumIdentity()
+    let commentTarget = Data(repeating: 0x11, count: 32)
+    let continuationTarget = Data(repeating: 0x22, count: 32)
+    let message = try LXMFMessage(
+        destinationHash: Data(repeating: 0x01, count: 16),
+        sourceHash: Data(repeating: 0x02, count: 16),
+        sourceIdentity: sender,
+        content: Data("Threaded response".utf8),
+        encodedFields: [
+            0x41: MessagePack.map([(0x00, MessagePack.binary(commentTarget))]),
+            0x42: MessagePack.map([(0x00, MessagePack.binary(continuationTarget))])
+        ]
+    )
+    let received = try LXMFReceivedMessage(packed: message.packed)
+    #expect(received.binaryMapField(0x41, key: 0x00) == commentTarget)
+    #expect(received.binaryMapField(0x42, key: 0x00) == continuationTarget)
+    #expect(received.validate(with: sender))
+}
+
 @MainActor @Test func reactionsAreBoundedQueuedAndPersisted() async {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
@@ -439,9 +459,26 @@ import Testing
     #expect(reloaded.messages[0].reactionTo == targetHash)
     #expect(reloaded.messages[0].reactionContent == "👍")
 
+    await store.sendReaction("👍", to: target)
+    #expect(store.messages.count == 1)
+
     await store.sendReaction("123456789", to: target)
     #expect(store.messages.count == 1)
     #expect(store.lastError == "A reaction must contain between 1 and 8 characters.")
+}
+
+@MainActor @Test func repliesPersistLXMFCommentReference() async {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Thread Peer"))
+    let conversationID = store.conversations[0].id
+    let targetHash = Data(repeating: 0xEF, count: 32)
+    let target = Message(conversationID: conversationID, body: "Original", direction: .incoming, state: .delivered, lxmfID: targetHash)
+
+    await store.send("Response", attachments: [], replyingTo: target)
+    #expect(store.messages[0].replyTo == targetHash)
+    #expect(store.messages[0].commentTo == targetHash)
+    #expect(SidebandStore(persistenceURL: url).messages[0].commentTo == targetHash)
 }
 
 @MainActor @Test func markdownComposerPrefixIsStrippedAndPersisted() async throws {

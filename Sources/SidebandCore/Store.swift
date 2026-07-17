@@ -811,6 +811,7 @@ public final class SidebandStore {
             attachments: attachments, telemetry: telemetry, renderer: renderer,
             replyTo: repliedMessage?.lxmfID,
             replyQuote: repliedMessage.map { replyQuote(for: $0) },
+            commentTo: repliedMessage?.lxmfID,
             outboxOwnerID: syncDeviceID, outboxOwnerUpdatedAt: .now
         )
         messages.append(message)
@@ -828,10 +829,14 @@ public final class SidebandStore {
             lastError = "Reactions require a delivered LXMF message in the open conversation."
             return
         }
-        guard !reaction.isEmpty, reaction.count <= 8, reaction.utf8.count <= 64 else {
+        guard Message.isValidReaction(content: reaction, target: targetHash) else {
             lastError = "A reaction must contain between 1 and 8 characters."
             return
         }
+        guard !messages.contains(where: {
+            $0.conversationID == conversation.id && $0.direction == .outgoing &&
+            $0.reactionTo == targetHash && $0.reactionContent == reaction
+        }) else { return }
         let message = Message(
             conversationID: conversation.id,
             body: "",
@@ -2433,6 +2438,20 @@ public final class SidebandStore {
         let replyQuote = message.binaryField(0x31).flatMap { String(data: $0, encoding: .utf8) }
         let reactionTarget = message.binaryMapField(0x40, key: 0x00)
         let reactionContent = message.binaryMapField(0x40, key: 0x01).flatMap { String(data: $0, encoding: .utf8) }
+        let commentTo = message.binaryMapField(0x41, key: 0x00)
+        let continuationOf = message.binaryMapField(0x42, key: 0x00)
+        if message.fields[0x40] != nil {
+            guard let reactionTarget, let reactionContent,
+                  Message.isValidReaction(content: reactionContent, target: reactionTarget) else { return false }
+            if messages.contains(where: {
+                $0.conversationID == conversation.id && $0.direction == .incoming &&
+                $0.reactionTo == reactionTarget && $0.reactionContent == reactionContent
+            }) {
+                receivedLXMFIDs.insert(message.messageID.hex)
+                UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
+                return true
+            }
+        }
         let renderer = message.unsignedField(0x0F).flatMap { UInt8(exactly: $0) }.flatMap(Message.Renderer.init(rawValue:)) ?? .plain
         let incomingMessage = Message(
             conversationID: conversation.id,
@@ -2446,7 +2465,9 @@ public final class SidebandStore {
             replyTo: message.binaryField(0x30),
             replyQuote: replyQuote,
             reactionTo: reactionTarget,
-            reactionContent: reactionContent
+            reactionContent: reactionContent,
+            commentTo: commentTo,
+            continuationOf: continuationOf
         )
         messages.append(incomingMessage)
         noteIncomingActivity(in: conversation.id)
@@ -2459,7 +2480,7 @@ public final class SidebandStore {
                     conversationID: conversation.id,
                     messageID: incomingMessage.id,
                     title: conversation.displayName,
-                    body: body
+                    body: reactionContent.map { "Reacted \($0)" } ?? body
                 )
             }
         }
@@ -2904,6 +2925,12 @@ public final class SidebandStore {
                 (0x00, MessagePack.binary(target)),
                 (0x01, MessagePack.binary(Data(content.utf8)))
             ])
+        }
+        if let target = message.commentTo {
+            fields[0x41] = MessagePack.map([(0x00, MessagePack.binary(target))])
+        }
+        if let target = message.continuationOf {
+            fields[0x42] = MessagePack.map([(0x00, MessagePack.binary(target))])
         }
         return fields
     }
