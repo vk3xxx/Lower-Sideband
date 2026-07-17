@@ -17,8 +17,9 @@
 - App Review contact: Complete, including phone number
 - EU Digital Services Act status: Non-trader, active
 - Content rights: Necessary third-party content rights confirmed by the developer
-- Add for Review: Complete; version status is Ready for Review
-- Final Submit for Review action: Not yet performed
+- Add for Review: Complete
+- Submit for Review: Complete; version status is Waiting for Review
+- App Review submission ID: `9b40a038-d010-41bc-b292-f0a6f212f283`
 
 ## Product page
 
