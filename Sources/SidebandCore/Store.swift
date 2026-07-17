@@ -719,6 +719,24 @@ public final class SidebandStore {
         save()
     }
 
+    /// Removes a message from local and synced history. This does not recall a
+    /// copy that has already been delivered to another LXMF destination.
+    public func deleteMessage(_ messageID: UUID) async {
+        guard let index = messages.firstIndex(where: { $0.id == messageID }) else { return }
+        let message = messages[index]
+        for attachment in message.attachments {
+            await cancelActiveResources(messageID: messageID, attachmentID: attachment.id)
+            try? await attachmentStore.remove(attachment)
+        }
+        pendingReceipts = pendingReceipts.filter { $0.value.messageID != messageID }
+        messages.remove(at: index)
+        if let conversationIndex = conversations.firstIndex(where: { $0.id == message.conversationID }) {
+            conversations[conversationIndex].updatedAt = latestMessage(for: message.conversationID)?.timestamp ?? .now
+        }
+        sortConversations()
+        save()
+    }
+
     public func cancelAttachment(messageID: UUID, attachmentID: UUID) async {
         await cancelActiveResources(messageID: messageID, attachmentID: attachmentID)
         updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .failed, progress: 0)

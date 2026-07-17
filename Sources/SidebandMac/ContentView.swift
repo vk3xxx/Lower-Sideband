@@ -919,6 +919,7 @@ private struct ConversationView: View {
     @State private var showingTelemetryMap = false
     @State private var paperMessageURI: String?
     @State private var replyingTo: Message?
+    @State private var messagePendingDeletion: Message?
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -1069,6 +1070,9 @@ private struct ConversationView: View {
                                     if message.direction == .outgoing && message.state == .failed {
                                         Button(role: .destructive) { Task { await store.removeFailedMessage(message.id) } } label: { Label("Remove Failed Message", systemImage: "trash") }
                                     }
+                                    Button(role: .destructive) { messagePendingDeletion = message } label: {
+                                        Label("Delete Message", systemImage: "trash")
+                                    }
                                 }
                                 if message.direction == .incoming { Spacer(minLength: 80) }
                             }
@@ -1207,6 +1211,20 @@ private struct ConversationView: View {
             if let paperMessageURI {
                 PaperMessageQRCodeView(recipientName: conversation.displayName, uri: paperMessageURI)
             }
+        }
+        .confirmationDialog(
+            "Delete this message?",
+            isPresented: Binding(get: { messagePendingDeletion != nil }, set: { if !$0 { messagePendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Message", role: .destructive) {
+                guard let message = messagePendingDeletion else { return }
+                messagePendingDeletion = nil
+                Task { await store.deleteMessage(message.id) }
+            }
+            Button("Cancel", role: .cancel) { messagePendingDeletion = nil }
+        } message: {
+            Text("This removes the message and its attachments from your synced Sideband history. It cannot recall copies already delivered to another device.")
         }
     }
 

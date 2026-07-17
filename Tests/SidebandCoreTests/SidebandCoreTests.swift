@@ -553,6 +553,20 @@ import Testing
     #expect(store.messages.map(\.id) == [delivered.id])
 }
 
+@MainActor @Test func deletingAnyMessageUpdatesConversationHistory() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let conversation = try #require(store.selectedConversation)
+    await store.send("Delete me")
+    let message = try #require(store.messages(for: conversation.id).first)
+
+    await store.deleteMessage(message.id)
+
+    #expect(store.messages(for: conversation.id).isEmpty)
+    #expect(store.conversations.contains(where: { $0.id == conversation.id }))
+}
+
 @MainActor @Test func messageSummaryIndexesRefreshAfterMessageRemoval() async throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
