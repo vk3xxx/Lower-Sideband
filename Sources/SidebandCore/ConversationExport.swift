@@ -9,6 +9,7 @@ public struct SidebandConversationExport: Codable, Sendable {
         public var trusted: Bool
         public var identityFingerprint: String?
         public var identityVerifiedAt: Date?
+        public var tags: [String]?
     }
 
     public struct ExportedAttachment: Codable, Sendable {
@@ -57,7 +58,8 @@ public struct SidebandConversationExport: Codable, Sendable {
             destinationHash: conversation.destinationHash,
             trusted: conversation.isTrusted,
             identityFingerprint: fingerprint,
-            identityVerifiedAt: conversation.identityVerifiedAt
+            identityVerifiedAt: conversation.identityVerifiedAt,
+            tags: conversation.tags
         )
         self.messages = messages.sorted(by: { $0.timestamp < $1.timestamp }).map { message in
             ExportedMessage(

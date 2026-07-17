@@ -574,7 +574,8 @@ public final class SidebandStore {
                 wasIdentityVerified: isConversationIdentityVerified(conversation.id),
                 contactNote: conversation.contactNote,
                 appearanceColor: conversation.appearanceColor,
-                appearanceSymbol: conversation.appearanceSymbol
+                appearanceSymbol: conversation.appearanceSymbol,
+                tags: conversation.tags
             )
         }
         return try JSONEncoder.sideband.encode(SidebandContactCollection(contacts: contacts))
@@ -596,13 +597,14 @@ public final class SidebandStore {
             ) else { continue }
             if openContactLink(link.url) {
                 if let existing = conversations.first(where: { $0.destinationHash == link.destinationHash }),
-                   contact.contactNote != nil || contact.appearanceColor != nil || contact.appearanceSymbol != nil {
+                   contact.contactNote != nil || contact.appearanceColor != nil || contact.appearanceSymbol != nil || contact.tags != nil {
                     setConversationAppearance(
                         conversationID: existing.id,
                         note: contact.contactNote ?? existing.contactNote,
                         color: contact.appearanceColor ?? existing.appearanceColor,
                         symbol: contact.appearanceSymbol ?? existing.appearanceSymbol
                     )
+                    if let tags = contact.tags { setConversationTags(tags, conversationID: existing.id) }
                 }
                 imported += 1
             }
@@ -873,7 +875,8 @@ public final class SidebandStore {
               let conversation = conversations.first(where: { $0.id == conversationID }) else { return false }
         if conversation.displayName.localizedCaseInsensitiveContains(needle)
             || conversation.destinationHash.localizedCaseInsensitiveContains(needle)
-            || conversation.contactNote.localizedCaseInsensitiveContains(needle) { return true }
+            || conversation.contactNote.localizedCaseInsensitiveContains(needle)
+            || conversation.tags.contains(where: { $0.localizedCaseInsensitiveContains(needle) }) { return true }
         return messages(for: conversationID).contains { message in
             message.body.localizedCaseInsensitiveContains(needle)
                 || (message.replyQuote?.localizedCaseInsensitiveContains(needle) ?? false)
@@ -996,6 +999,19 @@ public final class SidebandStore {
         conversations[index].contactNote = String(note.trimmingCharacters(in: .whitespacesAndNewlines).prefix(512))
         conversations[index].appearanceColor = color
         conversations[index].appearanceSymbol = symbol
+        conversations[index].updatedAt = .now
+        save()
+    }
+
+    public func setConversationTags(_ proposedTags: [String], conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        var seen: Set<String> = []
+        let tags = proposedTags.compactMap { raw -> String? in
+            let value = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
+            guard !value.isEmpty, seen.insert(value.lowercased()).inserted else { return nil }
+            return value
+        }
+        conversations[index].tags = Array(tags.prefix(8))
         conversations[index].updatedAt = .now
         save()
     }
@@ -1829,7 +1845,8 @@ public final class SidebandStore {
                   ($0.contentHash == nil || $0.contentHash?.count == 32)
               }),
               snapshot.conversations.allSatisfy({ conversation in
-                  guard conversation.contactNote.count <= 512, conversation.displayName.count <= 128 else { return false }
+                  guard conversation.contactNote.count <= 512, conversation.displayName.count <= 128,
+                        conversation.tags.count <= 8, conversation.tags.allSatisfy({ !$0.isEmpty && $0.count <= 32 }) else { return false }
                   guard let key = conversation.verifiedIdentityKey else { return conversation.identityVerifiedAt == nil }
                   guard conversation.identityVerifiedAt != nil,
                         let identity = try? ReticulumIdentity(publicKey: key) else { return false }

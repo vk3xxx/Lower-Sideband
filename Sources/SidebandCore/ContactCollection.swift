@@ -1,7 +1,7 @@
 import Foundation
 
 public struct SidebandContactCollection: Codable, Sendable {
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 
     public struct Contact: Codable, Sendable {
         public var destinationHash: String
@@ -11,8 +11,9 @@ public struct SidebandContactCollection: Codable, Sendable {
         public var contactNote: String?
         public var appearanceColor: Conversation.AppearanceColor?
         public var appearanceSymbol: Conversation.AppearanceSymbol?
+        public var tags: [String]?
 
-        public init(destinationHash: String, displayName: String, publicKey: Data?, wasIdentityVerified: Bool, contactNote: String? = nil, appearanceColor: Conversation.AppearanceColor? = nil, appearanceSymbol: Conversation.AppearanceSymbol? = nil) {
+        public init(destinationHash: String, displayName: String, publicKey: Data?, wasIdentityVerified: Bool, contactNote: String? = nil, appearanceColor: Conversation.AppearanceColor? = nil, appearanceSymbol: Conversation.AppearanceSymbol? = nil, tags: [String]? = nil) {
             self.destinationHash = destinationHash
             self.displayName = displayName
             self.publicKey = publicKey
@@ -20,6 +21,7 @@ public struct SidebandContactCollection: Codable, Sendable {
             self.contactNote = contactNote
             self.appearanceColor = appearanceColor
             self.appearanceSymbol = appearanceSymbol
+            self.tags = tags
         }
     }
 

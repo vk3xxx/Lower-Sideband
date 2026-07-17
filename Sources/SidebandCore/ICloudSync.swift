@@ -249,7 +249,7 @@ public extension AppSnapshot {
                         notificationPreviewEnabled: local.notificationPreviewEnabled,
                         telemetrySharingEnabled: local.telemetrySharingEnabled,
                         pluginCommandsEnabled: local.pluginCommandsEnabled,
-                        contactNote: local.contactNote, appearanceColor: local.appearanceColor, appearanceSymbol: local.appearanceSymbol,
+                        contactNote: local.contactNote, tags: local.tags, appearanceColor: local.appearanceColor, appearanceSymbol: local.appearanceSymbol,
                         deliveryPreference: local.deliveryPreference,
                         verifiedIdentityKey: local.verifiedIdentityKey, identityVerifiedAt: local.identityVerifiedAt,
                         unreadCount: local.unreadCount, updatedAt: local.updatedAt

@@ -90,6 +90,8 @@ struct ContentView: View {
     @State private var renameDraft = ""
     @State private var notingConversation: Conversation?
     @State private var noteDraft = ""
+    @State private var taggingConversation: Conversation?
+    @State private var tagsDraft = ""
     @State private var deletingConversation: Conversation?
     @State private var clearingConversation: Conversation?
     @State private var clearingTelemetryConversation: Conversation?
@@ -238,6 +240,14 @@ struct ContentView: View {
         } message: {
             Text("This note stays in your encrypted Sideband data and is never sent in messages or announces.")
         }
+        .alert("Contact Tags", isPresented: Binding(get: { taggingConversation != nil }, set: { if !$0 { taggingConversation = nil } })) {
+            TextField("team, field, priority", text: $tagsDraft)
+            Button("Cancel", role: .cancel) { taggingConversation = nil }
+            Button("Save") {
+                if let id = taggingConversation?.id { store.setConversationTags(tagsDraft.split(separator: ",").map(String.init), conversationID: id) }
+                taggingConversation = nil
+            }
+        } message: { Text("Enter up to eight comma-separated tags. Tags stay in your encrypted Sideband data.") }
         .alert("Delete Conversation?", isPresented: Binding(get: { deletingConversation != nil }, set: { if !$0 { deletingConversation = nil } })) {
             Button("Cancel", role: .cancel) { deletingConversation = nil }
             Button("Delete", role: .destructive) {
@@ -472,6 +482,11 @@ struct ContentView: View {
                     }
                 }
                 Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                if !conversation.tags.isEmpty {
+                    Text(conversation.tags.prefix(3).map { "#\($0)" }.joined(separator: "  "))
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        .accessibilityLabel("Tags: \(conversation.tags.joined(separator: ", "))")
+                }
                 if !store.draft(for: conversation.id).isEmpty {
                     Text("Draft: \(store.draft(for: conversation.id))")
                         .font(.caption)
@@ -562,6 +577,7 @@ struct ContentView: View {
         }
         Button { renameDraft = conversation.displayName; renamingConversation = conversation } label: { Label("Rename", systemImage: "pencil") }
         Button { noteDraft = conversation.contactNote; notingConversation = conversation } label: { Label("Edit Private Note", systemImage: "note.text") }
+        Button { tagsDraft = conversation.tags.joined(separator: ", "); taggingConversation = conversation } label: { Label("Edit Tags", systemImage: "tag") }
         Menu("Contact Icon", systemImage: conversation.appearanceSymbol.rawValue) {
             ForEach(Conversation.AppearanceSymbol.allCases, id: \.self) { symbol in
                 Button {

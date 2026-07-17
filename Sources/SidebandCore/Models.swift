@@ -39,6 +39,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var telemetrySharingEnabled: Bool
     public var pluginCommandsEnabled: Bool
     public var contactNote: String
+    public var tags: [String]
     public var appearanceColor: AppearanceColor
     public var appearanceSymbol: AppearanceSymbol
     public var deliveryPreference: DeliveryPreference
@@ -47,7 +48,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
     public var unreadCount: Int
     public var updatedAt: Date
 
-    public init(id: UUID = UUID(), destinationHash: String, displayName: String, isTrusted: Bool = false, isPinned: Bool = false, isArchived: Bool = false, isBlocked: Bool = false, notificationsMuted: Bool = false, notificationPreviewEnabled: Bool? = nil, telemetrySharingEnabled: Bool = true, pluginCommandsEnabled: Bool = false, contactNote: String = "", appearanceColor: AppearanceColor = .blue, appearanceSymbol: AppearanceSymbol = .person, deliveryPreference: DeliveryPreference = .automatic, verifiedIdentityKey: Data? = nil, identityVerifiedAt: Date? = nil, unreadCount: Int = 0, updatedAt: Date = .now) {
+    public init(id: UUID = UUID(), destinationHash: String, displayName: String, isTrusted: Bool = false, isPinned: Bool = false, isArchived: Bool = false, isBlocked: Bool = false, notificationsMuted: Bool = false, notificationPreviewEnabled: Bool? = nil, telemetrySharingEnabled: Bool = true, pluginCommandsEnabled: Bool = false, contactNote: String = "", tags: [String] = [], appearanceColor: AppearanceColor = .blue, appearanceSymbol: AppearanceSymbol = .person, deliveryPreference: DeliveryPreference = .automatic, verifiedIdentityKey: Data? = nil, identityVerifiedAt: Date? = nil, unreadCount: Int = 0, updatedAt: Date = .now) {
         self.id = id
         self.destinationHash = destinationHash.lowercased()
         self.displayName = displayName
@@ -60,6 +61,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.telemetrySharingEnabled = telemetrySharingEnabled
         self.pluginCommandsEnabled = pluginCommandsEnabled
         self.contactNote = String(contactNote.prefix(512))
+        self.tags = Array(tags.prefix(8)).map { String($0.prefix(32)) }
         self.appearanceColor = appearanceColor
         self.appearanceSymbol = appearanceSymbol
         self.deliveryPreference = deliveryPreference
@@ -69,7 +71,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         self.updatedAt = updatedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, destinationHash, displayName, isTrusted, isPinned, isArchived, isBlocked, notificationsMuted, notificationPreviewEnabled, telemetrySharingEnabled, pluginCommandsEnabled, contactNote, appearanceColor, appearanceSymbol, deliveryPreference, verifiedIdentityKey, identityVerifiedAt, unreadCount, updatedAt }
+    private enum CodingKeys: String, CodingKey { case id, destinationHash, displayName, isTrusted, isPinned, isArchived, isBlocked, notificationsMuted, notificationPreviewEnabled, telemetrySharingEnabled, pluginCommandsEnabled, contactNote, tags, appearanceColor, appearanceSymbol, deliveryPreference, verifiedIdentityKey, identityVerifiedAt, unreadCount, updatedAt }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -84,6 +86,7 @@ public struct Conversation: Identifiable, Codable, Hashable, Sendable {
         telemetrySharingEnabled = try values.decodeIfPresent(Bool.self, forKey: .telemetrySharingEnabled) ?? true
         pluginCommandsEnabled = try values.decodeIfPresent(Bool.self, forKey: .pluginCommandsEnabled) ?? false
         contactNote = String((try values.decodeIfPresent(String.self, forKey: .contactNote) ?? "").prefix(512))
+        tags = Array((try values.decodeIfPresent([String].self, forKey: .tags) ?? []).prefix(8)).map { String($0.prefix(32)) }
         appearanceColor = try values.decodeIfPresent(AppearanceColor.self, forKey: .appearanceColor) ?? .blue
         appearanceSymbol = try values.decodeIfPresent(AppearanceSymbol.self, forKey: .appearanceSymbol) ?? .person
         deliveryPreference = try values.decodeIfPresent(DeliveryPreference.self, forKey: .deliveryPreference) ?? .automatic

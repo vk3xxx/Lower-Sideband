@@ -450,6 +450,29 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(ordered.last?.id == first.id)
 }
 
+@MainActor @Test func contactTagsNormalizePersistSearchAndTransfer() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    let conversation = try #require(store.selectedConversation)
+    store.setConversationTags([" Field ", "field", "Priority", "", String(repeating: "x", count: 40)], conversationID: conversation.id)
+    #expect(store.selectedConversation?.tags == ["Field", "Priority", String(repeating: "x", count: 32)])
+    #expect(store.conversationMatchesSearch(conversation.id, query: "priority"))
+    let restored = SidebandStore(persistenceURL: url)
+    #expect(restored.conversations.first?.tags == store.selectedConversation?.tags)
+
+    let data = try store.exportContactCollectionData()
+    let destination = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json"))
+    #expect(try destination.importContactCollectionData(data) == 1)
+    #expect(destination.selectedConversation?.tags == store.selectedConversation?.tags)
+}
+
+@Test func legacyConversationWithoutTagsDecodesSafely() throws {
+    let json = #"{"id":"00000000-0000-0000-0000-000000000001","destinationHash":"0123456789abcdef0123456789abcdef","displayName":"Legacy","updatedAt":"2026-01-01T00:00:00Z"}"#.data(using: .utf8)!
+    let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+    #expect(try decoder.decode(Conversation.self, from: json).tags.isEmpty)
+}
+
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
     let identity = ReticulumIdentity()
     let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
