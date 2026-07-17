@@ -1642,6 +1642,27 @@ import Testing
     #expect(merged.drafts[remoteConversation.id] == "local draft")
 }
 
+@Test func cloudSnapshotMergePreservesLXMFReplyReferences() throws {
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let lxmfID = Data(repeating: 0x41, count: 32)
+    let replyTo = Data(repeating: 0x42, count: 32)
+    let message = Message(
+        conversationID: conversation.id,
+        body: "Reply",
+        direction: .outgoing,
+        state: .sent,
+        lxmfID: lxmfID,
+        replyTo: replyTo,
+        replyQuote: "Original"
+    )
+    let merged = AppSnapshot().mergingCloudSnapshot(AppSnapshot(conversations: [conversation], messages: [message]))
+    let result = try #require(merged.messages.first)
+
+    #expect(result.lxmfID == lxmfID)
+    #expect(result.replyTo == replyTo)
+    #expect(result.replyQuote == "Original")
+}
+
 @Test func cloudSnapshotMergeKeepsRoutingDiscoveriesDeviceLocal() {
     let localDiscovery = DiscoveredDestination(destinationHash: "00112233445566778899aabbccddeeff", hops: 1)
     let remoteDiscovery = DiscoveredDestination(destinationHash: "ffeeddccbbaa99887766554433221100", hops: 2)
