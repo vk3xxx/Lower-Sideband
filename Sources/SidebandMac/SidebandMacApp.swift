@@ -3,6 +3,8 @@ import SidebandCore
 @preconcurrency import UserNotifications
 #if os(iOS)
 import UIKit
+@preconcurrency import CallKit
+@preconcurrency import AVFoundation
 #endif
 
 @main
@@ -101,6 +103,201 @@ private final class NotificationInteractionBridge: NSObject, UNUserNotificationC
 }
 
 #if os(iOS)
+@MainActor
+final class CallKitCoordinator: NSObject, CXProviderDelegate {
+    static let shared = CallKitCoordinator()
+
+    private let provider: CXProvider
+    private let callController = CXCallController()
+    private weak var store: SidebandStore?
+    private var reportedCallID: UUID?
+    private var reportedState: VoiceCallState?
+    let audioEngine = LiveVoiceAudioEngine()
+    private var isStartingAudio = false
+    private(set) var isAudioSessionActive = false
+
+    override private init() {
+        let configuration = CXProviderConfiguration()
+        configuration.supportsVideo = false
+        configuration.maximumCallGroups = 1
+        configuration.maximumCallsPerCallGroup = 1
+        configuration.includesCallsInRecents = true
+        configuration.supportedHandleTypes = [.generic]
+        provider = CXProvider(configuration: configuration)
+        super.init()
+        provider.setDelegate(self, queue: nil)
+    }
+
+    var hasManagedCall: Bool { reportedCallID != nil }
+
+    func install(store: SidebandStore) {
+        self.store = store
+        audioEngine.onEncodedFrame = { [weak store] payload in
+            Task { await store?.sendVoiceFrame(payload) }
+        }
+        store.setVoiceFrameHandler { [weak audioEngine] payload in
+            audioEngine?.play(opus: payload)
+        }
+    }
+
+    func synchronize(call: VoiceCall?, displayName: String?) {
+        guard let call else {
+            if let id = reportedCallID {
+                let reason: CXCallEndedReason = reportedState == .active ? .remoteEnded : .failed
+                provider.reportCall(with: id, endedAt: .now, reason: reason)
+            }
+            audioEngine.stop()
+            clearReportedCall()
+            return
+        }
+
+        if reportedCallID != call.id {
+            if let previous = reportedCallID {
+                provider.reportCall(with: previous, endedAt: .now, reason: .failed)
+            }
+            reportedCallID = call.id
+            reportedState = call.state
+            let handle = CXHandle(type: .generic, value: displayName ?? "Sideband contact")
+            let update = CXCallUpdate()
+            update.remoteHandle = handle
+            update.localizedCallerName = displayName
+            update.supportsHolding = false
+            update.supportsGrouping = false
+            update.supportsUngrouping = false
+            update.supportsDTMF = false
+            update.hasVideo = false
+            if call.direction == .incoming {
+                provider.reportNewIncomingCall(with: call.id, update: update) { [weak self] error in
+                    guard error != nil else { return }
+                    Task { @MainActor [weak self] in
+                        await self?.store?.declineVoiceCall()
+                        self?.clearReportedCall()
+                    }
+                }
+            } else {
+                request(CXTransaction(action: CXStartCallAction(call: call.id, handle: handle)))
+                provider.reportOutgoingCall(with: call.id, startedConnectingAt: call.startedAt)
+            }
+        }
+
+        if call.direction == .outgoing, call.state == .active, reportedState != .active {
+            provider.reportOutgoingCall(with: call.id, connectedAt: call.connectedAt ?? .now)
+        }
+        reportedState = call.state
+        if call.state == .active { startAudioIfNeeded() }
+    }
+
+    func requestAnswer() {
+        guard let id = reportedCallID else { return }
+        request(CXTransaction(action: CXAnswerCallAction(call: id)))
+    }
+
+    func requestEnd() {
+        guard let id = reportedCallID else {
+            Task { await store?.hangUpVoiceCall() }
+            return
+        }
+        request(CXTransaction(action: CXEndCallAction(call: id)))
+    }
+
+    func requestMuted(_ muted: Bool) {
+        guard let id = reportedCallID else { audioEngine.isMuted = muted; return }
+        request(CXTransaction(action: CXSetMutedCallAction(call: id, muted: muted)))
+    }
+
+    func waitForAudioActivation() async {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !isAudioSessionActive, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func request(_ transaction: CXTransaction) {
+        callController.request(transaction) { [weak self] error in
+            guard let error else { return }
+            Task { @MainActor [weak self] in
+                self?.store?.lastError = "System call action failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func clearReportedCall() {
+        audioEngine.stop()
+        reportedCallID = nil
+        reportedState = nil
+        isAudioSessionActive = false
+        isStartingAudio = false
+        audioEngine.isMuted = false
+    }
+
+    private func startAudioIfNeeded() {
+        guard store?.voiceCall?.state == .active, !audioEngine.isRunning, !isStartingAudio else { return }
+        isStartingAudio = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { isStartingAudio = false }
+            do { try await audioEngine.start() }
+            catch {
+                store?.lastError = error.localizedDescription
+                await store?.hangUpVoiceCall()
+            }
+        }
+    }
+
+    nonisolated func providerDidReset(_ provider: CXProvider) {
+        Task { @MainActor [weak self] in
+            await self?.store?.hangUpVoiceCall()
+            self?.clearReportedCall()
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        action.fulfill()
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        Task { @MainActor [weak self] in
+            guard let self else { action.fail(); return }
+            await store?.answerVoiceCall()
+            if store?.voiceCall?.state == .active { action.fulfill() } else { action.fail() }
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        Task { @MainActor [weak self] in
+            guard let self else { action.fail(); return }
+            if store?.voiceCall?.direction == .incoming, store?.voiceCall?.state == .incoming {
+                await store?.declineVoiceCall()
+            } else {
+                await store?.hangUpVoiceCall()
+            }
+            action.fulfill()
+            clearReportedCall()
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        Task { @MainActor [weak self] in
+            self?.audioEngine.isMuted = action.isMuted
+            action.fulfill()
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        Task { @MainActor [weak self] in
+            self?.isAudioSessionActive = true
+            self?.startAudioIfNeeded()
+        }
+    }
+
+    nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        Task { @MainActor [weak self] in
+            self?.isAudioSessionActive = false
+            self?.audioEngine.stop()
+        }
+    }
+}
+
 @MainActor
 private final class RemoteWakeBridge {
     static let shared = RemoteWakeBridge()

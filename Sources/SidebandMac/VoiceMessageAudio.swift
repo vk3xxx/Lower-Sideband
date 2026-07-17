@@ -222,7 +222,12 @@ final class LiveVoiceAudioEngine {
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
         try session.setPreferredSampleRate(sampleRate)
         try session.setPreferredIOBufferDuration(0.02)
-        try session.setActive(true)
+        if CallKitCoordinator.shared.hasManagedCall {
+            await CallKitCoordinator.shared.waitForAudioActivation()
+            if !CallKitCoordinator.shared.isAudioSessionActive { try session.setActive(true) }
+        } else {
+            try session.setActive(true)
+        }
         #endif
         guard let opusFormat,
               let encoder = AVAudioConverter(from: pcmFormat, to: opusFormat),
@@ -271,7 +276,9 @@ final class LiveVoiceAudioEngine {
         isPlaybackRecovering = false
         isRunning = false
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if !CallKitCoordinator.shared.hasManagedCall {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         #endif
     }
 

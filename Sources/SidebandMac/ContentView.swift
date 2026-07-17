@@ -87,7 +87,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
         .sheet(isPresented: Binding(
             get: { store.voiceCall != nil },
-            set: { presented in if !presented, store.voiceCall != nil { Task { await store.hangUpVoiceCall() } } }
+            set: { presented in if !presented, store.voiceCall != nil { endVoiceCall() } }
         )) { VoiceCallView(store: store) }
         .fileExporter(isPresented: $showingBackupExporter, document: backupDocument, contentType: .json, defaultFilename: "Sideband-Backup") { result in
             if case let .failure(error) = result { store.lastError = "Could not export backup: \(error.localizedDescription)" }
@@ -138,6 +138,10 @@ struct ContentView: View {
             Text("Current conversations, messages, discoveries, and drafts will be replaced with the validated backup contents.")
         }
         .task {
+            #if os(iOS)
+            CallKitCoordinator.shared.install(store: store)
+            synchronizeCallKit(store.voiceCall)
+            #endif
             #if DEBUG
             DeliverySoakRunner.configureNetworkIfRequested(store)
             #endif
@@ -165,6 +169,22 @@ struct ContentView: View {
             @unknown default: break
             }
         }
+        .onChange(of: store.voiceCall) { _, call in synchronizeCallKit(call) }
+    }
+
+    private func synchronizeCallKit(_ call: VoiceCall?) {
+        #if os(iOS)
+        let name = call.flatMap { activeCall in store.conversations.first { $0.id == activeCall.conversationID }?.displayName }
+        CallKitCoordinator.shared.synchronize(call: call, displayName: name)
+        #endif
+    }
+
+    private func endVoiceCall() {
+        #if os(iOS)
+        CallKitCoordinator.shared.requestEnd()
+        #else
+        Task { await store.hangUpVoiceCall() }
+        #endif
     }
 
     private var networkToolbarLabel: String {
@@ -1320,7 +1340,11 @@ private struct ConversationView: View {
 
 private struct VoiceCallView: View {
     @Bindable var store: SidebandStore
+    #if os(iOS)
+    private var audio: LiveVoiceAudioEngine { CallKitCoordinator.shared.audioEngine }
+    #else
     @State private var audio = LiveVoiceAudioEngine()
+    #endif
     @State private var elapsed = 0
     @State private var timerTask: Task<Void, Never>?
 
@@ -1350,15 +1374,15 @@ private struct VoiceCallView: View {
             }
             if call?.direction == .incoming, call?.state == .incoming {
                 HStack(spacing: 26) {
-                    callButton("Decline", systemImage: "phone.down.fill", color: .red) { Task { await store.declineVoiceCall() } }
-                    callButton("Answer", systemImage: "phone.fill", color: .green) { Task { await store.answerVoiceCall() } }
+                    callButton("Decline", systemImage: "phone.down.fill", color: .red) { declineCall() }
+                    callButton("Answer", systemImage: "phone.fill", color: .green) { answerCall() }
                 }
             } else {
                 HStack(spacing: 26) {
                     callButton(audio.isMuted ? "Unmute" : "Mute", systemImage: audio.isMuted ? "mic.slash.fill" : "mic.fill", color: .secondary) {
-                        audio.isMuted.toggle()
+                        setMuted(!audio.isMuted)
                     }
-                    callButton("Hang Up", systemImage: "phone.down.fill", color: .red) { Task { await store.hangUpVoiceCall() } }
+                    callButton("Hang Up", systemImage: "phone.down.fill", color: .red) { endCall() }
                 }
             }
         }
@@ -1369,8 +1393,10 @@ private struct VoiceCallView: View {
         .onChange(of: call?.state) { _, state in configureAudio(for: state) }
         .onDisappear {
             timerTask?.cancel()
+            #if os(macOS)
             audio.stop()
             store.setVoiceFrameHandler(nil)
+            #endif
         }
     }
 
@@ -1407,8 +1433,10 @@ private struct VoiceCallView: View {
 
     private func configureAudio(for state: VoiceCallState?) {
         guard state == .active, !audio.isRunning else { return }
+        #if os(macOS)
         audio.onEncodedFrame = { payload in Task { await store.sendVoiceFrame(payload) } }
         store.setVoiceFrameHandler { payload in audio.play(opus: payload) }
+        #endif
         timerTask?.cancel()
         timerTask = Task { @MainActor in
             while !Task.isCancelled {
@@ -1416,10 +1444,44 @@ private struct VoiceCallView: View {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+        #if os(macOS)
         Task {
             do { try await audio.start() }
             catch { store.lastError = error.localizedDescription; await store.hangUpVoiceCall() }
         }
+        #endif
+    }
+
+    private func answerCall() {
+        #if os(iOS)
+        CallKitCoordinator.shared.requestAnswer()
+        #else
+        Task { await store.answerVoiceCall() }
+        #endif
+    }
+
+    private func declineCall() {
+        #if os(iOS)
+        CallKitCoordinator.shared.requestEnd()
+        #else
+        Task { await store.declineVoiceCall() }
+        #endif
+    }
+
+    private func endCall() {
+        #if os(iOS)
+        CallKitCoordinator.shared.requestEnd()
+        #else
+        Task { await store.hangUpVoiceCall() }
+        #endif
+    }
+
+    private func setMuted(_ muted: Bool) {
+        #if os(iOS)
+        CallKitCoordinator.shared.requestMuted(muted)
+        #else
+        audio.isMuted = muted
+        #endif
     }
 }
 
