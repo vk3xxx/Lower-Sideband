@@ -6,6 +6,7 @@ import Observation
 public final class LocalNotificationManager {
     public nonisolated static let messageCategoryIdentifier = "SIDEBAND_MESSAGE"
     public nonisolated static let markReadActionIdentifier = "SIDEBAND_MARK_READ"
+    public nonisolated static let replyActionIdentifier = "SIDEBAND_REPLY"
     public nonisolated static let conversationIDUserInfoKey = "sidebandConversationID"
     public nonisolated static let messageIDUserInfoKey = "sidebandMessageID"
 
@@ -29,9 +30,16 @@ public final class LocalNotificationManager {
             title: "Mark as Read",
             options: []
         )
+        let reply = UNTextInputNotificationAction(
+            identifier: Self.replyActionIdentifier,
+            title: "Reply",
+            options: [],
+            textInputButtonTitle: "Send",
+            textInputPlaceholder: "Message"
+        )
         let category = UNNotificationCategory(
             identifier: Self.messageCategoryIdentifier,
-            actions: [markRead],
+            actions: [reply, markRead],
             intentIdentifiers: [],
             options: []
         )
@@ -69,11 +77,12 @@ public final class LocalNotificationManager {
         messageID: UUID,
         title: String,
         body: String,
-        isAttachment: Bool = false
+        isAttachment: Bool = false,
+        showPreview: Bool? = nil
     ) async {
         guard isEnabled else { return }
         let content = UNMutableNotificationContent()
-        if showPreviews {
+        if showPreview ?? showPreviews {
             content.title = title
             content.body = body.isEmpty && isAttachment ? "Sent an attachment" : body
         } else {

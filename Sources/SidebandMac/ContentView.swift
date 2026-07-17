@@ -595,6 +595,11 @@ struct ContentView: View {
         Button { store.setConversationNotificationsMuted(!conversation.notificationsMuted, conversationID: conversation.id) } label: {
             Label(conversation.notificationsMuted ? "Unmute Notifications" : "Mute Notifications", systemImage: conversation.notificationsMuted ? "bell" : "bell.slash")
         }
+        Menu("Notification Preview", systemImage: "eye") {
+            Button("Use Global Setting") { store.setConversationNotificationPreview(nil, conversationID: conversation.id) }
+            Button("Always Show Preview") { store.setConversationNotificationPreview(true, conversationID: conversation.id) }
+            Button("Always Hide Preview") { store.setConversationNotificationPreview(false, conversationID: conversation.id) }
+        }
         Button { store.setConversationTelemetrySharing(!conversation.telemetrySharingEnabled, conversationID: conversation.id) } label: {
             Label(conversation.telemetrySharingEnabled ? "Disable Telemetry Sharing" : "Enable Telemetry Sharing", systemImage: conversation.telemetrySharingEnabled ? "location.slash" : "location")
         }

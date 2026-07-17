@@ -48,7 +48,7 @@ struct SidebandApp: App {
 private final class NotificationInteractionBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationInteractionBridge()
     private weak var store: SidebandStore?
-    private var pendingResponse: (conversationID: UUID, markReadOnly: Bool)?
+    private var pendingResponse: (conversationID: UUID, markReadOnly: Bool, reply: String?)?
 
     func activate() {
         UNUserNotificationCenter.current().delegate = self
@@ -58,14 +58,18 @@ private final class NotificationInteractionBridge: NSObject, UNUserNotificationC
         self.store = store
         activate()
         if let pendingResponse {
-            route(pendingResponse.conversationID, markReadOnly: pendingResponse.markReadOnly)
+            route(pendingResponse.conversationID, markReadOnly: pendingResponse.markReadOnly, reply: pendingResponse.reply)
             self.pendingResponse = nil
         }
     }
 
-    private func route(_ conversationID: UUID, markReadOnly: Bool) {
+    private func route(_ conversationID: UUID, markReadOnly: Bool, reply: String? = nil) {
         guard let store else {
-            pendingResponse = (conversationID, markReadOnly)
+            pendingResponse = (conversationID, markReadOnly, reply)
+            return
+        }
+        if let reply = reply?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
+            Task { await store.send(reply, to: conversationID) }
             return
         }
         if markReadOnly {
@@ -95,7 +99,8 @@ private final class NotificationInteractionBridge: NSObject, UNUserNotificationC
             if let conversationID {
                 self?.route(
                     conversationID,
-                    markReadOnly: response.actionIdentifier == LocalNotificationManager.markReadActionIdentifier
+                    markReadOnly: response.actionIdentifier == LocalNotificationManager.markReadActionIdentifier,
+                    reply: (response as? UNTextInputNotificationResponse)?.userText
                 )
             }
         }

@@ -920,6 +920,17 @@ public final class SidebandStore {
         save()
     }
 
+    public func setConversationNotificationPreview(_ enabled: Bool?, conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].notificationPreviewEnabled = enabled
+        conversations[index].updatedAt = .now
+        save()
+    }
+
+    public func shouldShowNotificationPreview(for conversationID: UUID) -> Bool {
+        conversations.first(where: { $0.id == conversationID })?.notificationPreviewEnabled ?? notifications.showPreviews
+    }
+
     public func setConversationTelemetrySharing(_ enabled: Bool, conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].telemetrySharingEnabled = enabled
@@ -989,13 +1000,19 @@ public final class SidebandStore {
 
     @discardableResult
     public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain, scheduledFor: Date? = nil) async -> Bool {
+        guard let conversationID = selectedConversationID else { return false }
+        return await send(text, to: conversationID, attachments: attachments, telemetry: telemetry, replyingTo: repliedMessage, renderer: requestedRenderer, scheduledFor: scheduledFor)
+    }
+
+    @discardableResult
+    public func send(_ text: String, to conversationID: UUID, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain, scheduledFor: Date? = nil) async -> Bool {
         var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var renderer = requestedRenderer
         if body.hasPrefix("#!md\n") {
             body.removeFirst(5)
             renderer = .markdown
         }
-        guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil), let conversation = selectedConversation else { return false }
+        guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil), let conversation = conversations.first(where: { $0.id == conversationID }) else { return false }
         guard !conversation.isBlocked else {
             lastError = "Unblock this contact before sending a message."
             return false
@@ -2852,7 +2869,8 @@ public final class SidebandStore {
                     conversationID: conversation.id,
                     messageID: incomingMessage.id,
                     title: conversation.displayName,
-                    body: reactionContent.map { "Reacted \($0)" } ?? body
+                    body: reactionContent.map { "Reacted \($0)" } ?? body,
+                    showPreview: shouldShowNotificationPreview(for: conversation.id)
                 )
             }
         }
@@ -3143,7 +3161,8 @@ public final class SidebandStore {
                 messageID: envelope.groupID,
                 title: conversation.displayName,
                 body: envelope.messageBody.isEmpty ? envelope.filename : envelope.messageBody,
-                isAttachment: true
+                isAttachment: true,
+                showPreview: shouldShowNotificationPreview(for: conversation.id)
             )
         }
     }

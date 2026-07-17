@@ -367,6 +367,32 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(store.messages.isEmpty)
 }
 
+@MainActor @Test func perContactNotificationPreviewPersistsAndOverridesGlobalPolicy() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Private Peer"))
+    let conversation = try #require(store.selectedConversation)
+    store.notifications.setShowPreviews(true)
+    store.setConversationNotificationPreview(false, conversationID: conversation.id)
+    #expect(!store.shouldShowNotificationPreview(for: conversation.id))
+    let restored = SidebandStore(persistenceURL: url)
+    #expect(restored.conversations.first?.notificationPreviewEnabled == false)
+    #expect(!restored.shouldShowNotificationPreview(for: conversation.id))
+    restored.setConversationNotificationPreview(nil, conversationID: conversation.id)
+    #expect(restored.shouldShowNotificationPreview(for: conversation.id))
+}
+
+@MainActor @Test func notificationReplyCanSendWithoutChangingSelectedConversation() async throws {
+    let store = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json"))
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "First"))
+    let first = try #require(store.selectedConversation)
+    #expect(store.addConversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Second"))
+    let selected = try #require(store.selectedConversationID)
+    #expect(await store.send("Quick reply", to: first.id))
+    #expect(store.selectedConversationID == selected)
+    #expect(store.messages.first?.conversationID == first.id)
+}
+
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
     let identity = ReticulumIdentity()
     let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
