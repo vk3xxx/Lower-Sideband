@@ -698,18 +698,44 @@ private struct NetworkView: View {
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow { metric("Packets received", store.receivedPacketCount); metric("Known paths", store.knownPathCount) }
                     GridRow { metric("Validated announces", store.validatedDiscoveryCount); metric("Pending requests", store.pendingPathCount) }
-                    GridRow { metric("Unverified announces", store.unverifiedDiscoveryCount); metric("LXMF deliveries", 0) }
+                    GridRow { metric("Unverified announces", store.unverifiedDiscoveryCount); metric("Delivered messages", store.deliveredMessageCount) }
                     GridRow { metric("Pending links", store.pendingLinkCount); metric("Active links", store.activeLinkCount) }
                     GridRow { metric("Encrypted packets", store.encryptedPacketsReceived); metric("Keepalives", store.keepalivesSent + store.keepalivesReceived) }
                     GridRow { metric("Propagation requests", store.propagationRequestsSent); metric("Propagation responses", store.propagationResponsesReceived) }
-                    GridRow { metric("Messages available", store.propagationMessagesAvailable); metric("LXMF deliveries", 0) }
-                    GridRow { metric("Uploads accepted", store.propagationUploadsAccepted); metric("Direct deliveries", store.messages.count(where: { $0.state == .delivered })) }
-                    GridRow { metric("Delivery announces", store.deliveryAnnouncesSent); metric("Inbox messages", store.messages.count(where: { $0.direction == .incoming })) }
+                    GridRow { metric("Messages available", store.propagationMessagesAvailable); metric("Sent awaiting proof", store.sentMessageCount) }
+                    GridRow { metric("Uploads accepted", store.propagationUploadsAccepted); metric("Direct deliveries", store.deliveredMessageCount) }
+                    GridRow { metric("Delivery announces", store.deliveryAnnouncesSent); metric("Inbox messages", store.incomingMessageCount) }
                     GridRow { metric("Inbound links", store.inboundLinksAccepted); metric("Active links", store.activeLinkCount + store.inboundLinksAccepted) }
                     GridRow { metric("Opportunistic received", store.opportunisticDeliveriesReceived); metric("Delivery announces", store.deliveryAnnouncesSent) }
-                    GridRow { metric("Delivery timeouts", store.deliveryTimeoutCount); metric("Queued messages", store.messages.count(where: { $0.state == .queued })) }
-                    GridRow { metric("Recovered outbox", store.recoveredOutboundCount); metric("Delivered messages", store.messages.count(where: { $0.state == .delivered })) }
+                    GridRow { metric("Delivery timeouts", store.deliveryTimeoutCount); metric("Queued messages", store.queuedMessageCount) }
+                    GridRow { metric("Recovered outbox", store.recoveredOutboundCount); metric("Failed messages", store.failedMessageCount) }
                 }.padding(6).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            GroupBox("Delivery health") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Label(deliveryHealthText, systemImage: deliveryHealthIcon)
+                            .foregroundStyle(deliveryHealthColor)
+                        Spacer()
+                        Text(store.deliverySuccessRate.map { $0.formatted(.percent.precision(.fractionLength(1))) } ?? "No completed sends")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    ProgressView(value: store.deliverySuccessRate ?? 0)
+                    HStack(spacing: 18) {
+                        Text("\(store.outgoingMessageCount) outgoing")
+                        Text("\(store.reactionCount) reactions")
+                        Text("\(store.activeAttachmentTransferCount) file transfers")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Flush queued") { Task { await store.flushQueuedMessages() } }
+                            .disabled(store.queuedMessageCount == 0 || store.networkState != .ready)
+                        Button("Retry failed") { Task { await store.retryAllFailedMessages() } }
+                            .disabled(store.failedMessageCount == 0)
+                    }
+                }.padding(6)
             }
             GroupBox("LXMF propagation") {
                 VStack(alignment: .leading, spacing: 10) {
@@ -1039,6 +1065,24 @@ private struct NetworkView: View {
     }
     private var statusColor: Color {
         switch store.networkState { case .ready: .green; case .connecting: .orange; case .failed: .red; case .stopped: .secondary }
+    }
+    private var deliveryHealthText: String {
+        if store.failedMessageCount > 0 { return "Delivery attention needed" }
+        if store.queuedMessageCount > 0 || store.sentMessageCount > 0 { return "Messages in progress" }
+        if store.deliveredMessageCount > 0 { return "Delivery healthy" }
+        return "No delivery history"
+    }
+    private var deliveryHealthIcon: String {
+        if store.failedMessageCount > 0 { return "exclamationmark.triangle.fill" }
+        if store.queuedMessageCount > 0 || store.sentMessageCount > 0 { return "clock.arrow.circlepath" }
+        if store.deliveredMessageCount > 0 { return "checkmark.circle.fill" }
+        return "chart.bar"
+    }
+    private var deliveryHealthColor: Color {
+        if store.failedMessageCount > 0 { return .orange }
+        if store.queuedMessageCount > 0 || store.sentMessageCount > 0 { return .secondary }
+        if store.deliveredMessageCount > 0 { return .green }
+        return .secondary
     }
 }
 

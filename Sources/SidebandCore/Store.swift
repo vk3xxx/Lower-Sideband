@@ -334,6 +334,22 @@ public final class SidebandStore {
     }
 
     public var totalUnreadCount: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
+    public var incomingMessageCount: Int { messages.count(where: { $0.direction == .incoming }) }
+    public var outgoingMessageCount: Int { messages.count(where: { $0.direction == .outgoing }) }
+    public var queuedMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .queued }) }
+    public var sentMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .sent }) }
+    public var deliveredMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .delivered }) }
+    public var failedMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .failed }) }
+    public var reactionCount: Int { messages.count(where: { $0.reactionTo != nil }) }
+    public var activeAttachmentTransferCount: Int {
+        messages.reduce(0) { count, message in
+            count + message.attachments.count(where: { $0.state == .queued || $0.state == .transferring })
+        }
+    }
+    public var deliverySuccessRate: Double? {
+        let terminal = deliveredMessageCount + failedMessageCount
+        return terminal == 0 ? nil : Double(deliveredMessageCount) / Double(terminal)
+    }
 
     public func messages(for conversationID: UUID) -> [Message] {
         rebuildMessageIndexesIfNeeded()
@@ -932,6 +948,20 @@ public final class SidebandStore {
         }
         save()
         await attemptDelivery(for: conversationID)
+    }
+
+    public func retryAllFailedMessages() async {
+        let conversationIDs = Set(messages.lazy.filter {
+            $0.direction == .outgoing && $0.state == .failed
+        }.map(\.conversationID))
+        for conversationID in conversationIDs { await retryAllFailedMessages(in: conversationID) }
+    }
+
+    public func flushQueuedMessages() async {
+        let conversationIDs = Set(messages.lazy.filter {
+            $0.direction == .outgoing && $0.state == .queued && self.ownsOutbox($0)
+        }.map(\.conversationID))
+        for conversationID in conversationIDs { await attemptDelivery(for: conversationID) }
     }
 
     public func removeFailedMessage(_ messageID: UUID) async {

@@ -739,6 +739,37 @@ import Testing
     #expect(store.messages.first(where: { $0.id == delivered.id })?.state == .delivered)
 }
 
+@MainActor @Test func deliveryHealthMetricsReflectPersistedOutbox() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let attachment = Attachment(filename: "active.bin", byteCount: 1, relativePath: "active", state: .transferring)
+    let target = Data(repeating: 0xAA, count: 32)
+    let messages = [
+        Message(conversationID: conversation.id, body: "in", direction: .incoming, state: .delivered),
+        Message(conversationID: conversation.id, body: "queued", direction: .outgoing, state: .queued, attachments: [attachment]),
+        Message(conversationID: conversation.id, body: "sent", direction: .outgoing, state: .sent),
+        Message(conversationID: conversation.id, body: "done", direction: .outgoing, state: .delivered),
+        Message(conversationID: conversation.id, body: "failed", direction: .outgoing, state: .failed),
+        Message(conversationID: conversation.id, body: "", direction: .outgoing, state: .queued, reactionTo: target, reactionContent: "👍")
+    ]
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: messages)).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(store.incomingMessageCount == 1)
+    #expect(store.outgoingMessageCount == 5)
+    // Unproved sent messages are intentionally recovered into the queued outbox on launch.
+    #expect(store.queuedMessageCount == 3)
+    #expect(store.sentMessageCount == 0)
+    #expect(store.deliveredMessageCount == 1)
+    #expect(store.failedMessageCount == 1)
+    #expect(store.reactionCount == 1)
+    #expect(store.activeAttachmentTransferCount == 1)
+    #expect(store.deliverySuccessRate == 0.5)
+}
+
 @MainActor @Test func duplicateAttachmentsAreRejectedByContentHash() {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let store = SidebandStore(persistenceURL: url)
