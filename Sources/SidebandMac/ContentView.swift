@@ -1449,12 +1449,16 @@ private struct ConversationView: View {
     @State private var inspectedMessage: Message?
     @State private var messageToForward: Message?
     @State private var isVisible = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var focusedField: FocusTarget?
 
     var body: some View {
         let conversationMessages = filteredMessages
         VStack(spacing: 0) {
-            HStack {
+            if horizontalSizeClass == .compact {
+                compactConversationHeader
+            } else {
+                HStack {
                 Image(systemName: conversation.appearanceSymbol.rawValue)
                     .font(.title2)
                     .foregroundStyle(.white)
@@ -1572,7 +1576,8 @@ private struct ConversationView: View {
                 Label(routingStatus, systemImage: routingIcon)
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityLabel("Routing status: \(routingStatus)")
-            }.padding()
+                }.padding()
+            }
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -1938,6 +1943,150 @@ private struct ConversationView: View {
         .sheet(item: $messageToForward) { message in
             ForwardMessageView(store: store, sourceConversationID: conversation.id, message: message)
         }
+    }
+
+    private var compactConversationHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: conversation.appearanceSymbol.rawValue)
+                    .font(.title2)
+                    .foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(appearanceColor(conversation.appearanceColor), in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(conversation.displayName)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    if conversation.isTrusted {
+                        Label("Trusted", systemImage: "checkmark.shield.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    if !conversation.contactNote.isEmpty {
+                        Text(conversation.contactNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Text(conversation.destinationHash)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .contextMenu {
+                            Button { copyToSystemClipboard(conversation.destinationHash) } label: {
+                                Label("Copy Destination", systemImage: "number")
+                            }
+                            if let contactLink = store.contactLink(for: conversation.id) {
+                                Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: {
+                                    Label("Copy Contact Link", systemImage: "link")
+                                }
+                            }
+                        }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Label(routingStatus, systemImage: routingIcon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityLabel("Routing status: \(routingStatus)")
+            }
+
+            HStack(spacing: 12) {
+                TextField("Search messages", text: $messageSearch)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: .infinity)
+                    .focused($focusedField, equals: .search)
+                    .accessibilityIdentifier("message-search")
+                if store.contactLink(for: conversation.id) != nil {
+                    Button { showingContactQR = true } label: { Image(systemName: "qrcode") }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Show contact QR code")
+                }
+                Button { showingIdentityVerification = true } label: {
+                    Image(systemName: store.isConversationIdentityVerified(conversation.id) ? "checkmark.shield.fill" : "shield")
+                        .foregroundStyle(store.isConversationIdentityVerified(conversation.id) ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(store.isConversationIdentityVerified(conversation.id) ? "Contact identity verified" : "Verify contact identity")
+                Button { Task { await store.startVoiceCall(conversationID: conversation.id) } } label: {
+                    Image(systemName: "phone.fill")
+                }
+                .buttonStyle(.plain)
+                .disabled(store.voiceCall != nil || conversation.isBlocked || store.networkState != .ready)
+                .accessibilityLabel("Start encrypted voice call")
+                compactConversationMenu
+            }
+
+            if !messageSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                HStack {
+                    Picker("Search scope", selection: $messageSearchScope) {
+                        ForEach(SearchScope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    Text("\(filteredMessages.count) \(filteredMessages.count == 1 ? "result" : "results")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button { messageSearch = "" } label: { Label("Clear", systemImage: "xmark.circle.fill") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding()
+    }
+
+    private var compactConversationMenu: some View {
+        Menu {
+            if !telemetryMessages.isEmpty {
+                Button("Show telemetry map", systemImage: "map") { showingTelemetryMap = true }
+            }
+            if !store.starredMessages(for: conversation.id).isEmpty {
+                Button(showStarredOnly ? "Show all messages" : "Show starred messages", systemImage: showStarredOnly ? "star.fill" : "star") {
+                    showStarredOnly.toggle()
+                }
+            }
+            if let transcript = store.conversationTranscript(conversation.id) {
+                ShareLink(item: transcript, subject: Text("Sideband conversation with \(conversation.displayName)")) {
+                    Label("Share transcript", systemImage: "square.and.arrow.up")
+                }
+            }
+            Button("Export conversation archive", systemImage: "doc.badge.arrow.up") {
+                do {
+                    conversationExportDocument = SnapshotBackupDocument(data: try store.exportConversationData(conversation.id))
+                    showingConversationExporter = true
+                } catch {
+                    store.lastError = "Could not export conversation: \(error.localizedDescription)"
+                }
+            }
+            Divider()
+            Button("Search Messages", systemImage: "magnifyingglass") { focusedField = .search }
+            Button("Focus Message Composer", systemImage: "text.cursor") { focusedField = .composer }
+            Button { Task { await store.sendCommand(.ping, conversationID: conversation.id) } } label: {
+                Label("Ping contact", systemImage: "wave.3.right")
+            }
+            Button { Task { await store.sendCommand(.signalReport, conversationID: conversation.id) } } label: {
+                Label("Request signal report", systemImage: "chart.bar")
+            }
+            Menu("Plugin request", systemImage: "puzzlepiece.extension") {
+                ForEach(store.pluginRegistry.manifests) { manifest in
+                    if store.isPluginEnabled(manifest.identifier) {
+                        ForEach(manifest.commands.sorted(), id: \.self) { command in
+                            Button(command) { Task { await store.sendPluginCommand(command, conversationID: conversation.id) } }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("More conversation actions")
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }
