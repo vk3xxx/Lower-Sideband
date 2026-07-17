@@ -6,3 +6,4 @@ TestConfig/storage/
 TestConfig/*-storage/
 *.xcuserstate
 .DS_Store
+AppStore/Screenshots/Raw/
