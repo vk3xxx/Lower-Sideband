@@ -1334,6 +1334,7 @@ private struct ConversationView: View {
     @State private var messagePendingDeletion: Message?
     @State private var inspectedMessage: Message?
     @State private var messageToForward: Message?
+    @State private var isVisible = false
 
     var body: some View {
         let conversationMessages = filteredMessages
@@ -1615,8 +1616,9 @@ private struct ConversationView: View {
                                             .font(.caption2)
                                             .foregroundStyle(.secondary)
                                     }
-                                    Button { pendingAttachments.removeAll { $0.id == attachment.id } } label: { Image(systemName: "xmark.circle.fill") }
+                                    Button { discardPendingAttachment(attachment) } label: { Image(systemName: "xmark.circle.fill") }
                                         .buttonStyle(.plain)
+                                        .accessibilityLabel("Remove \(attachment.filename)")
                                 }.font(.caption).padding(6).background(.quaternary, in: Capsule())
                             }
                         }
@@ -1683,13 +1685,16 @@ private struct ConversationView: View {
             conversationExportDocument = nil
         }
         .onAppear {
+            isVisible = true
             draft = store.draft(for: conversation.id)
             store.conversationDidAppear(conversation.id)
         }
         .onDisappear {
+            isVisible = false
             draftSaveTask?.cancel()
             store.updateDraft(draft, for: conversation.id)
             voiceRecorder.cancel()
+            discardAllPendingAttachments()
             store.conversationDidDisappear(conversation.id)
             if let previewAttachment {
                 Task { await store.attachmentStore.removeMaterializedFile(for: previewAttachment) }
@@ -1821,7 +1826,35 @@ private struct ConversationView: View {
         pendingAttachments = []
         replyingTo = nil
         let renderer: Message.Renderer = composeAsMarkdown ? .markdown : .plain
-        Task { await store.send(text, attachments: attachments, replyingTo: repliedMessage, renderer: renderer) }
+        Task {
+            let accepted = await store.send(text, attachments: attachments, replyingTo: repliedMessage, renderer: renderer)
+            guard !accepted else { return }
+            guard isVisible else {
+                for attachment in attachments { try? await store.attachmentStore.remove(attachment) }
+                return
+            }
+            if draft.isEmpty {
+                draft = text
+                store.updateDraft(text, for: conversation.id)
+            }
+            for attachment in attachments where !pendingAttachments.contains(where: { $0.id == attachment.id }) {
+                pendingAttachments.append(attachment)
+            }
+            if replyingTo == nil { replyingTo = repliedMessage }
+        }
+    }
+
+    private func discardPendingAttachment(_ attachment: Attachment) {
+        pendingAttachments.removeAll { $0.id == attachment.id }
+        Task { try? await store.attachmentStore.remove(attachment) }
+    }
+
+    private func discardAllPendingAttachments() {
+        let discarded = pendingAttachments
+        pendingAttachments.removeAll()
+        Task {
+            for attachment in discarded { try? await store.attachmentStore.remove(attachment) }
+        }
     }
 
     @ViewBuilder private func renderedBody(_ message: Message) -> some View {

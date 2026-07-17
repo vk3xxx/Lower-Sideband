@@ -900,43 +900,45 @@ public final class SidebandStore {
         if visibleConversationID == conversationID { visibleConversationID = nil }
     }
 
-    public func send(_ text: String) async {
+    @discardableResult
+    public func send(_ text: String) async -> Bool {
         await send(text, attachments: [], telemetry: nil)
     }
 
-    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain) async {
+    @discardableResult
+    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain) async -> Bool {
         var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var renderer = requestedRenderer
         if body.hasPrefix("#!md\n") {
             body.removeFirst(5)
             renderer = .markdown
         }
-        guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil), let conversation = selectedConversation else { return }
+        guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil), let conversation = selectedConversation else { return false }
         guard !conversation.isBlocked else {
             lastError = "Unblock this contact before sending a message."
-            return
+            return false
         }
         guard telemetry == nil || conversation.telemetrySharingEnabled else {
             lastError = "Telemetry sharing is disabled for this contact."
-            return
+            return false
         }
         guard body.count <= SidebandMessageLimits.maximumTextCharacters else {
             lastError = "Messages are limited to \(SidebandMessageLimits.maximumTextCharacters.formatted()) characters."
-            return
+            return false
         }
         guard attachments.count <= SidebandMessageLimits.maximumAttachments else {
             lastError = "Messages are limited to \(SidebandMessageLimits.maximumAttachments) attachments."
-            return
+            return false
         }
         guard telemetry == nil || attachments.isEmpty else {
             lastError = "Send telemetry separately from file attachments."
-            return
+            return false
         }
         if let telemetryError = telemetry?.validationError {
             lastError = telemetryError
-            return
+            return false
         }
-        guard validateAttachmentTotal(attachments) else { return }
+        guard validateAttachmentTotal(attachments) else { return false }
         let message = Message(
             conversationID: conversation.id, body: body, direction: .outgoing, state: .queued,
             attachments: attachments, telemetry: telemetry, renderer: renderer,
@@ -949,6 +951,7 @@ public final class SidebandStore {
         touch(conversation.id)
         save()
         await attemptDelivery(for: conversation.id)
+        return true
     }
 
     public func sendReaction(_ content: String, to target: Message) async {
@@ -1583,6 +1586,26 @@ public final class SidebandStore {
     public func cleanOrphanedAttachments() async -> Int {
         let referencedPaths = Set(messages.flatMap(\.attachments).map(\.relativePath))
         return (try? await attachmentStore.removeOrphans(referencedRelativePaths: referencedPaths)) ?? 0
+    }
+
+    @discardableResult
+    public func validateAttachmentStorage() async -> Int {
+        var invalidCount = 0
+        for messageIndex in messages.indices {
+            for attachmentIndex in messages[messageIndex].attachments.indices {
+                let attachment = messages[messageIndex].attachments[attachmentIndex]
+                guard attachment.state == .local || attachment.state == .queued || attachment.state == .available else { continue }
+                do { _ = try await attachmentStore.read(attachment) }
+                catch {
+                    messages[messageIndex].attachments[attachmentIndex].state = .failed
+                    messages[messageIndex].attachments[attachmentIndex].progress = 0
+                    if messages[messageIndex].direction == .outgoing { messages[messageIndex].state = .failed }
+                    invalidCount += 1
+                }
+            }
+        }
+        if invalidCount > 0 { save() }
+        return invalidCount
     }
 
     public func exportSnapshotData() throws -> Data {

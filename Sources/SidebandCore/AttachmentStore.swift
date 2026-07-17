@@ -22,11 +22,11 @@ public actor AttachmentStore {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let id = UUID()
         let originalName = preferredName ?? source.lastPathComponent
-        let safeName = URL(fileURLWithPath: originalName).lastPathComponent
+        let safeName = try safeFilename(originalName)
         let storedName = "\(id.uuidString)-\(safeName)"
         let destination = directory.appending(path: storedName)
         try encrypted(data, for: id).write(to: destination, options: .atomic)
-        let mimeType = sourceValues.typeIdentifier.flatMap { UTType($0)?.preferredMIMEType }
+        let mimeType = normalizedMIMEType(sourceValues.typeIdentifier.flatMap { UTType($0)?.preferredMIMEType }, filename: safeName)
         return Attachment(id: id, filename: safeName, mimeType: mimeType, byteCount: data.count, relativePath: storedName, state: .local, contentHash: Data(SHA256.hash(data: data)))
     }
 
@@ -34,26 +34,28 @@ public actor AttachmentStore {
         guard data.count <= ReticulumResourceLimits.maximumAttachmentBytes else { throw AttachmentStoreError.tooLarge }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let id = UUID()
-        let safeName = URL(fileURLWithPath: filename).lastPathComponent
+        let safeName = try safeFilename(filename)
         let storedName = "\(id.uuidString)-\(safeName)"
         try encrypted(data, for: id).write(to: directory.appending(path: storedName), options: .atomic)
-        return Attachment(id: id, filename: safeName, mimeType: mimeType, byteCount: data.count, relativePath: storedName, state: .available, progress: 1, contentHash: Data(SHA256.hash(data: data)))
+        return Attachment(id: id, filename: safeName, mimeType: normalizedMIMEType(mimeType, filename: safeName), byteCount: data.count, relativePath: storedName, state: .available, progress: 1, contentHash: Data(SHA256.hash(data: data)))
     }
 
     public func restoreCloudAttachment(_ payload: CloudAttachmentPayload) throws -> Attachment {
         guard payload.data.count <= ReticulumResourceLimits.maximumAttachmentBytes,
               Data(SHA256.hash(data: payload.data)) == payload.contentHash else { throw AttachmentStoreError.integrityMismatch }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let safeName = URL(fileURLWithPath: payload.filename).lastPathComponent
+        let safeName = try safeFilename(payload.filename)
         let storedName = "\(payload.id.uuidString)-\(safeName)"
         try encrypted(payload.data, for: payload.id).write(to: directory.appending(path: storedName), options: .atomic)
         return Attachment(
-            id: payload.id, filename: safeName, mimeType: payload.mimeType, byteCount: payload.data.count,
+            id: payload.id, filename: safeName, mimeType: normalizedMIMEType(payload.mimeType, filename: safeName), byteCount: payload.data.count,
             relativePath: storedName, state: .available, progress: 1, contentHash: payload.contentHash
         )
     }
 
-    public func url(for attachment: Attachment) -> URL { directory.appending(path: attachment.relativePath) }
+    public func url(for attachment: Attachment) -> URL {
+        directory.appending(path: URL(fileURLWithPath: attachment.relativePath).lastPathComponent)
+    }
     public func read(_ attachment: Attachment) throws -> Data {
         let storedURL = url(for: attachment)
         let storedData = try Data(contentsOf: storedURL)
@@ -126,15 +128,32 @@ public actor AttachmentStore {
     private func materializedName(for attachment: Attachment) -> String {
         "\(attachment.id.uuidString)-\(URL(fileURLWithPath: attachment.filename).lastPathComponent)"
     }
+
+    private func safeFilename(_ filename: String) throws -> String {
+        let leaf = URL(fileURLWithPath: filename).lastPathComponent
+            .components(separatedBy: .controlCharacters).joined(separator: "_")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !leaf.isEmpty, leaf != ".", leaf != ".." else { throw AttachmentStoreError.invalidFilename }
+        return String(leaf.prefix(180))
+    }
+
+    private func normalizedMIMEType(_ mimeType: String?, filename: String) -> String? {
+        if let value = mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           value.count <= 127, value.split(separator: "/", omittingEmptySubsequences: false).count == 2,
+           !value.contains(where: { $0.isWhitespace || $0.isNewline }) { return value }
+        let fileExtension = URL(fileURLWithPath: filename).pathExtension
+        return fileExtension.isEmpty ? nil : UTType(filenameExtension: fileExtension)?.preferredMIMEType
+    }
 }
 
 public enum AttachmentStoreError: LocalizedError {
-    case tooLarge, integrityMismatch
+    case tooLarge, integrityMismatch, invalidFilename
 
     public var errorDescription: String? {
         switch self {
         case .tooLarge: "The file exceeds the maximum attachment size."
         case .integrityMismatch: "The attachment failed its integrity check."
+        case .invalidFilename: "The attachment filename is invalid."
         }
     }
 }

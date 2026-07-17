@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import SidebandCore
 
@@ -2359,6 +2360,58 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(store.conversationMatchesSearch(conversation.id, query: "schedule"))
     #expect(store.conversationMatchesSearch(conversation.id, query: "field-map"))
     #expect(!store.conversationMatchesSearch(conversation.id, query: "unrelated"))
+}
+
+@Test func attachmentStoreSanitizesNamesAndNormalizesMIMETypes() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let store = AttachmentStore(directory: directory)
+    let attachment = try await store.save(data: Data("image".utf8), filename: "../unsafe\nphoto.png", mimeType: " IMAGE/PNG ")
+
+    #expect(!attachment.filename.contains("/"))
+    #expect(!attachment.filename.contains("\n"))
+    #expect(attachment.mimeType == "image/png")
+    #expect(try await store.read(attachment) == Data("image".utf8))
+}
+
+@Test func attachmentStoreConfinesUntrustedRelativePaths() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let directory = root.appending(path: "attachments")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let outside = root.appending(path: "outside.bin")
+    let data = Data("secret".utf8)
+    try data.write(to: outside)
+    let attachment = Attachment(
+        filename: "outside.bin", byteCount: data.count, relativePath: "../outside.bin", state: .available,
+        contentHash: Data(SHA256.hash(data: data))
+    )
+    let store = AttachmentStore(directory: directory)
+
+    await #expect(throws: (any Error).self) { try await store.read(attachment) }
+}
+
+@MainActor @Test func attachmentAuditMarksMissingPayloadsFailed() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let attachment = Attachment(filename: "missing.pdf", byteCount: 20, relativePath: "missing.pdf", state: .local)
+    let message = Message(conversationID: conversation.id, body: "", direction: .outgoing, state: .queued, attachments: [attachment])
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [message])).write(to: url)
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(await store.validateAttachmentStorage() == 1)
+    #expect(store.messages[0].attachments[0].state == .failed)
+    #expect(store.messages[0].state == .failed)
+}
+
+@MainActor @Test func sendReportsWhetherMessageWasAcceptedIntoOutbox() async {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(!(await store.send("no selected contact")))
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer"))
+    #expect(await store.send("accepted"))
+    #expect(store.messages.last?.body == "accepted")
 }
 
 private extension Data {
