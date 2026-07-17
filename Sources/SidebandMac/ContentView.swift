@@ -99,6 +99,7 @@ struct ContentView: View {
     @State private var contactCollectionDocument = SnapshotBackupDocument(data: Data())
     @State private var showingContactCollectionExporter = false
     @State private var showingContactCollectionImporter = false
+    @State private var showingConversationArchiveImporter = false
     @State private var pendingRestoreData: Data?
 
     var body: some View {
@@ -168,8 +169,10 @@ struct ContentView: View {
                     Menu {
                         Button(action: exportContacts) { Label("Export Contacts", systemImage: "person.2.badge.gearshape") }
                         Button { showingContactCollectionImporter = true } label: { Label("Import Contacts", systemImage: "person.crop.circle.badge.plus") }
+                        Divider()
+                        Button { showingConversationArchiveImporter = true } label: { Label("Import Conversation Archive", systemImage: "bubble.left.and.text.bubble.right") }
                     } label: { Label("Contacts", systemImage: "person.2") }
-                    .help("Import or export contacts")
+                    .help("Import contacts or conversation archives")
                     Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
                         .keyboardShortcut("n", modifiers: .command)
                         .accessibilityIdentifier("new-conversation")
@@ -204,6 +207,12 @@ struct ContentView: View {
             switch result {
             case .success(let url): importContacts(from: url)
             case .failure(let error): store.lastError = "Could not open contacts: \(error.localizedDescription)"
+            }
+        }
+        .fileImporter(isPresented: $showingConversationArchiveImporter, allowedContentTypes: [.json]) { result in
+            switch result {
+            case .success(let url): importConversationArchive(from: url)
+            case .failure(let error): store.lastError = "Could not open conversation archive: \(error.localizedDescription)"
             }
         }
         .alert("Sideband", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.clearError() } })) {
@@ -410,6 +419,17 @@ struct ContentView: View {
             store.lastError = "Imported \(count) contact\(count == 1 ? "" : "s"). Re-verify fingerprints after transferring contacts."
         } catch {
             store.lastError = "Could not import contacts: \(error.localizedDescription)"
+        }
+    }
+
+    private func importConversationArchive(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let count = try store.importConversationData(Data(contentsOf: url))
+            store.lastError = count == 0 ? "The conversation archive contained no new messages." : "Imported \(count) archived message\(count == 1 ? "" : "s"). Attachment metadata was retained, but archive files do not contain attachment payloads."
+        } catch {
+            store.lastError = "Could not import conversation archive: \(error.localizedDescription)"
         }
     }
 

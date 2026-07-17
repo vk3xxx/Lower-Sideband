@@ -452,6 +452,67 @@ public final class SidebandStore {
         return try JSONEncoder.sideband.encode(archive)
     }
 
+    /// Imports a portable conversation archive without granting trust or
+    /// re-queuing historical outbound messages. Attachment payloads are not
+    /// embedded in the archive, so their metadata is retained as unavailable.
+    @discardableResult
+    public func importConversationData(_ data: Data) throws -> Int {
+        guard data.count <= 256 * 1_024 * 1_024 else { throw SnapshotError.invalidData }
+        let archive = try JSONDecoder.sideband.decode(SidebandConversationExport.self, from: data)
+        guard archive.version <= SidebandConversationExport.currentVersion,
+              archive.messages.count <= 250_000,
+              DestinationHash.isValid(archive.contact.destinationHash) else { throw SnapshotError.unsupportedVersion }
+        let destination = archive.contact.destinationHash.lowercased()
+        var seenIDs = Set(messages.map(\.id))
+        var seenLXMFIDs = Set(messages.compactMap(\.lxmfID))
+        guard addConversation(destinationHash: destination, displayName: String(archive.contact.displayName.prefix(128))),
+              let conversation = conversations.first(where: { $0.destinationHash == destination }) else {
+            throw SnapshotError.invalidData
+        }
+        var inserted = 0
+        for item in archive.messages {
+            guard !seenIDs.contains(item.id), item.lxmfID.map({ !seenLXMFIDs.contains($0) }) ?? true else { continue }
+            guard item.body.count <= SidebandMessageLimits.maximumTextCharacters,
+                  item.attachments.count <= SidebandMessageLimits.maximumAttachments,
+                  item.attachments.allSatisfy({
+                      !$0.filename.isEmpty && $0.filename.count <= 180 &&
+                      (0...ReticulumResourceLimits.maximumAttachmentBytes).contains($0.byteCount) &&
+                      ($0.contentHash == nil || $0.contentHash?.count == 32)
+                  }),
+                  item.attachments.reduce(0, { $0 + $1.byteCount }) <= SidebandMessageLimits.maximumCombinedAttachmentBytes else { continue }
+            let attachments = item.attachments.map { attachment in
+                Attachment(
+                    filename: attachment.filename, mimeType: attachment.mimeType,
+                    byteCount: attachment.byteCount, relativePath: "missing-\(UUID().uuidString).sbenc",
+                    state: .failed, progress: 0, contentHash: attachment.contentHash
+                )
+            }
+            let safeState: Message.DeliveryState = item.direction == .outgoing && (item.state == .queued || item.state == .sent)
+                ? .failed : item.state
+            messages.append(Message(
+                id: item.id, conversationID: conversation.id, body: item.body,
+                timestamp: item.timestamp, direction: item.direction, state: safeState,
+                attachments: attachments, telemetry: item.telemetry, renderer: item.renderer,
+                lxmfID: item.lxmfID, replyTo: item.replyTo, replyQuote: item.replyQuote,
+                reactionTo: item.reactionTo, reactionContent: item.reactionContent,
+                commentTo: item.commentTo, continuationOf: item.continuationOf,
+                commands: item.commands ?? [], deliveryAttemptCount: item.deliveryAttemptCount ?? 0,
+                lastDeliveryAttemptAt: item.lastDeliveryAttemptAt, lastDeliveryMode: item.lastDeliveryMode,
+                lastDeliveryFailure: safeState == item.state ? item.lastDeliveryFailure : "Imported archive item; not queued",
+                isStarred: item.isStarred ?? false
+            ))
+            seenIDs.insert(item.id)
+            if let lxmfID = item.lxmfID { seenLXMFIDs.insert(lxmfID) }
+            inserted += 1
+        }
+        if inserted > 0 {
+            touch(conversation.id)
+            sortConversations()
+            save()
+        }
+        return inserted
+    }
+
     public func exportContactCollectionData() throws -> Data {
         let contacts = conversations.map { conversation in
             SidebandContactCollection.Contact(

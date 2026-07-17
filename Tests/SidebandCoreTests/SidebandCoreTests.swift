@@ -317,6 +317,30 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(merged.messages.first?.starredUpdatedAt == local.starredUpdatedAt)
 }
 
+@MainActor @Test func conversationArchiveImportIsDeduplicatedSafeAndDoesNotGrantTrust() throws {
+    let destination = "0123456789abcdef0123456789abcdef"
+    let sourceConversation = Conversation(destinationHash: destination, displayName: "Archive Peer", isTrusted: true)
+    let attachment = Attachment(filename: "map.png", mimeType: "image/png", byteCount: 42, relativePath: "private.sbenc", state: .available, contentHash: Data(repeating: 7, count: 32))
+    let sourceMessage = Message(conversationID: sourceConversation.id, body: "Restore me", direction: .outgoing, state: .queued, attachments: [attachment], isStarred: true)
+    let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(SidebandConversationExport(conversation: sourceConversation, fingerprint: "not-authoritative", messages: [sourceMessage]))
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+
+    #expect(try store.importConversationData(data) == 1)
+    let importedConversation = try #require(store.selectedConversation)
+    let importedMessage = try #require(store.messages.first)
+    #expect(!importedConversation.isTrusted)
+    #expect(importedMessage.conversationID == importedConversation.id)
+    #expect(importedMessage.state == .failed)
+    #expect(importedMessage.outboxOwnerID == nil)
+    #expect(importedMessage.lastDeliveryFailure == "Imported archive item; not queued")
+    #expect(importedMessage.isStarred)
+    #expect(importedMessage.attachments.first?.state == .failed)
+    #expect(importedMessage.attachments.first?.relativePath.contains("private.sbenc") == false)
+    #expect(try store.importConversationData(data) == 0)
+}
+
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
     let identity = ReticulumIdentity()
     let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
