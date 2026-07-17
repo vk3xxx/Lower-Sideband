@@ -488,6 +488,10 @@ struct ContentView: View {
         Button { store.setConversationTelemetrySharing(!conversation.telemetrySharingEnabled, conversationID: conversation.id) } label: {
             Label(conversation.telemetrySharingEnabled ? "Disable Telemetry Sharing" : "Enable Telemetry Sharing", systemImage: conversation.telemetrySharingEnabled ? "location.slash" : "location")
         }
+        Button { store.setConversationPluginCommands(!conversation.pluginCommandsEnabled, conversationID: conversation.id) } label: {
+            Label(conversation.pluginCommandsEnabled ? "Disable Plugin Requests" : "Allow Plugin Requests", systemImage: conversation.pluginCommandsEnabled ? "puzzlepiece.extension.fill" : "puzzlepiece.extension")
+        }
+        .disabled(!conversation.isTrusted || !store.isConversationIdentityVerified(conversation.id))
         Button {
             let preference: Conversation.DeliveryPreference = conversation.deliveryPreference == .automatic ? .propagationPreferred : .automatic
             store.setConversationDeliveryPreference(preference, conversationID: conversation.id)
@@ -800,6 +804,26 @@ private struct NetworkView: View {
                         set: { store.setRichTextTrustedOnly($0) }
                     ))
                     Text("Unknown senders' Markdown is shown as literal text by default, preventing disguised links from becoming interactive.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }.padding(6)
+            }
+            GroupBox("Native plugins") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(store.pluginRegistry.manifests) { manifest in
+                        Toggle(isOn: Binding(
+                            get: { store.isPluginEnabled(manifest.identifier) },
+                            set: { store.setPluginEnabled($0, identifier: manifest.identifier) }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(manifest.name)
+                                Text("v\(manifest.version) · \(manifest.commands.sorted().joined(separator: ", "))")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Text("Plugins are app-bundled Swift components. A contact must also be trusted, fingerprint-verified and explicitly authorized before plugin requests can run.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }.padding(6)
@@ -1200,6 +1224,15 @@ private struct ConversationView: View {
                     }
                     Button { Task { await store.sendCommand(.signalReport, conversationID: conversation.id) } } label: {
                         Label("Request signal report", systemImage: "chart.bar")
+                    }
+                    Menu("Plugin request", systemImage: "puzzlepiece.extension") {
+                        ForEach(store.pluginRegistry.manifests) { manifest in
+                            if store.isPluginEnabled(manifest.identifier) {
+                                ForEach(manifest.commands.sorted(), id: \.self) { command in
+                                    Button(command) { Task { await store.sendPluginCommand(command, conversationID: conversation.id) } }
+                                }
+                            }
+                        }
                     }
                 } label: { Image(systemName: "ellipsis.circle") }
                 .help("Interoperable LXMF requests")

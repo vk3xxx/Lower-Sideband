@@ -13,6 +13,8 @@
 		F1A000000000000000000014 /* ContactCollection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A000000000000000000002 /* ContactCollection.swift */; };
 		F2A000000000000000000011 /* LXMFCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2A000000000000000000001 /* LXMFCommand.swift */; };
 		F2A000000000000000000012 /* LXMFCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2A000000000000000000001 /* LXMFCommand.swift */; };
+		F3A000000000000000000011 /* SidebandPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A000000000000000000001 /* SidebandPlugin.swift */; };
+		F3A000000000000000000012 /* SidebandPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A000000000000000000001 /* SidebandPlugin.swift */; };
 		01E564776CA9E776B55ED75B /* ReticulumIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */; };
 		026DAF6778C7172BBEB38D1D /* VoiceMessageAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59439F9438760DD48AD116BC /* VoiceMessageAudio.swift */; };
 		03301265781053B5497105C0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
@@ -171,6 +173,7 @@
 		F1A000000000000000000001 /* ConversationExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationExport.swift; sourceTree = "<group>"; };
 		F1A000000000000000000002 /* ContactCollection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactCollection.swift; sourceTree = "<group>"; };
 		F2A000000000000000000001 /* LXMFCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LXMFCommand.swift; sourceTree = "<group>"; };
+		F3A000000000000000000001 /* SidebandPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebandPlugin.swift; sourceTree = "<group>"; };
 		0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPathTable.swift; sourceTree = "<group>"; };
 		0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResource.swift; sourceTree = "<group>"; };
 		148D84CB9E8FFBCABDB1149F /* TCPInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPInterface.swift; sourceTree = "<group>"; };
@@ -345,6 +348,7 @@
 				3454611B1022AF6027538880 /* LocalNotificationManager.swift */,
 				E57A7BD924C6049E6C5DAA4A /* Models.swift */,
 				A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */,
+				F3A000000000000000000001 /* SidebandPlugin.swift */,
 				668FFE37826A8100E1CA09FF /* Store.swift */,
 				FBFAFB919BC8DFC5E6E3360E /* Telemetry.swift */,
 				5CF805D6403CA445FE139DFE /* Transport.swift */,
@@ -574,6 +578,7 @@
 				FB0E65FC7859C8DD3CA6F281 /* MessagePack.swift in Sources */,
 				12FEC80F1A04CA8DB8AF9083 /* MessagePackDecoder.swift in Sources */,
 				8ED850A22B9378E5707933E1 /* Models.swift in Sources */,
+				F3A000000000000000000011 /* SidebandPlugin.swift in Sources */,
 				D5FBACD693366687F284FCE0 /* NetworkReachability.swift in Sources */,
 				E5C8139C7113B1DF74C89137 /* ReticulumAnnounce.swift in Sources */,
 				ABB92F5EE86F97F500711D5D /* ReticulumAnnounceBuilder.swift in Sources */,
@@ -653,6 +658,7 @@
 				DEE742D31B993537112B18FA /* MessagePack.swift in Sources */,
 				E1B836E2F35FB1BC64DB9A5A /* MessagePackDecoder.swift in Sources */,
 				8720EDA95D88DC8395026DA6 /* Models.swift in Sources */,
+				F3A000000000000000000012 /* SidebandPlugin.swift in Sources */,
 				10FD27589DCA97D3DFD3A171 /* NetworkReachability.swift in Sources */,
 				E35C71D013C8108DAB131267 /* ReticulumAnnounce.swift in Sources */,
 				5D51EEAE800511140DAE506D /* ReticulumAnnounceBuilder.swift in Sources */,

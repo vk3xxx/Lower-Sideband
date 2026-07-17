@@ -49,6 +49,9 @@ public enum MessagePackDecoder {
         case 0xd1: return .signed(Int64(Int16(bitPattern: UInt16(try readUInt(2, data, cursor: &cursor)))))
         case 0xd2: return .signed(Int64(Int32(bitPattern: UInt32(try readUInt(4, data, cursor: &cursor)))))
         case 0xd3: return .signed(Int64(bitPattern: try readUInt(8, data, cursor: &cursor)))
+        case 0xd9: return try decodedString(Int(try readUInt(1, data, cursor: &cursor)), data, cursor: &cursor)
+        case 0xda: return try decodedString(Int(try readUInt(2, data, cursor: &cursor)), data, cursor: &cursor)
+        case 0xdb: return try decodedString(Int(try readUInt(4, data, cursor: &cursor)), data, cursor: &cursor)
         case 0xdc: return .array(try (0..<Int(try readUInt(2, data, cursor: &cursor))).map { _ in try parse(data, cursor: &cursor) })
         case 0xdd: return .array(try (0..<Int(try readUInt(4, data, cursor: &cursor))).map { _ in try parse(data, cursor: &cursor) })
         case 0xde: return .map(try (0..<Int(try readUInt(2, data, cursor: &cursor))).map { _ in (try parse(data, cursor: &cursor), try parse(data, cursor: &cursor)) })
@@ -57,6 +60,11 @@ public enum MessagePackDecoder {
         }
     }
     private static func take(_ count: Int, _ data: Data, cursor: inout Int) throws -> Data { guard cursor + count <= data.count else { throw DecodeError.truncated }; defer { cursor += count }; return data.subdata(in: cursor..<(cursor + count)) }
+    private static func decodedString(_ count: Int, _ data: Data, cursor: inout Int) throws -> MessagePackValue {
+        let bytes = try take(count, data, cursor: &cursor)
+        guard let value = String(data: bytes, encoding: .utf8) else { throw DecodeError.invalidUTF8 }
+        return .string(value)
+    }
     private static func readUInt(_ count: Int, _ data: Data, cursor: inout Int) throws -> UInt64 { try take(count, data, cursor: &cursor).reduce(0) { ($0 << 8) | UInt64($1) } }
     public enum DecodeError: Error { case truncated, trailingData, invalidUTF8, unsupported(UInt8) }
 }

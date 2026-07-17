@@ -28,8 +28,10 @@ public enum MessagePack {
     }
     public static func string(_ value: String) -> Data {
         let bytes = Data(value.utf8)
-        precondition(bytes.count < 32)
-        return Data([0xa0 | UInt8(bytes.count)]) + bytes
+        if bytes.count < 32 { return Data([0xa0 | UInt8(bytes.count)]) + bytes }
+        if bytes.count <= 0xff { return Data([0xd9, UInt8(bytes.count)]) + bytes }
+        if bytes.count <= 0xffff { return Data([0xda, UInt8(bytes.count >> 8), UInt8(truncatingIfNeeded: bytes.count)]) + bytes }
+        return Data([0xdb, UInt8(bytes.count >> 24), UInt8(bytes.count >> 16), UInt8(bytes.count >> 8), UInt8(truncatingIfNeeded: bytes.count)]) + bytes
     }
     public static func unsigned(_ value: UInt64) -> Data {
         if value <= 0x7f { return Data([UInt8(value)]) }

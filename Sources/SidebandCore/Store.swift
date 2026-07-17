@@ -66,6 +66,7 @@ public final class SidebandStore {
     public private(set) var lastICloudSync: Date?
     public private(set) var voiceCall: VoiceCall?
     public private(set) var voiceCallHistory: [VoiceCall] = []
+    public private(set) var pluginConfigurationRevision = 0
     public private(set) var voiceTrustedOnly: Bool
     public private(set) var richTextTrustedOnly: Bool
     public private(set) var preferredVoiceProfile: LXSTVoice.Profile
@@ -87,6 +88,7 @@ public final class SidebandStore {
     public let reachability = NetworkReachability()
     public let notifications = LocalNotificationManager()
     public let backgroundRefresh = BackgroundRefreshCoordinator()
+    public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
     public let resourceStagingStore: ReticulumResourceStagingStore
     public private(set) var selectedGatewayName: String?
@@ -172,8 +174,9 @@ public final class SidebandStore {
     private let tcpInterfaceHash: Data
     private let messagingIdentity: ReticulumIdentity
 
-    public init(transport: any MessageTransport = QueuedTransport(), persistenceURL: URL? = nil, cloudSync: (any CloudSnapshotSyncing)? = nil) {
+    public init(transport: any MessageTransport = QueuedTransport(), persistenceURL: URL? = nil, cloudSync: (any CloudSnapshotSyncing)? = nil, plugins: [any SidebandCommandPlugin] = [SidebandInfoPlugin()]) {
         self.transport = transport
+        pluginRegistry = SidebandPluginRegistry(plugins: plugins)
         self.persistenceURL = persistenceURL ?? Self.defaultPersistenceURL()
         localDataCipher = LocalDataCipher()
         self.cloudSync = cloudSync ?? CloudKitSnapshotSync()
@@ -764,6 +767,22 @@ public final class SidebandStore {
         save()
     }
 
+    public func setConversationPluginCommands(_ enabled: Bool, conversationID: UUID) {
+        guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
+        conversations[index].pluginCommandsEnabled = enabled
+        save()
+    }
+
+    public func setPluginEnabled(_ enabled: Bool, identifier: String) {
+        pluginRegistry.setEnabled(enabled, identifier: identifier)
+        pluginConfigurationRevision &+= 1
+    }
+
+    public func isPluginEnabled(_ identifier: String) -> Bool {
+        _ = pluginConfigurationRevision
+        return pluginRegistry.isEnabled(identifier)
+    }
+
     public func setConversationDeliveryPreference(_ preference: Conversation.DeliveryPreference, conversationID: UUID) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         conversations[index].deliveryPreference = preference
@@ -893,6 +912,14 @@ public final class SidebandStore {
         messages.append(message)
         save()
         await attemptDelivery(for: conversationID)
+    }
+
+    public func sendPluginCommand(_ command: String, arguments: [String] = [], conversationID: UUID) async {
+        guard SidebandPluginCommandLine.encode(command: command, arguments: arguments) != nil else {
+            lastError = "Plugin command names, arguments or total payload are invalid."
+            return
+        }
+        await sendCommand(.plugin(command: command, arguments: arguments), conversationID: conversationID)
     }
 
     public func validateAttachmentSelection(currentCount: Int, adding newCount: Int) -> Bool {
@@ -3017,6 +3044,18 @@ public final class SidebandStore {
             case .signalReport:
                 let route = hasPath(to: conversations.first(where: { $0.id == conversationID })?.destinationHash ?? "") ? "available" : "unknown"
                 response = "Signal report: Reticulum route \(route). RSSI and SNR are not exposed by Apple Network.framework."
+            case .plugin(let command, let arguments):
+                guard let conversation = conversations.first(where: { $0.id == conversationID }),
+                      conversation.pluginCommandsEnabled else { continue }
+                let context = SidebandPluginContext(
+                    command: command,
+                    arguments: arguments,
+                    senderDestinationHash: conversation.destinationHash,
+                    networkReady: networkState == .ready,
+                    routeAvailable: hasPath(to: conversation.destinationHash)
+                )
+                guard let pluginResponse = await pluginRegistry.execute(command: command, arguments: arguments, context: context) else { continue }
+                response = pluginResponse.text
             }
             enqueueAutomatedResponse(response, conversationID: conversationID)
         }

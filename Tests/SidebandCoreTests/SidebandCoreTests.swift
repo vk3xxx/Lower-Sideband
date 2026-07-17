@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import SidebandCore
 
+private struct TestNativePlugin: SidebandCommandPlugin {
+    let manifest = SidebandPluginManifest(identifier: "test.native", name: "Test Plugin", version: "1", commands: ["test-echo"])
+    func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {
+        SidebandPluginResponse(text: context.arguments.joined(separator: "|"))
+    }
+}
+
 @Test func explicitSingleDestinationProofUsesPacketHashForRoutingAndSignature() throws {
     let identity = ReticulumIdentity()
     let destination = Data(repeating: 0x22, count: 16)
@@ -457,12 +464,45 @@ import Testing
     #expect(received.validate(with: sender))
 }
 
-@Test func pluginAndOversizedCommandsAreNeverDecoded() {
-    let plugin = MessagePack.array([MessagePack.map([(0x00, MessagePack.binary(Data("shell".utf8)))])])
+@Test func pluginCommandsDecodeAsTypedRequestsWithoutExecution() {
+    let plugin = MessagePack.array([MessagePack.map([(0x00, MessagePack.string("weather \"Melbourne CBD\""))])])
     let oversized = MessagePack.array([MessagePack.map([(0x03, MessagePack.binary(Data(repeating: 0x61, count: 1_025)))])])
-    #expect(LXMFCommand.decode(try? MessagePackDecoder.decode(plugin)).isEmpty)
+    #expect(LXMFCommand.decode(try? MessagePackDecoder.decode(plugin)) == [.plugin(command: "weather", arguments: ["Melbourne CBD"])])
     #expect(LXMFCommand.decode(try? MessagePackDecoder.decode(oversized)).isEmpty)
     #expect(LXMFCommand.encode(Array(repeating: .ping, count: 9)) == nil)
+}
+
+@Test func pluginCommandLinesRoundTripQuotesAndRejectUnsafeNames() {
+    let line = SidebandPluginCommandLine.encode(command: "test-echo", arguments: ["two words", "quote\"slash\\"])
+    let parsed = line.flatMap(SidebandPluginCommandLine.parse)
+    #expect(parsed?.command == "test-echo")
+    #expect(parsed?.arguments == ["two words", "quote\"slash\\"])
+    #expect(SidebandPluginCommandLine.encode(command: "bad;command", arguments: []) == nil)
+    #expect(SidebandPluginCommandLine.parse("unterminated \"quote") == nil)
+}
+
+@Test func messagePackExtendedStringsRoundTrip() throws {
+    for length in [32, 255, 256, 1_024] {
+        let value = String(repeating: "x", count: length)
+        #expect(try MessagePackDecoder.decode(MessagePack.string(value)) == .string(value))
+    }
+}
+
+@MainActor @Test func nativePluginRegistryDispatchesOnlyEnabledDeclaredCommands() async {
+    let defaults = UserDefaults.standard
+    let key = "sidebandEnabledPlugins"
+    let previous = defaults.stringArray(forKey: key)
+    defer {
+        if let previous { defaults.set(previous, forKey: key) }
+        else { defaults.removeObject(forKey: key) }
+    }
+    defaults.removeObject(forKey: key)
+    let registry = SidebandPluginRegistry(plugins: [TestNativePlugin()])
+    let context = SidebandPluginContext(command: "test-echo", arguments: ["a", "b"], senderDestinationHash: String(repeating: "0", count: 32), networkReady: true, routeAvailable: true)
+    #expect(await registry.execute(command: "test-echo", arguments: ["a", "b"], context: context)?.text == "a|b")
+    #expect(await registry.execute(command: "undeclared", arguments: [], context: context) == nil)
+    registry.setEnabled(false, identifier: "test.native")
+    #expect(await registry.execute(command: "test-echo", arguments: [], context: context) == nil)
 }
 
 @MainActor @Test func reactionsAreBoundedQueuedAndPersisted() async {
@@ -1138,6 +1178,16 @@ import Testing
     let id = store.conversations[0].id
     store.setConversationTrusted(true, conversationID: id)
     #expect(SidebandStore(persistenceURL: url).conversations[0].isTrusted)
+}
+
+@MainActor @Test func perContactPluginAuthorizationIsOffByDefaultAndPersists() {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Plugin Peer"))
+    let id = store.conversations[0].id
+    #expect(!store.conversations[0].pluginCommandsEnabled)
+    store.setConversationPluginCommands(true, conversationID: id)
+    #expect(SidebandStore(persistenceURL: url).conversations[0].pluginCommandsEnabled)
 }
 
 @MainActor @Test func richTextRenderingDefaultsToTrustedIncomingContacts() {
