@@ -4,7 +4,7 @@
 
 - Version: 1.0.0
 - Build: 16
-- App Store Connect: Build 16 uploaded, processed, and submitted to App Review
+- App Store Connect: Build 16 processed successfully and works in TestFlight, but App Store submission was rejected with `ITMS-90111`
 - Price: Free
 - Availability: All storefronts, including future storefronts
 - Release: Manual release after App Review approval
@@ -13,13 +13,14 @@
 
 - Product metadata and screenshots: Complete
 - App Privacy and age rating: Complete
-- App Store build: Build 16 accepted by App Store Connect from Xcode 26.6 and iOS SDK 26.5
+- App Store build: Build 16 is validated, but Apple rejected App Store submission despite Xcode 26.6 and iOS SDK 26.5 metadata
 - App Review contact: Complete, including phone number
 - EU Digital Services Act status: Non-trader, active
 - Content rights: Necessary third-party content rights confirmed by the developer
 - Add for Review: Complete
-- Submit for Review: Complete — build 16 is Waiting for Review as of 19 July 2026
+- Submit for Review: Rejected as Invalid Binary on 19 July 2026; Apple Developer Support contacted for toolchain clarification
 - App Review submission ID: `9b40a038-d010-41bc-b292-f0a6f212f283`
+- Apple Developer Support case ID: `102946262465`
 
 ## Product page
 
