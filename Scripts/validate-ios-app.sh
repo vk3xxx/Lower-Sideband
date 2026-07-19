@@ -81,7 +81,7 @@ assert_plist_value() {
 
 assert_plist_value CFBundleIdentifier com.supes.MacSideband
 assert_plist_value CFBundleShortVersionString 1.0.0
-assert_plist_value CFBundleVersion 15
+assert_plist_value CFBundleVersion 16
 assert_plist_value NSBonjourServices:0 _reticulum._tcp
 assert_plist_value NSBonjourServices:1 _rns._tcp
 assert_plist_value NSBonjourServices:2 _sideband._tcp
@@ -99,7 +99,7 @@ assert_core_plist_value() {
 }
 
 assert_core_plist_value CFBundleShortVersionString 1.0.0
-assert_core_plist_value CFBundleVersion 15
+assert_core_plist_value CFBundleVersion 16
 
 for required_key in \
     NSLocalNetworkUsageDescription \
