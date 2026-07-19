@@ -3,8 +3,8 @@
 ## Release
 
 - Version: 1.0.0
-- Build: 15
-- App Store Connect: Build 15 uploaded, processed and attached to version 1.0.0
+- Build: 16
+- App Store Connect: Build 16 pending clean rebuild and upload after build 15 was rejected with `ITMS-90111`
 - Price: Free
 - Availability: All storefronts, including future storefronts
 - Release: Manual release after App Review approval
@@ -13,12 +13,12 @@
 
 - Product metadata and screenshots: Complete
 - App Privacy and age rating: Complete
-- App Store build: Complete
+- App Store build: Rebuild required with Apple-supported Xcode/SDK toolchain
 - App Review contact: Complete, including phone number
 - EU Digital Services Act status: Non-trader, active
 - Content rights: Necessary third-party content rights confirmed by the developer
 - Add for Review: Complete
-- Submit for Review: Complete; version status is Waiting for Review
+- Submit for Review: Build 15 rejected as Invalid Binary; build 16 pending upload
 - App Review submission ID: `9b40a038-d010-41bc-b292-f0a6f212f283`
 
 ## Product page
