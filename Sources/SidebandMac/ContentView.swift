@@ -50,6 +50,17 @@ private func appearanceColor(_ color: Conversation.AppearanceColor) -> Color {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func sidebandSidebarSizing() -> some View {
+        #if os(macOS)
+        navigationSplitViewColumnWidth(min: 310, ideal: 340, max: 440)
+        #else
+        self
+        #endif
+    }
+}
+
 private enum DiscoverySort: String, CaseIterable, Identifiable {
     case recent = "Most Recent"
     case hops = "Fewest Hops"
@@ -179,6 +190,7 @@ struct ContentView: View {
                         .keyboardShortcut("n", modifiers: .command)
                         .accessibilityIdentifier("new-conversation")
                 }
+                .sidebandSidebarSizing()
             } detail: {
                 if let conversation = store.selectedConversation {
                     ConversationView(store: store, conversation: conversation)
@@ -444,7 +456,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder private func conversationRow(_ conversation: Conversation) -> some View {
-        HStack {
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: conversation.appearanceSymbol.rawValue)
                 .font(.title3)
                 .foregroundStyle(.white)
@@ -452,8 +464,38 @@ struct ContentView: View {
                 .background(appearanceColor(conversation.appearanceColor), in: Circle())
                 .accessibilityLabel("\(conversation.appearanceColor.rawValue) \(conversation.appearanceSymbol.rawValue) contact icon")
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(conversation.displayName).font(.headline)
+                HStack(spacing: 6) {
+                    Text(conversation.displayName)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(2)
+                    Spacer(minLength: 4)
+                    let failedCount = store.failedMessageCount(for: conversation.id)
+                    if failedCount > 0 {
+                        Label(String(failedCount), systemImage: "exclamationmark.circle.fill")
+                            .font(.caption.bold())
+                            .foregroundStyle(.red)
+                            .accessibilityLabel("\(failedCount) failed messages")
+                    }
+                    if conversation.unreadCount > 0 {
+                        Text(conversation.unreadCount, format: .number)
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.accentColor, in: Capsule())
+                            .accessibilityLabel("\(conversation.unreadCount) unread messages")
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text(conversation.destinationHash)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(1)
+                    Spacer(minLength: 4)
                     if conversation.isPinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Pinned") }
                     if conversation.isArchived { Image(systemName: "archivebox.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Archived") }
                     if conversation.notificationsMuted { Image(systemName: "bell.slash.fill").font(.caption).foregroundStyle(.secondary).accessibilityLabel("Notifications muted") }
@@ -468,7 +510,6 @@ struct ContentView: View {
                     if store.isConversationIdentityVerified(conversation.id) {
                         Image(systemName: "person.badge.shield.checkmark.fill").foregroundStyle(.green).accessibilityLabel("Identity fingerprint verified")
                     }
-                    Spacer()
                     if let message = store.latestMessage(for: conversation.id) {
                         if message.direction == .outgoing {
                             Image(systemName: deliveryStateIcon(message.state))
@@ -481,7 +522,6 @@ struct ContentView: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
-                Text(conversation.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                 if !conversation.tags.isEmpty {
                     Text(conversation.tags.prefix(3).map { "#\($0)" }.joined(separator: "  "))
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -503,23 +543,6 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-            }
-            Spacer()
-            let failedCount = store.failedMessageCount(for: conversation.id)
-            if failedCount > 0 {
-                Label(String(failedCount), systemImage: "exclamationmark.circle.fill")
-                    .font(.caption.bold())
-                    .foregroundStyle(.red)
-                    .accessibilityLabel("\(failedCount) failed messages")
-            }
-            if conversation.unreadCount > 0 {
-                Text(conversation.unreadCount, format: .number)
-                    .font(.caption.bold())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.accentColor, in: Capsule())
-                    .accessibilityLabel("\(conversation.unreadCount) unread messages")
             }
         }
         .accessibilityElement(children: .contain)
@@ -1552,6 +1575,8 @@ private struct ConversationView: View {
     @State private var messagePendingDeletion: Message?
     @State private var inspectedMessage: Message?
     @State private var messageToForward: Message?
+    @State private var showingRename = false
+    @State private var renameDraft = ""
     @State private var isVisible = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @FocusState private var focusedField: FocusTarget?
@@ -1570,7 +1595,7 @@ private struct ConversationView: View {
                     .background(appearanceColor(conversation.appearanceColor), in: Circle())
                     .accessibilityHidden(true)
                 VStack(alignment: .leading) {
-                    Text(conversation.displayName).font(.title2.bold())
+                    renameConversationButton(font: .title2.bold())
                     if conversation.isTrusted { Label("Trusted", systemImage: "checkmark.shield.fill").font(.caption).foregroundStyle(.green) }
                     if !conversation.contactNote.isEmpty {
                         Text(conversation.contactNote).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -1655,6 +1680,8 @@ private struct ConversationView: View {
                 .help(conversation.isBlocked ? "Unblock this contact before calling" : "Start encrypted voice call")
                 .accessibilityLabel("Start encrypted voice call")
                 Menu {
+                    Button("Rename Conversation", systemImage: "pencil") { beginRename() }
+                    Divider()
                     Button("Search Messages", systemImage: "magnifyingglass") { focusedField = .search }
                         .keyboardShortcut("f", modifiers: .command)
                     Button("Focus Message Composer", systemImage: "text.cursor") { focusedField = .composer }
@@ -2060,6 +2087,14 @@ private struct ConversationView: View {
         .sheet(item: $messageToForward) { message in
             ForwardMessageView(store: store, sourceConversationID: conversation.id, message: message)
         }
+        .alert("Rename Conversation", isPresented: $showingRename) {
+            TextField("Name", text: $renameDraft)
+            Button("Cancel", role: .cancel) { }
+            Button("Save") { _ = store.renameConversation(conversation.id, to: renameDraft) }
+                .disabled(renameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("Choose the private name shown for this chat on your synced devices.")
+        }
     }
 
     private var compactConversationHeader: some View {
@@ -2072,10 +2107,7 @@ private struct ConversationView: View {
                     .background(appearanceColor(conversation.appearanceColor), in: Circle())
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(conversation.displayName)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
+                    renameConversationButton(font: .headline)
                     if conversation.isTrusted {
                         Label("Trusted", systemImage: "checkmark.shield.fill")
                             .font(.caption)
@@ -2160,6 +2192,8 @@ private struct ConversationView: View {
 
     private var compactConversationMenu: some View {
         Menu {
+            Button("Rename Conversation", systemImage: "pencil") { beginRename() }
+            Divider()
             if !telemetryMessages.isEmpty {
                 Button("Show telemetry map", systemImage: "map") { showingTelemetryMap = true }
             }
@@ -2210,6 +2244,28 @@ private struct ConversationView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("More conversation actions")
+    }
+
+    private func beginRename() {
+        renameDraft = conversation.displayName
+        showingRename = true
+    }
+
+    private func renameConversationButton(font: Font) -> some View {
+        Button(action: beginRename) {
+            HStack(spacing: 6) {
+                Text(conversation.displayName)
+                    .font(font)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                Image(systemName: "pencil")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .help("Rename conversation")
+        .accessibilityLabel("Rename conversation \(conversation.displayName)")
     }
 
     private var bottomAnchorID: String { "conversation-bottom-\(conversation.id.uuidString)" }

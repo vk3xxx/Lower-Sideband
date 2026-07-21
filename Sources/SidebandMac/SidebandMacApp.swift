@@ -24,13 +24,14 @@ struct SidebandApp: App {
         #if os(macOS)
         WindowGroup("Lower Sideband") {
             protectedContent
-                .frame(minWidth: 850, minHeight: 560)
+                .frame(minWidth: 1_020, minHeight: 640)
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
                     await store.notifications.prepare()
                 }
         }
-        .defaultSize(width: 1080, height: 720)
+        .defaultSize(width: 1_180, height: 760)
+        .windowResizability(.contentMinSize)
         #else
         WindowGroup("Lower Sideband") {
             protectedContent

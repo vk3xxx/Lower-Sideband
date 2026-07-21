@@ -939,10 +939,13 @@ public final class SidebandStore {
 
     @discardableResult
     public func renameConversation(_ conversationID: UUID, to displayName: String) -> Bool {
-        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = String(displayName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(128))
         guard !name.isEmpty, let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return false }
+        guard conversations[index].displayName != name else { return true }
         conversations[index].displayName = name
+        conversations[index].updatedAt = .now
         transcriptCache.removeValue(forKey: conversationID)
+        sortConversations()
         save()
         return true
     }

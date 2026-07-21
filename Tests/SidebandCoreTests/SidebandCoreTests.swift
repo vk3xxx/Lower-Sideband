@@ -1702,8 +1702,13 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Original"))
     let id = store.conversations[0].id
     #expect(!store.renameConversation(id, to: "   "))
+    let previousUpdate = store.conversations[0].updatedAt
     #expect(store.renameConversation(id, to: " Renamed "))
-    #expect(SidebandStore(persistenceURL: url).conversations[0].displayName == "Renamed")
+    let reloaded = SidebandStore(persistenceURL: url).conversations[0]
+    #expect(reloaded.displayName == "Renamed")
+    #expect(reloaded.updatedAt.timeIntervalSince1970.rounded(.down) >= previousUpdate.timeIntervalSince1970.rounded(.down))
+    #expect(store.renameConversation(id, to: String(repeating: "a", count: 200)))
+    #expect(store.conversations[0].displayName.count == 128)
 }
 
 @MainActor @Test func deleteConversationRemovesOnlyItsMessages() async throws {
