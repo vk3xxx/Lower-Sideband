@@ -3171,6 +3171,45 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(!decoded.contains(conversation.contactNote))
 }
 
+@Test func ifacMatchesPythonReticulumReferenceAndRejectsTampering() throws {
+    let ifac = try ReticulumIFAC(networkName: "Lower Sideband", passphrase: "test passphrase", size: 8)
+    #expect(ifac.key.hex == "98fd583893582503381cd15e373bdd44980014d40a56c5930851452504b2b7eaf8b94289efb677c5f48e37541a9de8dc025a40acb2cf805022fb64b4914c7723")
+    let raw = Data(hex: "0000102030405060708090a0b0c0d0e0f00102030405")
+    let protected = try ifac.protect(raw)
+    #expect(protected.hex == "cb6758c963ab7568ca0a5a6049471c35cbb8e9c978263c27411c51902d8d")
+    #expect(try ifac.unprotect(protected) == raw)
+
+    var tampered = protected
+    tampered[tampered.count - 1] ^= 1
+    #expect(throws: ReticulumIFAC.IFACError.authenticationFailed) { try ifac.unprotect(tampered) }
+}
+
+@Test func genericKISSModemSupportsPortsCommandsEscapingAndChunking() {
+    let payload = Data([0x01, KISSModem.frameEnd, 0x02, KISSModem.frameEscape, 0x03])
+    let encoded = KISSModem.frame(port: 7, command: .data, payload: payload)
+    var decoder = KISSModemDecoder()
+    var frames: [KISSModemFrame] = []
+    for byte in encoded { frames.append(contentsOf: decoder.consume(Data([byte]))) }
+    #expect(frames == [.init(port: 7, command: .data, payload: payload)])
+
+    let command = KISSModem.frame(port: 2, command: .persistence, payload: Data([63]))
+    #expect(decoder.consume(command) == [.init(port: 2, command: .persistence, payload: Data([63]))])
+}
+
+@Test func interfaceModesAndKISSConfigurationMatchReticulumSemantics() throws {
+    #expect(ReticulumInterfaceMode.full.rawValue == 0x01)
+    #expect(ReticulumInterfaceMode.gateway.rawValue == 0x06)
+    #expect(ReticulumInterfaceMode.internalMode.rawValue == 0x07)
+    var configuration = KISSModemConfiguration()
+    configuration.serialPath = "/dev/cu.usbmodem-test"
+    configuration.interfaceMode = .pointToPoint
+    configuration.ifacNetworkName = "mesh"
+    configuration.ifacSize = 8
+    #expect(try configuration.validated() == configuration)
+    configuration.port = 16
+    #expect(throws: KISSModemConfiguration.ValidationError.self) { try configuration.validated() }
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
     init(hex: String) {

@@ -1,0 +1,15 @@
+{
+  "originHash" : "266724a200745d44607e4b68272610dcdd2f932b26d946c9e9042c9cf5cc7df9",
+  "pins" : [
+    {
+      "identity" : "ed25519",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/AndrewBarba/ed25519.git",
+      "state" : {
+        "revision" : "77bf751b603c573d50e45e2adb2e06776af219ae",
+        "version" : "1.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

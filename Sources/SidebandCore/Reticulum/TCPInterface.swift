@@ -11,19 +11,21 @@ public actor ReticulumTCPInterface {
     private let connectionQueue = DispatchQueue(label: "sideband.reticulum.tcp")
     private var connection: NWConnection?
     private var decoder = HDLCDecoder()
+    private let ifac: ReticulumIFAC?
     private let packetHandler: @Sendable (ReticulumPacket) async -> Void
     private let stateHandler: @Sendable (State) async -> Void
 
-    public init(host: String, port: UInt16, packetHandler: @escaping @Sendable (ReticulumPacket) async -> Void, stateHandler: @escaping @Sendable (State) async -> Void = { _ in }) {
-        self.init(endpoint: .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!), packetHandler: packetHandler, stateHandler: stateHandler)
+    public init(host: String, port: UInt16, ifac: ReticulumIFAC? = nil, packetHandler: @escaping @Sendable (ReticulumPacket) async -> Void, stateHandler: @escaping @Sendable (State) async -> Void = { _ in }) {
+        self.init(endpoint: .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!), ifac: ifac, packetHandler: packetHandler, stateHandler: stateHandler)
     }
 
-    public init(endpoint: NWEndpoint, packetHandler: @escaping @Sendable (ReticulumPacket) async -> Void, stateHandler: @escaping @Sendable (State) async -> Void = { _ in }) {
+    public init(endpoint: NWEndpoint, ifac: ReticulumIFAC? = nil, packetHandler: @escaping @Sendable (ReticulumPacket) async -> Void, stateHandler: @escaping @Sendable (State) async -> Void = { _ in }) {
         if case let .hostPort(host, port) = endpoint { self.host = host; self.port = port }
         else { self.host = "localhost"; self.port = 1 }
         self.packetHandler = packetHandler
         self.stateHandler = stateHandler
         self.endpoint = endpoint
+        self.ifac = ifac
     }
 
     public func start() {
@@ -49,7 +51,8 @@ public actor ReticulumTCPInterface {
 
     public func send(rawPacket: Data) async throws {
         guard let connection, state == .ready else { throw InterfaceError.notConnected }
-        let framed = HDLC.frame(rawPacket)
+        let outbound = try ifac?.protect(rawPacket) ?? rawPacket
+        let framed = HDLC.frame(outbound)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: framed, completion: .contentProcessed { error in
                 if let error { continuation.resume(throwing: error) } else { continuation.resume() }
@@ -71,7 +74,8 @@ public actor ReticulumTCPInterface {
 
     private func consume(_ data: Data) async {
         for frame in decoder.consume(data) {
-            if let packet = try? ReticulumPacket(raw: frame) { await packetHandler(packet) }
+            guard let raw = try? ifac?.unprotect(frame) ?? frame else { continue }
+            if let packet = try? ReticulumPacket(raw: raw) { await packetHandler(packet) }
         }
     }
 

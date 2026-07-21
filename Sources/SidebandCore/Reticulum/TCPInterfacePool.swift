@@ -15,17 +15,21 @@ public actor ReticulumTCPInterfacePool {
         public let host: String?
         public let port: UInt16?
         public let isBootstrap: Bool
+        public let interfaceMode: ReticulumInterfaceMode
+        public let ifac: ReticulumIFAC?
 
-        public init(id: String, name: String, host: String, port: UInt16, isBootstrap: Bool = false) {
+        public init(id: String, name: String, host: String, port: UInt16, isBootstrap: Bool = false, interfaceMode: ReticulumInterfaceMode = .full, ifac: ReticulumIFAC? = nil) {
             self.id = id
             self.name = name
             self.endpoint = .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
             self.host = host
             self.port = port
             self.isBootstrap = isBootstrap
+            self.interfaceMode = interfaceMode
+            self.ifac = ifac
         }
 
-        public init(id: String, name: String, endpoint: NWEndpoint, isBootstrap: Bool = false) {
+        public init(id: String, name: String, endpoint: NWEndpoint, isBootstrap: Bool = false, interfaceMode: ReticulumInterfaceMode = .full, ifac: ReticulumIFAC? = nil) {
             self.id = id
             self.name = name
             self.endpoint = endpoint
@@ -37,6 +41,8 @@ public actor ReticulumTCPInterfacePool {
                 self.port = nil
             }
             self.isBootstrap = isBootstrap
+            self.interfaceMode = interfaceMode
+            self.ifac = ifac
         }
     }
 
@@ -160,7 +166,7 @@ public actor ReticulumTCPInterfacePool {
     }
 
     private func insert(_ endpoint: Endpoint) {
-        let interface = ReticulumTCPInterface(endpoint: endpoint.endpoint) { [weak self] packet in
+        let interface = ReticulumTCPInterface(endpoint: endpoint.endpoint, ifac: endpoint.ifac) { [weak self] packet in
             await self?.received(packet, on: endpoint.id)
         } stateHandler: { [weak self] state in
             await self?.stateChanged(state, on: endpoint.id)

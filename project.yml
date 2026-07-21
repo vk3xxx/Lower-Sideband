@@ -10,6 +10,10 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     DEVELOPMENT_TEAM: DLV44BUBE7
+packages:
+  Ed25519:
+    url: https://github.com/AndrewBarba/ed25519.git
+    from: 1.1.0
 targets:
   SidebandCore:
     type: framework
@@ -18,11 +22,13 @@ targets:
       - path: Sources/SidebandCore
       - path: Support/PrivacyInfo.xcprivacy
         buildPhase: resources
+    dependencies:
+      - package: Ed25519
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core
-        MARKETING_VERSION: 1.1.8
-        CURRENT_PROJECT_VERSION: 26
+        MARKETING_VERSION: 1.1.9
+        CURRENT_PROJECT_VERSION: 27
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandIOS:
@@ -39,8 +45,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Sideband
-        MARKETING_VERSION: 1.1.8
-        CURRENT_PROJECT_VERSION: 26
+        MARKETING_VERSION: 1.1.9
+        CURRENT_PROJECT_VERSION: 27
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-iOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -56,13 +62,15 @@ targets:
       - path: Sources/SidebandCore
       - path: Support/PrivacyInfo.xcprivacy
         buildPhase: resources
+    dependencies:
+      - package: Ed25519
     settings:
       base:
         PRODUCT_NAME: SidebandCore
         PRODUCT_MODULE_NAME: SidebandCore
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core.mac
-        MARKETING_VERSION: 1.1.8
-        CURRENT_PROJECT_VERSION: 26
+        MARKETING_VERSION: 1.1.9
+        CURRENT_PROJECT_VERSION: 27
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandMac:
@@ -79,8 +87,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Lower Sideband
-        MARKETING_VERSION: 1.1.8
-        CURRENT_PROJECT_VERSION: 26
+        MARKETING_VERSION: 1.1.9
+        CURRENT_PROJECT_VERSION: 27
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-macOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
