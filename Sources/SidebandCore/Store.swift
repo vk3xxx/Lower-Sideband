@@ -1583,6 +1583,7 @@ public final class SidebandStore {
     }
 
     public func applicationDidBecomeActive() async {
+        await pluginRegistry.startEnabledServices()
         isApplicationActive = true
         if let visibleConversationID { markConversationRead(visibleConversationID) }
         // Re-evaluate every configured transport on foregrounding. The aggregate

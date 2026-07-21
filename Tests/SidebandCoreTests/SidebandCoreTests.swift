@@ -1139,6 +1139,15 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(await allowed.execute(command: "probe", arguments: [], context: fullContext).response?.text == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|true|false")
 }
 
+@MainActor @Test func nativeTelemetryPluginsContributeCanonicalSensors() async throws {
+    let registry = SidebandPluginRegistry(plugins: [], telemetry: [SystemTelemetryPlugin()],
+                                          enabledIdentifiers: ["app.sideband.system-telemetry"], persistsConfiguration: false)
+    let sensors = await registry.collectTelemetry()
+    #expect(sensors[SidebandTelemetry.SensorKind.processor.rawValue] != nil)
+    #expect(sensors[SidebandTelemetry.SensorKind.ram.rawValue] != nil)
+    for encoded in sensors.values { _ = try MessagePackDecoder.decode(encoded) }
+}
+
 @MainActor @Test func nativePluginTimeoutIsBoundedAndReported() async {
     let registry = SidebandPluginRegistry(plugins: [SlowNativePlugin()], executionTimeout: .milliseconds(10), enabledIdentifiers: ["test.slow"], persistsConfiguration: false)
     let context = SidebandPluginContext(command: "slow", arguments: [])

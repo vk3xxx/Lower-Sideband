@@ -1582,6 +1582,8 @@ private struct NetworkView: View {
             switch $0 {
             case .networkStatus: "network status"
             case .conversationMetadata: "contact identifier"
+            case .telemetryWrite: "telemetry provider"
+            case .serviceLifecycle: "background service"
             }
         }
         return "Permissions: " + names.joined(separator: ", ")
@@ -2617,7 +2619,10 @@ private struct ConversationView: View {
     private func shareTelemetry() {
         Task {
             if let telemetry = await telemetryCapture.requestTelemetry() {
-                await store.send("Shared telemetry", attachments: [], telemetry: telemetry)
+                let pluginSensors = await store.pluginRegistry.collectTelemetry()
+                let enriched = SidebandTelemetry(capturedAt: telemetry.capturedAt, location: telemetry.location,
+                                                  battery: telemetry.battery, additionalSensors: pluginSensors)
+                await store.send("Shared telemetry", attachments: [], telemetry: enriched)
             } else if let error = telemetryCapture.lastError {
                 store.lastError = error
             }

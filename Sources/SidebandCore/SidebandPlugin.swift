@@ -3,6 +3,8 @@ import Foundation
 public enum SidebandPluginPermission: String, Codable, Hashable, Sendable {
     case networkStatus
     case conversationMetadata
+    case telemetryWrite
+    case serviceLifecycle
 }
 
 public struct SidebandPluginManifest: Codable, Hashable, Sendable, Identifiable {
@@ -48,6 +50,18 @@ public protocol SidebandCommandPlugin: Sendable {
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse
 }
 
+public protocol SidebandServicePlugin: Sendable {
+    var manifest: SidebandPluginManifest { get }
+    func start() async throws
+    func stop() async
+    func status() async -> String
+}
+
+public protocol SidebandTelemetryPlugin: Sendable {
+    var manifest: SidebandPluginManifest { get }
+    func sample() async throws -> [UInt8: Data]
+}
+
 public enum SidebandPluginExecutionOutcome: String, Codable, Hashable, Sendable {
     case succeeded
     case unavailable
@@ -70,12 +84,14 @@ public struct SidebandPluginExecution: Sendable, Equatable {
 
 @MainActor public final class SidebandPluginRegistry {
     private var plugins: [String: any SidebandCommandPlugin] = [:]
+    private var services: [String: any SidebandServicePlugin] = [:]
+    private var telemetry: [String: any SidebandTelemetryPlugin] = [:]
     private var enabledIdentifiers: Set<String>
     private let executionTimeout: Duration
     private let persistsConfiguration: Bool
     public private(set) var rejectedPluginDescriptions: [String] = []
 
-    public init(plugins: [any SidebandCommandPlugin] = [SidebandInfoPlugin()], executionTimeout: Duration = .seconds(3), enabledIdentifiers: Set<String>? = nil, persistsConfiguration: Bool = true) {
+    public init(plugins: [any SidebandCommandPlugin] = [SidebandInfoPlugin()], services: [any SidebandServicePlugin] = [], telemetry: [any SidebandTelemetryPlugin] = [SystemTelemetryPlugin()], executionTimeout: Duration = .seconds(3), enabledIdentifiers: Set<String>? = nil, persistsConfiguration: Bool = true) {
         self.executionTimeout = executionTimeout
         self.persistsConfiguration = persistsConfiguration
         var claimedCommands: Set<String> = []
@@ -96,22 +112,53 @@ public struct SidebandPluginExecution: Sendable, Equatable {
             self.plugins[manifest.identifier] = plugin
             claimedCommands.formUnion(manifest.commands)
         }
+        for plugin in services where Self.isValid(plugin.manifest) && plugin.manifest.permissions.contains(.serviceLifecycle) {
+            self.services[plugin.manifest.identifier] = plugin
+        }
+        for plugin in telemetry where Self.isValid(plugin.manifest) && plugin.manifest.permissions.contains(.telemetryWrite) {
+            self.telemetry[plugin.manifest.identifier] = plugin
+        }
         let saved = persistsConfiguration ? UserDefaults.standard.stringArray(forKey: "sidebandEnabledPlugins") : nil
-        self.enabledIdentifiers = (enabledIdentifiers ?? saved.map(Set.init) ?? Set(self.plugins.keys)).intersection(self.plugins.keys)
+        let identifiers = Set(self.plugins.keys).union(self.services.keys).union(self.telemetry.keys)
+        self.enabledIdentifiers = (enabledIdentifiers ?? saved.map(Set.init) ?? identifiers).intersection(identifiers)
         persistEnabledIdentifiers()
     }
 
     public var manifests: [SidebandPluginManifest] {
-        plugins.values.map(\.manifest).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        (plugins.values.map(\.manifest) + services.values.map(\.manifest) + telemetry.values.map(\.manifest))
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     public func isEnabled(_ identifier: String) -> Bool { enabledIdentifiers.contains(identifier) }
 
     public func setEnabled(_ enabled: Bool, identifier: String) {
-        guard plugins[identifier] != nil else { return }
+        guard plugins[identifier] != nil || services[identifier] != nil || telemetry[identifier] != nil else { return }
         if enabled { enabledIdentifiers.insert(identifier) }
         else { enabledIdentifiers.remove(identifier) }
         persistEnabledIdentifiers()
+    }
+
+    public func startEnabledServices() async {
+        for (identifier, service) in services where enabledIdentifiers.contains(identifier) { try? await service.start() }
+    }
+
+    public func stopServices() async { for service in services.values { await service.stop() } }
+
+    public func serviceStatuses() async -> [String: String] {
+        var result: [String: String] = [:]
+        for (identifier, service) in services { result[identifier] = await service.status() }
+        return result
+    }
+
+    public func collectTelemetry() async -> [UInt8: Data] {
+        var result: [UInt8: Data] = [:]
+        for (identifier, provider) in telemetry where enabledIdentifiers.contains(identifier) {
+            guard let sample = try? await provider.sample() else { continue }
+            for (sensor, encoded) in sample where result[sensor] == nil && encoded.count <= 65_536 && (try? MessagePackDecoder.decode(encoded)) != nil {
+                result[sensor] = encoded
+            }
+        }
+        return result
     }
 
     public func execute(command: String, arguments: [String], context: SidebandPluginContext) async -> SidebandPluginExecution {
@@ -189,6 +236,26 @@ public struct SidebandInfoPlugin: SidebandCommandPlugin {
         default:
             return SidebandPluginResponse(text: "Lower Sideband native plugin service is available.")
         }
+    }
+}
+
+public struct SystemTelemetryPlugin: SidebandTelemetryPlugin {
+    public let manifest = SidebandPluginManifest(
+        identifier: "app.sideband.system-telemetry", name: "System Telemetry", version: "1.0",
+        commands: ["system-telemetry"], permissions: [.telemetryWrite]
+    )
+    public init() {}
+    public func sample() async throws -> [UInt8: Data] {
+        let info = ProcessInfo.processInfo
+        return [
+            SidebandTelemetry.SensorKind.processor.rawValue: MessagePack.map([
+                ("logical_cores", MessagePack.unsigned(UInt64(info.processorCount))),
+                ("active_cores", MessagePack.unsigned(UInt64(info.activeProcessorCount)))
+            ]),
+            SidebandTelemetry.SensorKind.ram.rawValue: MessagePack.map([
+                ("capacity", MessagePack.unsigned(info.physicalMemory))
+            ])
+        ]
     }
 }
 
