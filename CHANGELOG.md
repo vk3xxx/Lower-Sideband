@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.2 (40) - 2026-07-21
+
+- Rebuilt Settings around a native, searchable information architecture for connection, delivery, sync, privacy, notifications, voice, telemetry, radios, plugins, and advanced diagnostics.
+- Added a dedicated macOS Settings window with a resizable sidebar and adaptive iPhone/iPad drill-down navigation.
+- Added concise status summaries, contextual explanations, input validation, confirmations for destructive actions, and improved accessibility labels and help text.
+- Simplified the iPhone conversation toolbar and made New Conversation an explicit, discoverable action with guided ID, contact-link, paste, and QR entry.
+- Corrected the Reticulum announce emission-time wire format so gateways reliably replace stale paths after reconnecting or roaming.
+- Removed stale per-interface routes when a TCP reticule disappears, retained redundant bootstrap gateways, and reject replayed older announces.
+- Hardened proof-timeout recovery with route refreshes and made interrupted encrypted attachment resources return safely to the durable outbox.
+- Added isolated bidirectional endurance testing with random send jitter, forced reconnects, route recovery, and byte-for-byte attachment integrity verification.
+- Added bounded per-destination delivery windows, single-flight outbox draining, disconnect requeueing, and stale secure-link retirement to prevent burst traffic from duplicating or stranding messages.
+- Delayed resource proofs until LXMF payload validation and durable storage complete, made repeated advertisements idempotent, and serialised attachments per conversation.
+- Corrected continuation requests for partial 82-hash resource-map windows so attachments larger than 65 KB complete reliably.
+- Added signed attachment timestamps so text and resource messages retain their original chronological order across devices.
+- Validated 2,000 randomized bidirectional messages and ten binary attachments between macOS and iPad Simulator with zero loss, duplicates, ordering errors, integrity errors, failures, or delivery timeouts on a stable gateway path.
+
 ## 1.3.1 (39) - 2026-07-21
 
 - Added content-free CloudKit silent-push subscriptions for encrypted cross-device background synchronisation.

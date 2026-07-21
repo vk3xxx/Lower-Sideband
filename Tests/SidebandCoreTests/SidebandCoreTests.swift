@@ -43,6 +43,48 @@ import Testing
     #expect(announce.validate())
 }
 
+@Test func announceNonceCarriesReticulumEmissionTimebase() throws {
+    let emittedAt = Date(timeIntervalSince1970: 1_700_000_123)
+    let raw = try ReticulumAnnounceBuilder.packet(
+        identity: ReticulumIdentity(),
+        destinationName: "lxmf.delivery",
+        emittedAt: emittedAt
+    )
+    let announce = try ReticulumAnnounce(packet: ReticulumPacket(raw: raw))
+    #expect(announce.validate())
+    #expect(announce.randomHash.count == 10)
+    let encodedSeconds = announce.randomHash.suffix(5).reduce(UInt64.zero) { ($0 << 8) | UInt64($1) }
+    #expect(encodedSeconds == 1_700_000_123)
+    #expect(announce.emissionTimebase == 1_700_000_123)
+}
+
+@Test func pathTableRejectsOlderReplayedAnnounceEvenWithLowerHopCount() async throws {
+    let identity = ReticulumIdentity()
+    var newerRaw = try ReticulumAnnounceBuilder.packet(
+        identity: identity,
+        destinationName: "lxmf.delivery",
+        emittedAt: Date(timeIntervalSince1970: 200)
+    )
+    newerRaw[1] = 1
+    let newerPacket = try ReticulumPacket(raw: newerRaw)
+    let newerAnnounce = try ReticulumAnnounce(packet: newerPacket)
+
+    var olderRaw = try ReticulumAnnounceBuilder.packet(
+        identity: identity,
+        destinationName: "lxmf.delivery",
+        emittedAt: Date(timeIntervalSince1970: 100)
+    )
+    olderRaw[1] = 0
+    let olderPacket = try ReticulumPacket(raw: olderRaw)
+    let olderAnnounce = try ReticulumAnnounce(packet: olderPacket)
+
+    let table = ReticulumPathTable()
+    #expect(await table.ingest(newerAnnounce, packet: newerPacket, interfaceID: "tcp"))
+    #expect(await !table.ingest(olderAnnounce, packet: olderPacket, interfaceID: "tcp"))
+    #expect(await table.path(to: newerAnnounce.destinationHash, on: "tcp")?.hops == 1)
+    #expect(await table.path(to: newerAnnounce.destinationHash, on: "tcp")?.announceTimebase == 200)
+}
+
 @Test func encryptedProfileAndPortableIdentityRoundTrip() throws {
     let identity = ReticulumIdentity()
     let privateText = try ReticulumIdentityText.encodePrivate(identity)
@@ -2527,15 +2569,18 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
 @Test func attachmentResourceEnvelopePreservesRichMessageContext() throws {
     let identity = ReticulumIdentity()
     let replyID = Data(repeating: 0x5A, count: 32)
+    let timestamp = Date(timeIntervalSince1970: 1_725_000_123.25)
     let envelope = try LXMFResourceEnvelope(
         filename: "report.md", mimeType: "text/markdown", messageBody: "**Update**",
         sourceHash: Data(repeating: 4, count: 16), renderer: .markdown,
-        replyTo: replyID, replyQuote: "Earlier update", fileData: Data("details".utf8), signingIdentity: identity
+        replyTo: replyID, replyQuote: "Earlier update", timestamp: timestamp,
+        fileData: Data("details".utf8), signingIdentity: identity
     )
     let decoded = try LXMFResourceEnvelope(encoded: envelope.encode())
     #expect(decoded.renderer == .markdown)
     #expect(decoded.replyTo == replyID)
     #expect(decoded.replyQuote == "Earlier update")
+    #expect(decoded.timestamp == timestamp)
     #expect(decoded.validate(with: identity))
 }
 
@@ -2688,6 +2733,34 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(try ReticulumResourceHashMapUpdate(encoded: updateBytes).encode() == updateBytes)
 }
 
+@Test func largeResourceRequestsNextHashMapAtPartialWindowBoundary() throws {
+    let data = Data((0..<65_537).map { UInt8(truncatingIfNeeded: $0) })
+    let randomHash = Data([0x10, 0x20, 0x30, 0x40])
+    let manifest = try ReticulumResourceManifest(data: data, randomHash: randomHash)
+    #expect(manifest.partCount > ReticulumResourceAdvertisement.hashMapMaximumEntries)
+    let wireAdvertisement = ReticulumResourceAdvertisement(manifest: manifest).encode()
+    let advertised = try ReticulumResourceAdvertisement(encoded: wireAdvertisement)
+    var receiver = ReticulumResourceReceiver(manifest: try ReticulumResourceManifest(advertisement: advertised))
+    let parts = stride(from: 0, to: data.count, by: ReticulumResourceManifest.defaultSDU).map {
+        data.subdata(in: $0..<min($0 + ReticulumResourceManifest.defaultSDU, data.count))
+    }
+
+    for index in 0..<ReticulumResourceAdvertisement.hashMapMaximumEntries {
+        try receiver.accept(part: parts[index], at: index)
+    }
+    #expect(receiver.receivedPartCount == 82)
+    #expect(receiver.missingPartIndices.isEmpty)
+    #expect(receiver.needsMoreHashMap)
+    let mapRequest = try receiver.nextRequest()
+    #expect(mapRequest.wantsMoreHashMap)
+    #expect(mapRequest.requestedPartHashes.isEmpty)
+
+    try receiver.applyHashMap(segment: 1, hashes: Array(manifest.partHashes.dropFirst(82)))
+    let nextParts = try receiver.nextRequest()
+    #expect(!nextParts.wantsMoreHashMap)
+    #expect(nextParts.requestedPartHashes.count == 4)
+}
+
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
     let payload = Data([0x01, HDLC.flag, 0x02, HDLC.escape, 0x03])
     #expect(HDLC.frame(payload) == Data([0x7e, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e]))
@@ -2832,6 +2905,21 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     await table.invalidate(announce.destinationHash)
 
     #expect(await table.path(to: announce.destinationHash) == nil)
+}
+
+@Test func removingDisconnectedInterfacePathsPreservesLiveSiblingRoutes() async throws {
+    let raw = Data(hex: "0100fae321c442e3c9bdcd7a3e79d850e03c008f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd76ec60bc318e2c0f0d90800010203040506070809347836c9e884f6714ddbdf1e58cdafcc3f6e7354301ef80373b1238f9ae1b8ffd550e9a0d12c0478d6c17d29ae71fd0b2c8f39ad0868532ce4fd00e20ef0cf0853776966742050656572")
+    let packet = try ReticulumPacket(raw: raw)
+    let announce = try ReticulumAnnounce(packet: packet)
+    let table = ReticulumPathTable()
+    #expect(await table.ingest(announce, packet: packet, interfaceID: "bootstrap-a"))
+    #expect(await table.ingest(announce, packet: packet, interfaceID: "public-b"))
+
+    await table.removePaths(on: ["bootstrap-a"])
+
+    #expect(await table.path(to: announce.destinationHash, on: "bootstrap-a") == nil)
+    #expect(await table.path(to: announce.destinationHash, on: "public-b") != nil)
+    #expect(await table.path(to: announce.destinationHash) != nil)
 }
 
 @Test func pathTableExpiresRoutes() async throws {

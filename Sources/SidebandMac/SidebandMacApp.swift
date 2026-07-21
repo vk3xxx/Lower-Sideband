@@ -1,5 +1,6 @@
 import SwiftUI
 import SidebandCore
+import CryptoKit
 @preconcurrency import UserNotifications
 #if os(iOS)
 import UIKit
@@ -32,6 +33,10 @@ struct SidebandApp: App {
         }
         .defaultSize(width: 1_180, height: 760)
         .windowResizability(.contentMinSize)
+        Settings {
+            SidebandSettingsView(store: store, showsCloseButton: false)
+                .frame(minWidth: 900, minHeight: 640)
+        }
         #else
         WindowGroup("Lower Sideband") {
             protectedContent
@@ -401,6 +406,13 @@ final class SidebandAppDelegate: NSObject, UIApplicationDelegate {
 @MainActor
 enum DeliverySoakRunner {
     private static let environment = ProcessInfo.processInfo.environment
+    private static let networkPreferenceKeys = [
+        "reticulumAutoConnect", "reticulumInternetOnly", "reticulumHost",
+        "reticulumIPv6Host", "reticulumInternetHost", "reticulumInternetPort",
+        "reticulumPort", "reticulumPreferIPv6", "reticulumConnectionMode"
+    ]
+    private static var savedNetworkPreferences: [String: Any] = [:]
+    private static var missingNetworkPreferences: Set<String> = []
     private static var hasConfiguredNetwork = false
     private static var hasStartedNetwork = false
     private static var hasStarted = false
@@ -410,7 +422,11 @@ enum DeliverySoakRunner {
         guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return }
         guard !hasConfiguredNetwork else { return }
         hasConfiguredNetwork = true
-        store.removeDeliverySoakMessages()
+        for key in networkPreferenceKeys {
+            if let value = UserDefaults.standard.object(forKey: key) { savedNetworkPreferences[key] = value }
+            else { missingNetworkPreferences.insert(key) }
+        }
+        if environment["SIDEBAND_SOAK_PRESERVE"] != "1" { store.removeDeliverySoakMessages() }
         deliveryTimeoutBaseline = store.deliveryTimeoutCount
         store.autoConnectEnabled = mode == "automatic" || environment["SIDEBAND_SOAK_AUTOCONNECT"] == "1"
         store.internetOnlyEnabled = mode == "public"
@@ -433,14 +449,6 @@ enum DeliverySoakRunner {
         default:
             break
         }
-        UserDefaults.standard.set(store.autoConnectEnabled, forKey: "reticulumAutoConnect")
-        UserDefaults.standard.set(store.internetOnlyEnabled, forKey: "reticulumInternetOnly")
-        UserDefaults.standard.set(store.networkHost, forKey: "reticulumHost")
-        UserDefaults.standard.set(store.networkIPv6Host, forKey: "reticulumIPv6Host")
-        UserDefaults.standard.set(store.networkInternetHost, forKey: "reticulumInternetHost")
-        UserDefaults.standard.set(store.networkInternetPort, forKey: "reticulumInternetPort")
-        UserDefaults.standard.set(store.networkPort, forKey: "reticulumPort")
-        UserDefaults.standard.set(store.preferIPv6, forKey: "reticulumPreferIPv6")
     }
 
     static func startNetworkIfRequested(_ store: SidebandStore) async -> Bool {
@@ -451,6 +459,10 @@ enum DeliverySoakRunner {
         // this DEBUG-only acceptance runner is invoked on macOS. Reset that
         // in-flight attempt so the requested test topology is deterministic.
         await store.disconnectNetwork()
+        return await connect(store, mode: mode)
+    }
+
+    private static func connect(_ store: SidebandStore, mode: String) async -> Bool {
         switch mode {
         case "local":
             await store.connectNetwork(
@@ -479,10 +491,12 @@ enum DeliverySoakRunner {
             let reportName = environment["SIDEBAND_SOAK_REPORT"]
         else { return }
         hasStarted = true
+        defer { restoreNetworkPreferences() }
 
-        let reportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "SidebandSwift", directoryHint: .isDirectory)
-            .appending(path: reportName)
+        let reportURL = environment["SIDEBAND_SOAK_REPORT_PATH"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appending(path: "SidebandSwift", directoryHint: .isDirectory)
+                .appending(path: reportName)
         try? FileManager.default.createDirectory(at: reportURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let startedAt = Date()
         var networkReadyDeadline = ContinuousClock.now + .seconds(90)
@@ -501,16 +515,59 @@ enum DeliverySoakRunner {
             return
         }
 
+        // Do not turn a start-up announce race into thousands of queued
+        // messages. Both a current path and the recipient identity are needed
+        // for authenticated LXMF encryption.
+        guard await waitForPeer(store, destination: destination, timeout: 120) else {
+            await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "peer-discovery-timeout")
+            return
+        }
+
+        let jitterMinimum = max(0, Int(environment["SIDEBAND_SOAK_JITTER_MIN_MS"] ?? "5") ?? 5)
+        let jitterMaximum = max(jitterMinimum, Int(environment["SIDEBAND_SOAK_JITTER_MAX_MS"] ?? "45") ?? 45)
+        let attachmentInterval = max(0, Int(environment["SIDEBAND_SOAK_ATTACHMENT_INTERVAL"] ?? "0") ?? 0)
+        let reconnectInterval = max(0, Int(environment["SIDEBAND_SOAK_RECONNECT_INTERVAL"] ?? "0") ?? 0)
+        var randomState = UInt64(environment["SIDEBAND_SOAK_SEED"] ?? "") ?? 0x5B1D_BA5E_CAFE_F00D
         let existingBodies = Set(store.messages.map(\.body))
         for sequence in 1...count {
             let body = messageBody(prefix: outboundPrefix, sequence: sequence)
-            if !existingBodies.contains(body) { await store.send(body) }
-            try? await Task.sleep(for: .milliseconds(20))
+            if !existingBodies.contains(body) {
+                var attachments: [Attachment] = []
+                if attachmentInterval > 0, sequence.isMultiple(of: attachmentInterval) {
+                    let payload = attachmentPayload(prefix: outboundPrefix, sequence: sequence)
+                    if var attachment = try? await store.attachmentStore.save(
+                        data: payload,
+                        filename: "soak-\(sequence).bin",
+                        mimeType: "application/octet-stream"
+                    ) {
+                        attachment.state = .local
+                        attachment.progress = 0
+                        attachments = [attachment]
+                    }
+                }
+                _ = await store.send(body, attachments: attachments)
+            }
+            if sequence.isMultiple(of: 25) {
+                await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "enqueueing-\(sequence)-of-\(count)")
+            }
+            if reconnectInterval > 0, sequence < count, sequence.isMultiple(of: reconnectInterval) {
+                await store.disconnectNetwork()
+                _ = await connect(store, mode: environment["SIDEBAND_SOAK_NETWORK_MODE"] ?? "local")
+                guard await waitForPeer(store, destination: destination, timeout: 120) else {
+                    await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "reconnect-peer-timeout")
+                    return
+                }
+            }
+            randomState = randomState &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            let delayRange = UInt64(jitterMaximum - jitterMinimum + 1)
+            let delay = jitterMinimum + Int(randomState % delayRange)
+            if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
         }
 
-        networkReadyDeadline = ContinuousClock.now + .seconds(600)
+        let deliveryDeadlineSeconds = max(30, Int(environment["SIDEBAND_SOAK_DEADLINE_SECONDS"] ?? "600") ?? 600)
+        networkReadyDeadline = ContinuousClock.now + .seconds(deliveryDeadlineSeconds)
         while ContinuousClock.now < networkReadyDeadline {
-            let report = makeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, phase: "running")
+            let report = await makeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, phase: "running")
             write(report, to: reportURL)
             if report.outboundDelivered == count,
                report.inboundReceived == count,
@@ -519,7 +576,9 @@ enum DeliverySoakRunner {
                report.missingOutbound.isEmpty,
                report.missingInbound.isEmpty,
                report.duplicateInbound.isEmpty,
-               report.inboundInOrder {
+               report.inboundInOrder,
+               report.attachmentIntegrityFailures.isEmpty,
+               report.inboundAttachmentsVerified == report.expectedAttachmentsEachDirection {
                 var complete = report
                 complete.phase = "complete"
                 complete.completedAt = .now
@@ -532,10 +591,10 @@ enum DeliverySoakRunner {
     }
 
     private static func writeReport(store: SidebandStore, destination: String, outboundPrefix: String, inboundPrefix: String, count: Int, startedAt: Date, reportURL: URL, phase: String) async {
-        write(makeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, phase: phase), to: reportURL)
+        write(await makeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, phase: phase), to: reportURL)
     }
 
-    private static func makeReport(store: SidebandStore, destination: String, outboundPrefix: String, inboundPrefix: String, count: Int, startedAt: Date, phase: String) -> DeliverySoakReport {
+    private static func makeReport(store: SidebandStore, destination: String, outboundPrefix: String, inboundPrefix: String, count: Int, startedAt: Date, phase: String) async -> DeliverySoakReport {
         let conversationID = store.conversations.first(where: { $0.destinationHash == destination.lowercased() })?.id
         let relevant = store.messages.filter { $0.conversationID == conversationID }
         let outbound = relevant.filter { $0.direction == .outgoing && $0.body.hasPrefix(outboundPrefix + "-") }
@@ -547,11 +606,38 @@ enum DeliverySoakRunner {
         let expectedInbound = (1...count).map { messageBody(prefix: inboundPrefix, sequence: $0) }
         let duplicateInbound = Dictionary(grouping: inboundBodies, by: { $0 }).filter { $0.value.count > 1 }.keys.sorted()
         let receivedInOrder = inbound.sorted(by: { $0.timestamp < $1.timestamp }).map(\.body)
+        let attachmentInterval = max(0, Int(environment["SIDEBAND_SOAK_ATTACHMENT_INTERVAL"] ?? "0") ?? 0)
+        let expectedAttachmentSequences = attachmentInterval > 0
+            ? Array(stride(from: attachmentInterval, through: count, by: attachmentInterval))
+            : []
+        var inboundAttachmentsVerified = 0
+        var attachmentIntegrityFailures: [String] = []
+        for sequence in expectedAttachmentSequences {
+            let body = messageBody(prefix: inboundPrefix, sequence: sequence)
+            // A progress report must not classify a future attachment as
+            // corrupt simply because its message has not arrived yet. Missing
+            // messages are already represented by `missingInbound`; attachment
+            // integrity becomes evaluable only after the envelope is present.
+            guard let message = inbound.first(where: { $0.body == body }) else { continue }
+            guard message.attachments.count == 1 else {
+                attachmentIntegrityFailures.append("\(body): missing attachment metadata")
+                continue
+            }
+            let expected = attachmentPayload(prefix: inboundPrefix, sequence: sequence)
+            guard let received = try? await store.attachmentStore.read(message.attachments[0]),
+                  received == expected,
+                  message.attachments[0].contentHash == Data(SHA256.hash(data: expected)) else {
+                attachmentIntegrityFailures.append("\(body): content or SHA-256 mismatch")
+                continue
+            }
+            inboundAttachmentsVerified += 1
+        }
         return DeliverySoakReport(
             phase: phase,
             networkMode: environment["SIDEBAND_SOAK_NETWORK_MODE"] ?? "unchanged",
             networkState: String(describing: store.networkState),
             automaticConnection: store.automaticConnectionDescription,
+            localDestination: store.localDeliveryHash,
             destination: destination,
             startedAt: startedAt,
             completedAt: nil,
@@ -565,6 +651,9 @@ enum DeliverySoakRunner {
             missingInbound: expectedInbound.filter { !inboundBodySet.contains($0) },
             duplicateInbound: duplicateInbound,
             inboundInOrder: receivedInOrder == expectedInbound,
+            expectedAttachmentsEachDirection: expectedAttachmentSequences.count,
+            inboundAttachmentsVerified: inboundAttachmentsVerified,
+            attachmentIntegrityFailures: attachmentIntegrityFailures,
             knownPath: store.hasPath(to: destination),
             deliveryTimeouts: max(0, store.deliveryTimeoutCount - deliveryTimeoutBaseline),
             lastError: store.lastError
@@ -575,13 +664,50 @@ enum DeliverySoakRunner {
         "\(prefix)-\(String(format: "%03d", sequence))"
     }
 
+    private static func attachmentPayload(prefix: String, sequence: Int) -> Data {
+        let sizes = [1_024, 8_193, 32_768, 65_537]
+        let size = sizes[(max(1, sequence) - 1) % sizes.count]
+        let seed = Data(SHA256.hash(data: Data("\(prefix):\(sequence)".utf8)))
+        return Data((0..<size).map { index in seed[index % seed.count] ^ UInt8(truncatingIfNeeded: index &+ sequence) })
+    }
+
+    private static func waitForPeer(_ store: SidebandStore, destination: String, timeout: Int) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(timeout)
+        var nextRequest = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            if store.networkState == .ready,
+               store.hasPath(to: destination),
+               store.hasValidatedDiscovery(to: destination) { return true }
+            if store.networkState == .ready, ContinuousClock.now >= nextRequest {
+                await store.requestPath(to: destination)
+                nextRequest = ContinuousClock.now + .seconds(4)
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return false
+    }
+
+    private static func restoreNetworkPreferences() {
+        for key in networkPreferenceKeys {
+            if missingNetworkPreferences.contains(key) { UserDefaults.standard.removeObject(forKey: key) }
+            else if let value = savedNetworkPreferences[key] { UserDefaults.standard.set(value, forKey: key) }
+        }
+    }
+
     private static func write(_ report: DeliverySoakReport, to url: URL) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(report) else { return }
         try? data.write(to: url, options: .atomic)
-        if let line = String(data: data, encoding: .utf8) { print("SIDEBAND_SOAK_REPORT \(line)") }
+        print(
+            "SIDEBAND_SOAK_REPORT phase=\(report.phase) " +
+            "out=\(report.outboundDelivered)/\(report.expectedEachDirection) " +
+            "queued=\(report.outboundQueued) sent=\(report.outboundSent) failed=\(report.outboundFailed) " +
+            "in=\(report.inboundReceived)/\(report.expectedEachDirection) " +
+            "attachments=\(report.inboundAttachmentsVerified)/\(report.expectedAttachmentsEachDirection) " +
+            "timeouts=\(report.deliveryTimeouts)"
+        )
     }
 }
 
@@ -590,6 +716,7 @@ private struct DeliverySoakReport: Codable {
     let networkMode: String
     let networkState: String
     let automaticConnection: String
+    let localDestination: String
     let destination: String
     let startedAt: Date
     var completedAt: Date?
@@ -603,6 +730,9 @@ private struct DeliverySoakReport: Codable {
     let missingInbound: [String]
     let duplicateInbound: [String]
     let inboundInOrder: Bool
+    let expectedAttachmentsEachDirection: Int
+    let inboundAttachmentsVerified: Int
+    let attachmentIntegrityFailures: [String]
     let knownPath: Bool
     let deliveryTimeouts: Int
     let lastError: String?

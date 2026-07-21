@@ -15,6 +15,11 @@ public struct ReticulumAnnounce: Equatable, Sendable {
     public let appData: Data
     public let identityHash: Data
 
+    /// Five-byte Reticulum announce emission timebase used for route freshness.
+    public var emissionTimebase: UInt64 {
+        randomHash.suffix(5).reduce(UInt64.zero) { ($0 << 8) | UInt64($1) }
+    }
+
     public init(packet: ReticulumPacket) throws {
         guard packet.packetType == .announce else { throw ValidationError.notAnnounce }
         let ratchetBytes = packet.contextFlag ? Self.ratchetLength : 0

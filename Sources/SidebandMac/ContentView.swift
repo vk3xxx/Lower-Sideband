@@ -88,6 +88,9 @@ private enum ConversationSort: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #endif
     @Bindable var store: SidebandStore
     @State private var showingNewConversation = false
     @State private var showingNetwork = false
@@ -122,12 +125,28 @@ struct ContentView: View {
             localIdentityBar
             NavigationSplitView {
                 List(selection: $store.selectedConversationID) {
-                    Section("Conversations") { ForEach(filteredConversations) { conversation in
-                        conversationRow(conversation)
-                        .padding(.vertical, 4)
-                        .tag(conversation.id)
-                        .contextMenu { conversationMenu(conversation) }
-                    } }
+                    Section {
+                        ForEach(filteredConversations) { conversation in
+                            conversationRow(conversation)
+                                .padding(.vertical, 4)
+                                .tag(conversation.id)
+                                .contextMenu { conversationMenu(conversation) }
+                        }
+                    } header: {
+                        HStack {
+                            Text("Conversations")
+                            Spacer()
+                            Button { showingNewConversation = true } label: {
+                                Label("New", systemImage: "square.and.pencil")
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.caption.weight(.semibold))
+                            .textCase(nil)
+                            .accessibilityLabel("New conversation")
+                            .accessibilityHint("Start a conversation using an LXMF ID or contact link")
+                            .help("Start a conversation using an LXMF ID or contact link (Command-N)")
+                        }
+                    }
                     if !filteredDiscoveries.isEmpty {
                         Section("Discovered") {
                             ForEach(filteredDiscoveries) { discovery in
@@ -139,12 +158,15 @@ struct ContentView: View {
                 .searchable(text: $conversationSearch, prompt: "Search conversations")
                 .navigationTitle("Lower Sideband")
                 .toolbar {
-                    Button(action: { showingNetwork = true }) {
-                        Label(networkToolbarLabel, systemImage: networkToolbarIcon)
-                    }.help(networkToolbarHelp)
+                    Button(action: openAppSettings) {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                    .accessibilityIdentifier("app-settings")
+                    .help("Open Lower Sideband settings. Current network state: \(networkToolbarLabel). \(networkToolbarHelp)")
                     Button { showingSituationMap = true } label: {
                         Label("Situation map", systemImage: "map")
                     }.help("Show the latest trusted telemetry from every contact and any installed offline GeoJSON overlay")
+                    #if os(macOS)
                     Button { showingArchived.toggle() } label: {
                         Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
                     }
@@ -192,6 +214,34 @@ struct ContentView: View {
                         Button { showingLegacyDatabaseImporter = true } label: { Label("Import Python Sideband Database", systemImage: "cylinder.split.1x2") }
                     } label: { Label("Contacts", systemImage: "person.2") }
                     .help("Import contacts or conversation archives")
+                    #else
+                    Menu {
+                        Section("Conversations") {
+                            Picker("Filter", selection: $conversationFilter) {
+                                ForEach(ConversationFilter.allCases) { filter in Text(filter.rawValue).tag(filter) }
+                            }
+                            Picker("Sort", selection: $conversationSort) {
+                                ForEach(ConversationSort.allCases) { sort in Text(sort.rawValue).tag(sort) }
+                            }
+                            Button(showingArchived ? "Hide Archived" : "Show Archived", systemImage: showingArchived ? "archivebox.fill" : "archivebox") {
+                                showingArchived.toggle()
+                            }
+                            Button("Mark All Read", systemImage: "envelope.open") { _ = store.markAllConversationsRead() }
+                                .disabled(store.totalUnreadCount == 0)
+                        }
+                        Section("Data") {
+                            Button(action: exportBackup) { Label("Export Backup", systemImage: "externaldrive.badge.plus") }
+                            Button { showingBackupImporter = true } label: { Label("Restore Backup", systemImage: "externaldrive.badge.timemachine") }
+                            Button(action: exportContacts) { Label("Export Contacts", systemImage: "person.2.badge.gearshape") }
+                            Button { showingContactCollectionImporter = true } label: { Label("Import Contacts", systemImage: "person.crop.circle.badge.plus") }
+                            Button { showingConversationArchiveImporter = true } label: { Label("Import Conversation Archive", systemImage: "bubble.left.and.text.bubble.right") }
+                            Button { showingLegacyDatabaseImporter = true } label: { Label("Import Python Sideband Database", systemImage: "cylinder.split.1x2") }
+                        }
+                    } label: {
+                        Label("More actions", systemImage: "ellipsis.circle")
+                    }
+                    .help("Filter conversations or manage app data")
+                    #endif
                     Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
                         .keyboardShortcut("n", modifiers: .command)
                         .help("Start a conversation using an LXMF destination address or contact link")
@@ -203,12 +253,21 @@ struct ContentView: View {
                     ConversationView(store: store, conversation: conversation)
                         .id(conversation.id)
                 } else {
-                    ContentUnavailableView("No Conversation", systemImage: "bubble.left.and.bubble.right", description: Text("Create a conversation using an LXMF destination."))
+                    ContentUnavailableView {
+                        Label("No Conversation", systemImage: "bubble.left.and.bubble.right")
+                    } description: {
+                        Text("Start a secure conversation using an LXMF ID or contact link.")
+                    } actions: {
+                        Button("New Conversation", systemImage: "square.and.pencil") {
+                            showingNewConversation = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                 }
             }
         }
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
-        .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
+        .sheet(isPresented: $showingNetwork) { SidebandSettingsView(store: store, showsCloseButton: true) }
         .sheet(isPresented: $showingCallHistory) { CallHistoryView(store: store) }
         .sheet(isPresented: $showingSituationMap) { SituationMapView(store: store) }
         .sheet(isPresented: Binding(
@@ -351,6 +410,14 @@ struct ContentView: View {
             }
         }
         .onChange(of: store.voiceCall) { _, call in synchronizeCallKit(call) }
+    }
+
+    private func openAppSettings() {
+        #if os(macOS)
+        openSettings()
+        #else
+        showingNetwork = true
+        #endif
     }
 
     private func synchronizeCallKit(_ call: VoiceCall?) {
@@ -3721,16 +3788,37 @@ private struct NewConversationView: View {
     #endif
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New Conversation").font(.title2.bold())
-            TextField("Display name (optional)", text: $name)
-                .focused($focusedField, equals: .name)
-                .textContentType(.name)
-            TextField("LXMF destination, contact link or lxm:// paper message", text: $address)
-                .font(.body.monospaced())
-                .focused($focusedField, equals: .address)
-                .destinationInputBehavior()
-                .onSubmit(create)
-                .accessibilityIdentifier("new-conversation-address")
+            VStack(alignment: .leading, spacing: 5) {
+                Text("New Conversation").font(.title2.bold())
+                Text("Enter the person’s LXMF ID, paste their contact link, or scan their QR code.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("LXMF ID or contact link")
+                    .font(.headline)
+                HStack {
+                    TextField("32-character LXMF ID or lxmf:// link", text: $address)
+                        .font(.body.monospaced())
+                        .focused($focusedField, equals: .address)
+                        .destinationInputBehavior()
+                        .onSubmit(create)
+                        .accessibilityIdentifier("new-conversation-address")
+                    Button("Paste", systemImage: "doc.on.clipboard", action: pasteAddress)
+                        .labelStyle(.iconOnly)
+                        .help("Paste an LXMF ID or contact link")
+                }
+                Text("You can copy an ID from a message, contact card, or another Lower Sideband device.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Name")
+                    .font(.headline)
+                TextField("Optional name for this chat", text: $name)
+                    .focused($focusedField, equals: .name)
+                    .textContentType(.name)
+            }
             #if os(iOS)
             Button { showingContactScanner = true } label: {
                 Label("Scan contact or paper message", systemImage: "qrcode.viewfinder")
@@ -3767,6 +3855,14 @@ private struct NewConversationView: View {
                 showingContactScanner = false
             }
         }
+        #endif
+    }
+
+    private func pasteAddress() {
+        #if os(macOS)
+        address = NSPasteboard.general.string(forType: .string) ?? address
+        #else
+        address = UIPasteboard.general.string ?? address
         #endif
     }
 

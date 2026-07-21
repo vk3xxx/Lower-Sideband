@@ -9,6 +9,7 @@ public struct ReticulumPath: Codable, Equatable, Sendable {
     public var publicKey: Data
     public var appData: Data
     public var ratchet: Data?
+    public var announceTimebase: UInt64? = nil
     /// The concrete TCP reticule that supplied this route. Older persisted
     /// paths decode as nil and remain usable by single-interface clients.
     public var interfaceID: String?
@@ -37,11 +38,17 @@ public actor ReticulumPathTable {
             publicKey: announce.publicKey,
             appData: announce.appData,
             ratchet: announce.ratchet,
+            announceTimebase: announce.emissionTimebase,
             interfaceID: interfaceID
         )
         let routeKey = interfaceID ?? ""
-        if let existing = paths[announce.destinationHash]?[routeKey], !existing.isExpired, existing.hops < candidate.hops, !wasRequested {
-            return false
+        if let existing = paths[announce.destinationHash]?[routeKey], !existing.isExpired {
+            if let previousTimebase = existing.announceTimebase {
+                if candidate.announceTimebase ?? 0 < previousTimebase { return false }
+                if candidate.announceTimebase == previousTimebase, existing.hops < candidate.hops, !wasRequested { return false }
+            } else if existing.hops < candidate.hops, !wasRequested {
+                return false
+            }
         }
         paths[announce.destinationHash, default: [:]][routeKey] = candidate
         pendingRequests.removeValue(forKey: announce.destinationHash)
@@ -73,6 +80,20 @@ public actor ReticulumPathTable {
     public func invalidate(_ destinationHash: Data) {
         paths.removeValue(forKey: destinationHash)
         pendingRequests.removeValue(forKey: destinationHash)
+    }
+
+    /// Removes routes whose concrete interface has disappeared from the
+    /// connection pool. Keeping these routes makes a destination look
+    /// reachable while every packet is sent through unrelated interfaces.
+    public func removePaths(on interfaceIDs: Set<String>) {
+        guard !interfaceIDs.isEmpty else { return }
+        paths = paths.compactMapValues { routes in
+            let retained = routes.filter { routeKey, route in
+                guard let interfaceID = route.interfaceID else { return true }
+                return !interfaceIDs.contains(interfaceID) && !interfaceIDs.contains(routeKey)
+            }
+            return retained.isEmpty ? nil : retained
+        }
     }
     public func isPending(_ destinationHash: Data, timeout: TimeInterval = 15, now: Date = .now) -> Bool {
         guard let requested = pendingRequests[destinationHash] else { return false }

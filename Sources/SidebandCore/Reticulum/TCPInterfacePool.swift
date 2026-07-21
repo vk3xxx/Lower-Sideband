@@ -150,19 +150,7 @@ public actor ReticulumTCPInterfacePool {
         entry.state = state
         if state == .ready { entry.connectedAt = .now }
         entries[interfaceID] = entry
-        let bootstrapInterfaces = entries.values
-            .filter { $0.endpoint.isBootstrap }
-            .map(\.interface)
-        let shouldShedBootstrap = entries.values.count {
-            !$0.endpoint.isBootstrap && $0.state == .ready
-        } >= 2
-        if shouldShedBootstrap {
-            entries = entries.filter { !$0.value.endpoint.isBootstrap }
-        }
         await publishState(force: true)
-        if shouldShedBootstrap {
-            for interface in bootstrapInterfaces { await interface.stop() }
-        }
     }
 
     private func insert(_ endpoint: Endpoint) {
