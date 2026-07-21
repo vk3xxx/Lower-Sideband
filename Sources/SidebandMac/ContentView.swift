@@ -92,6 +92,7 @@ struct ContentView: View {
     @State private var showingNewConversation = false
     @State private var showingNetwork = false
     @State private var showingCallHistory = false
+    @State private var showingSituationMap = false
     @State private var conversationSearch = ""
     @State private var showingArchived = false
     @State private var conversationFilter: ConversationFilter = .all
@@ -140,6 +141,9 @@ struct ContentView: View {
                     Button(action: { showingNetwork = true }) {
                         Label(networkToolbarLabel, systemImage: networkToolbarIcon)
                     }.help(networkToolbarHelp)
+                    Button { showingSituationMap = true } label: {
+                        Label("Situation map", systemImage: "map")
+                    }.help("Show the latest trusted telemetry from every contact and any installed offline GeoJSON overlay")
                     Button { showingArchived.toggle() } label: {
                         Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
                     }
@@ -204,6 +208,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
         .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
         .sheet(isPresented: $showingCallHistory) { CallHistoryView(store: store) }
+        .sheet(isPresented: $showingSituationMap) { SituationMapView(store: store) }
         .sheet(isPresented: Binding(
             get: { store.voiceCall != nil },
             set: { presented in if !presented, store.voiceCall != nil { endVoiceCall() } }

@@ -340,6 +340,16 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(decoded == [entry])
 }
 
+@Test func geospatialRelationshipCalculatesBearingDistanceAndRadioHorizon() {
+    let origin = SidebandTelemetry.Location(latitude: -37.8136, longitude: 144.9631, altitude: 100)
+    let target = SidebandTelemetry.Location(latitude: -37.8146, longitude: 144.9731, altitude: 200)
+    let relationship = SidebandGeospatial.relationship(from: origin, to: target)
+    #expect(relationship.surfaceDistanceMeters > 850 && relationship.surfaceDistanceMeters < 1_000)
+    #expect(relationship.initialBearingDegrees > 90 && relationship.initialBearingDegrees < 110)
+    #expect(relationship.verticalSeparationMeters == 100)
+    #expect(relationship.withinRadioHorizon)
+}
+
 @Test func telemetryHistorySummarizesTrackAndExportsInteroperableFiles() throws {
     let conversationID = UUID()
     let first = SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_000), location: .init(latitude: -37.8136, longitude: 144.9631, altitude: 12, accuracy: 5, updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
