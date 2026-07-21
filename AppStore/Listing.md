@@ -2,9 +2,9 @@
 
 ## Release
 
-- Version: 1.1.0
-- Build: 18
-- App Store Connect: Build 18 is the corrected archive built with Xcode 26.6 and the iOS 26.5 SDK; build 16 was rejected with `ITMS-90111`
+- Version: 1.1.1
+- Build: 19
+- App Store Connect: Build 19 includes durable cross-device conversation deletion and the Lower Sideband macOS product name; it is available to the internal TestFlight group only
 - Price: Free
 - Availability: All storefronts, including future storefronts
 - Release: Automatically release after App Review approval
@@ -13,14 +13,15 @@
 
 - Product metadata and screenshots: Complete
 - App Privacy and age rating: Complete
-- App Store build: Build 18 was uploaded and submitted to App Review on 21 July 2026; status is Waiting for Review
+- App Store build: The submitted 1.1.0 build 18 remains Waiting for Review and was not replaced by build 19
 - App Review contact: Complete, including phone number
 - EU Digital Services Act status: Non-trader, active
 - Content rights: Necessary third-party content rights confirmed by the developer
 - User safety: Contacts can be blocked; contacts and individual incoming messages can be reported through a user-reviewed support email that excludes private content and keys by default
 - Add for Review: Complete
-- Submit for Review: Rejected as Invalid Binary on 19 July 2026; Apple Developer Support contacted for toolchain clarification
-- App Review submission ID: `9b40a038-d010-41bc-b292-f0a6f212f283`
+- TestFlight: Build 19 uploaded and processed on 21 July 2026; assigned to `MacSideband Internal` with test notes saved
+- Submit for Review: 1.1.0 build 18 remains Waiting for Review; build 19 is not a release candidate
+- App Review submission ID: `21163873-76cc-404f-a5b7-0cc74e0f050b`
 - Apple Developer Support case ID: `102946262465`
 
 ## Product page

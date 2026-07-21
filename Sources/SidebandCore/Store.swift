@@ -138,6 +138,7 @@ public final class SidebandStore {
     @ObservationIgnored private var messageStatistics = MessageStatistics()
     @ObservationIgnored private var transcriptCache: [UUID: String] = [:]
     @ObservationIgnored private var cloudUploadedAttachmentHashes: [UUID: Data] = [:]
+    @ObservationIgnored private var deletedConversationDestinations: [String: Date] = [:]
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
     private var networkInterfacePool: ReticulumTCPInterfacePool?
@@ -780,6 +781,7 @@ public final class SidebandStore {
             lastError = "An LXMF destination must be a 32-character hexadecimal address."
             return false
         }
+        let clearedDeletion = deletedConversationDestinations.removeValue(forKey: hash) != nil
         if let existing = conversations.first(where: { $0.destinationHash == hash }) {
             if select {
                 if let index = conversations.firstIndex(where: { $0.id == existing.id }) {
@@ -787,6 +789,8 @@ public final class SidebandStore {
                 }
                 selectedConversationID = existing.id
                 touch(existing.id)
+                save()
+            } else if clearedDeletion {
                 save()
             }
             return true
@@ -944,13 +948,13 @@ public final class SidebandStore {
     }
 
     public func deleteConversation(_ conversationID: UUID) async {
-        guard conversations.contains(where: { $0.id == conversationID }) else { return }
+        guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
         let removedMessages = messages.filter { $0.conversationID == conversationID }
-        for message in removedMessages {
-            for attachment in message.attachments {
-                await cancelActiveResources(messageID: message.id, attachmentID: attachment.id)
-                try? await attachmentStore.remove(attachment)
-            }
+        deletedConversationDestinations[conversation.destinationHash] = .now
+        if deletedConversationDestinations.count > 10_000 {
+            deletedConversationDestinations = Dictionary(uniqueKeysWithValues:
+                deletedConversationDestinations.sorted { $0.value > $1.value }.prefix(10_000).map { ($0.key, $0.value) }
+            )
         }
         messages.removeAll { $0.conversationID == conversationID }
         drafts.removeValue(forKey: conversationID)
@@ -959,6 +963,13 @@ public final class SidebandStore {
         if selectedConversationID == conversationID { selectedConversationID = conversations.first?.id }
         save()
         syncUnreadBadge()
+
+        for message in removedMessages {
+            for attachment in message.attachments {
+                await cancelActiveResources(messageID: message.id, attachmentID: attachment.id)
+                try? await attachmentStore.remove(attachment)
+            }
+        }
     }
 
     public func clearConversationHistory(_ conversationID: UUID) async {
@@ -1638,7 +1649,7 @@ public final class SidebandStore {
         }
         iCloudSyncStatus = .syncing
         do {
-            let local = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory)
+            let local = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, deletedConversationDestinations: deletedConversationDestinations)
             let localData = try JSONEncoder.sideband.encode(local)
             var merged: AppSnapshot
             let remotePayload = try await cloudSync.fetchSnapshot()
@@ -1878,7 +1889,7 @@ public final class SidebandStore {
     }
 
     public func exportSnapshotData() throws -> Data {
-        let snapshot = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents)
+        let snapshot = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents, deletedConversationDestinations: deletedConversationDestinations)
         let data = try JSONEncoder.sideband.encode(snapshot)
         let validated = try JSONDecoder.sideband.decode(AppSnapshot.self, from: data)
         guard validated.schemaVersion <= AppSnapshot.currentSchemaVersion else { throw SnapshotError.unsupportedVersion }
@@ -1896,9 +1907,12 @@ public final class SidebandStore {
               snapshot.discoveries.count <= 50_000,
               snapshot.drafts.count <= 10_000,
               snapshot.voiceCallHistory.count <= 100,
+              snapshot.deletedConversationDestinations.count <= 10_000,
               conversationIDs.count == snapshot.conversations.count,
               Set(destinations).count == destinations.count,
               destinations.allSatisfy(DestinationHash.isValid),
+              snapshot.deletedConversationDestinations.keys.allSatisfy(DestinationHash.isValid),
+              snapshot.deletedConversationDestinations.values.allSatisfy(supportedMessageDates.contains),
               snapshot.messages.allSatisfy({ conversationIDs.contains($0.conversationID) }),
               snapshot.messages.compactMap(\.telemetry).allSatisfy({ $0.validationError == nil }),
               snapshot.messages.allSatisfy({ message in
@@ -1972,6 +1986,7 @@ public final class SidebandStore {
         messages = snapshot.messages
         sortConversations()
         discoveries = snapshot.discoveries
+        deletedConversationDestinations = snapshot.deletedConversationDestinations
         voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
         pluginAuditEvents = Array(snapshot.pluginAuditEvents.prefix(200))
         drafts = snapshot.drafts
@@ -3785,6 +3800,7 @@ public final class SidebandStore {
             }
         }
         discoveries = snapshot.discoveries
+        deletedConversationDestinations = snapshot.deletedConversationDestinations
         voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
         pluginAuditEvents = Array(snapshot.pluginAuditEvents.prefix(200))
         let conversationIDs = Set(conversations.map(\.id))
@@ -3822,7 +3838,7 @@ public final class SidebandStore {
         deferredSaveTask = nil
         do {
             try FileManager.default.createDirectory(at: persistenceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents))
+            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents, deletedConversationDestinations: deletedConversationDestinations))
             let digest = Data(SHA256.hash(data: plaintext))
             if digest == lastSavedSnapshotDigest,
                FileManager.default.fileExists(atPath: persistenceURL.path),

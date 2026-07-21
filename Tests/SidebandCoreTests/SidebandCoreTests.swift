@@ -41,6 +41,8 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     func fetchAttachment(id: UUID) async throws -> CloudAttachmentPayload? { nil }
     func saveAttachment(_ payload: CloudAttachmentPayload) async throws { }
     func saveCount() -> Int { snapshotSaves }
+    func seedSnapshot(_ payload: CloudSnapshotPayload) { snapshot = payload }
+    func currentSnapshot() -> CloudSnapshotPayload? { snapshot }
 }
 
 @MainActor @Test func messageIndexesAggregateReactionsAndDeliveryStatistics() throws {
@@ -1719,6 +1721,81 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     await store.deleteConversation(first.id)
     #expect(store.conversations.map(\.id) == [second.id])
     #expect(store.messages.map(\.id) == [secondMessage.id])
+}
+
+@Test func cloudConversationDeletionWinsOverOlderSnapshots() throws {
+    let destination = "0123456789abcdef0123456789abcdef"
+    let conversation = Conversation(
+        destinationHash: destination,
+        displayName: "Old cloud conversation",
+        updatedAt: Date(timeIntervalSince1970: 10)
+    )
+    let message = Message(
+        conversationID: conversation.id,
+        body: "old message",
+        timestamp: Date(timeIntervalSince1970: 10),
+        direction: .incoming,
+        state: .delivered
+    )
+    let remote = AppSnapshot(conversations: [conversation], messages: [message], drafts: [conversation.id: "old draft"])
+    let local = AppSnapshot(deletedConversationDestinations: [destination: Date(timeIntervalSince1970: 20)])
+
+    let merged = local.mergingCloudSnapshot(remote)
+
+    #expect(merged.conversations.isEmpty)
+    #expect(merged.messages.isEmpty)
+    #expect(merged.drafts.isEmpty)
+    #expect(merged.deletedConversationDestinations[destination] == Date(timeIntervalSince1970: 20))
+}
+
+@Test func newerConversationActivityClearsOlderDeletionTombstone() {
+    let destination = "0123456789abcdef0123456789abcdef"
+    let conversation = Conversation(
+        destinationHash: destination,
+        displayName: "New message",
+        updatedAt: Date(timeIntervalSince1970: 30)
+    )
+    let merged = AppSnapshot(deletedConversationDestinations: [destination: Date(timeIntervalSince1970: 20)])
+        .mergingCloudSnapshot(AppSnapshot(conversations: [conversation]))
+
+    #expect(merged.conversations.map(\.destinationHash) == [destination])
+    #expect(merged.deletedConversationDestinations[destination] == nil)
+}
+
+@MainActor @Test func iCloudSyncDoesNotRestoreDeletedConversation() async throws {
+    let destination = "0123456789abcdef0123456789abcdef"
+    let conversation = Conversation(
+        destinationHash: destination,
+        displayName: "Cloud peer",
+        updatedAt: Date(timeIntervalSince1970: 10)
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let cloud = CountingCloudSync()
+    await cloud.seedSnapshot(CloudSnapshotPayload(
+        data: try encoder.encode(AppSnapshot(conversations: [conversation])),
+        modifiedAt: Date(timeIntervalSince1970: 10),
+        deviceID: "old-device"
+    ))
+    let store = SidebandStore(
+        persistenceURL: FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString).appending(path: "store.json"),
+        cloudSync: cloud
+    )
+
+    await store.setICloudSyncEnabled(true)
+    #expect(store.conversations.map(\.destinationHash) == [destination])
+    await store.deleteConversation(try #require(store.conversations.first?.id))
+    await store.syncICloudNow()
+    await store.syncICloudNow()
+
+    #expect(store.conversations.isEmpty)
+    let saved = try #require(await cloud.currentSnapshot())
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let snapshot = try decoder.decode(AppSnapshot.self, from: saved.data)
+    #expect(snapshot.conversations.isEmpty)
+    #expect(snapshot.deletedConversationDestinations[destination] != nil)
 }
 
 @MainActor @Test func trustedConversationStatePersists() {

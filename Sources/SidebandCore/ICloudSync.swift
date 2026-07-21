@@ -240,6 +240,10 @@ public extension AppSnapshot {
     func mergingCloudSnapshot(_ remote: AppSnapshot) -> AppSnapshot {
         var canonicalByDestination: [String: Conversation] = [:]
         var conversationIDMap: [UUID: UUID] = [:]
+        var deletions = remote.deletedConversationDestinations
+        for (destination, deletedAt) in deletedConversationDestinations {
+            deletions[destination] = max(deletions[destination] ?? .distantPast, deletedAt)
+        }
 
         for conversation in remote.conversations {
             canonicalByDestination[conversation.destinationHash] = conversation
@@ -270,6 +274,19 @@ public extension AppSnapshot {
             }
         }
 
+        for (destination, conversation) in Array(canonicalByDestination) {
+            guard let deletedAt = deletions[destination] else { continue }
+            if conversation.updatedAt > deletedAt {
+                deletions.removeValue(forKey: destination)
+            } else {
+                canonicalByDestination.removeValue(forKey: destination)
+            }
+        }
+        if deletions.count > 10_000 {
+            deletions = Dictionary(uniqueKeysWithValues: deletions.sorted { $0.value > $1.value }.prefix(10_000).map { ($0.key, $0.value) })
+        }
+        let survivingConversationIDs = Set(canonicalByDestination.values.map(\.id))
+
         func remapped(_ message: Message) -> Message? {
             guard let conversationID = conversationIDMap[message.conversationID] else { return nil }
             return Message(
@@ -288,8 +305,11 @@ public extension AppSnapshot {
         }
 
         var messagesByID: [UUID: Message] = [:]
-        for message in remote.messages.compactMap(remapped) { messagesByID[message.id] = message }
+        for message in remote.messages.compactMap(remapped) where survivingConversationIDs.contains(message.conversationID) {
+            messagesByID[message.id] = message
+        }
         for local in messages.compactMap(remapped) {
+            guard survivingConversationIDs.contains(local.conversationID) else { continue }
             guard let remoteMessage = messagesByID[local.id] else { messagesByID[local.id] = local; continue }
             let state = Self.furthestDeliveryState(local.state, remoteMessage.state)
             let preferred = local.timestamp >= remoteMessage.timestamp ? local : remoteMessage
@@ -325,15 +345,15 @@ public extension AppSnapshot {
 
         var mergedDrafts: [UUID: String] = [:]
         for (id, draft) in remote.drafts {
-            if let canonical = conversationIDMap[id], !draft.isEmpty { mergedDrafts[canonical] = draft }
+            if let canonical = conversationIDMap[id], survivingConversationIDs.contains(canonical), !draft.isEmpty { mergedDrafts[canonical] = draft }
         }
         for (id, draft) in drafts {
-            if let canonical = conversationIDMap[id], !draft.isEmpty { mergedDrafts[canonical] = draft }
+            if let canonical = conversationIDMap[id], survivingConversationIDs.contains(canonical), !draft.isEmpty { mergedDrafts[canonical] = draft }
         }
 
         var callsByID: [UUID: VoiceCall] = [:]
         for call in remote.voiceCallHistory + voiceCallHistory {
-            guard let conversationID = conversationIDMap[call.conversationID] else { continue }
+            guard let conversationID = conversationIDMap[call.conversationID], survivingConversationIDs.contains(conversationID) else { continue }
             callsByID[call.id] = VoiceCall(
                 id: call.id, conversationID: conversationID, direction: call.direction,
                 state: call.state, profile: call.profile, startedAt: call.startedAt,
@@ -347,7 +367,8 @@ public extension AppSnapshot {
             messages: messagesByID.values.sorted { $0.timestamp < $1.timestamp },
             discoveries: discoveries,
             drafts: mergedDrafts,
-            voiceCallHistory: Array(callsByID.values.sorted { $0.startedAt > $1.startedAt }.prefix(100))
+            voiceCallHistory: Array(callsByID.values.sorted { $0.startedAt > $1.startedAt }.prefix(100)),
+            deletedConversationDestinations: deletions
         )
     }
 

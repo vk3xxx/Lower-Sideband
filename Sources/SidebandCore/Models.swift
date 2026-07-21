@@ -231,7 +231,7 @@ public struct Attachment: Identifiable, Codable, Hashable, Sendable {
 }
 
 public struct AppSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
     public var schemaVersion: Int
     public var conversations: [Conversation]
     public var messages: [Message]
@@ -239,7 +239,8 @@ public struct AppSnapshot: Codable, Sendable {
     public var drafts: [UUID: String]
     public var voiceCallHistory: [VoiceCall]
     public var pluginAuditEvents: [SidebandPluginAuditEvent]
-    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:], voiceCallHistory: [VoiceCall] = [], pluginAuditEvents: [SidebandPluginAuditEvent] = []) {
+    public var deletedConversationDestinations: [String: Date]
+    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:], voiceCallHistory: [VoiceCall] = [], pluginAuditEvents: [SidebandPluginAuditEvent] = [], deletedConversationDestinations: [String: Date] = [:]) {
         self.schemaVersion = schemaVersion
         self.conversations = conversations
         self.messages = messages
@@ -247,9 +248,10 @@ public struct AppSnapshot: Codable, Sendable {
         self.drafts = drafts
         self.voiceCallHistory = voiceCallHistory
         self.pluginAuditEvents = pluginAuditEvents
+        self.deletedConversationDestinations = deletedConversationDestinations
     }
 
-    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts, voiceCallHistory, pluginAuditEvents }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts, voiceCallHistory, pluginAuditEvents, deletedConversationDestinations }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
@@ -259,6 +261,7 @@ public struct AppSnapshot: Codable, Sendable {
         drafts = try values.decodeIfPresent([UUID: String].self, forKey: .drafts) ?? [:]
         voiceCallHistory = try values.decodeIfPresent([VoiceCall].self, forKey: .voiceCallHistory) ?? []
         pluginAuditEvents = try values.decodeIfPresent([SidebandPluginAuditEvent].self, forKey: .pluginAuditEvents) ?? []
+        deletedConversationDestinations = try values.decodeIfPresent([String: Date].self, forKey: .deletedConversationDestinations) ?? [:]
     }
 }
 
