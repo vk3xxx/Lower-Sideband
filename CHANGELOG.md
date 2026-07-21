@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.7 (35) - 2026-07-21
+
+- Added native UDP and macOS TCP Server Reticulum interfaces with HDLC and IFAC support.
+- Added shared-instance connection configuration.
+- Added validated I2P SAM command/reply support.
+- Added upstream-compatible Weave WDCL framing and endpoint commands.
+
 ## 1.2.6 (34) - 2026-07-21
 
 - Added typed upstream-compatible motion, environmental and magnetic telemetry.

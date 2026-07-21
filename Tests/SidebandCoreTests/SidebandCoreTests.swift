@@ -88,6 +88,24 @@ import Testing
     #expect(try SidebandOfflineMapPackage.validate(directory: temporary).name == "Test")
 }
 
+@Test func additionalInterfaceWireFormatsAreSafeAndCompatible() throws {
+    #expect(String(data: ReticulumI2PSAM.hello(), encoding: .utf8) == "HELLO VERSION MIN=3.1 MAX=3.3\n")
+    #expect(String(data: try ReticulumI2PSAM.createSession(id: "sideband-1"), encoding: .utf8)?.contains("STYLE=STREAM") == true)
+    #expect(ReticulumI2PSAM.replyIsOK(Data("HELLO REPLY RESULT=OK VERSION=3.3\n".utf8)))
+    #expect(throws: ReticulumI2PSAM.Error.self) { try ReticulumI2PSAM.accept(id: "bad id") }
+
+    let switchID = Data([1, 2, 3, 4])
+    let framed = try ReticulumWeave.frame(switchID: switchID, type: .discover, payload: Data([9, 8]))
+    var decoder = HDLCDecoder()
+    let decodedFrame = try #require(decoder.consume(framed).first)
+    let decoded = try ReticulumWeave.decode(decodedFrame)
+    #expect(decoded.switchID == switchID)
+    #expect(decoded.type == .discover)
+    #expect(decoded.payload == Data([9, 8]))
+    #expect(try ReticulumWeave.endpointCommand(endpointID: Data(repeating: 5, count: 16), packet: Data([7])).prefix(2) == Data([0, 1]))
+    #expect(ReticulumSharedInstanceConfiguration().isValid)
+}
+
 private struct TestNativePlugin: SidebandCommandPlugin {
     let manifest = SidebandPluginManifest(identifier: "test.native", name: "Test Plugin", version: "1", commands: ["test-echo"])
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {
