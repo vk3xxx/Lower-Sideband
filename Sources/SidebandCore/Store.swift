@@ -209,7 +209,7 @@ public final class SidebandStore {
     private var reconnectAttempt = 0
     private let transportIdentity: ReticulumIdentity
     private let tcpInterfaceHash: Data
-    private let messagingIdentity: ReticulumIdentity
+    private var messagingIdentity: ReticulumIdentity
     @ObservationIgnored private lazy var transportInstance = ReticulumTransportInstance(identityHash: transportIdentity.hash)
 
     private struct MessageStatistics {
@@ -1986,6 +1986,42 @@ public final class SidebandStore {
         let validated = try JSONDecoder.sideband.decode(AppSnapshot.self, from: data)
         guard validated.schemaVersion <= AppSnapshot.currentSchemaVersion else { throw SnapshotError.unsupportedVersion }
         return data
+    }
+
+    public func exportPrivateIdentityText() throws -> String {
+        try ReticulumIdentityText.encodePrivate(messagingIdentity)
+    }
+
+    public func exportEncryptedProfile(passphrase: String, ratchets: ReticulumRatchetState? = nil) throws -> Data {
+        guard let privateKey = messagingIdentity.privateKey else { throw SidebandProfileArchive.ArchiveError.invalidPayload }
+        let payload = try SidebandProfileArchive.Payload(
+            messagingIdentity: privateKey,
+            applicationSnapshot: exportSnapshotData(),
+            ratchets: ratchets
+        )
+        return try SidebandProfileArchive.seal(payload, passphrase: passphrase)
+    }
+
+    @discardableResult public func restoreEncryptedProfile(_ archive: Data, passphrase: String) throws -> ReticulumRatchetState? {
+        let payload = try SidebandProfileArchive.open(archive, passphrase: passphrase)
+        let identity = try ReticulumIdentity(privateKey: payload.messagingIdentity)
+        _ = try validatedSnapshot(from: payload.applicationSnapshot)
+        switch SecureIdentityStore.replace(payload.messagingIdentity, account: "lxmf.messaging", synchronizable: true) {
+        case .failure: throw SidebandProfileArchive.ArchiveError.invalidPayload
+        case .success: break
+        }
+        messagingIdentity = identity
+        try restoreSnapshotData(payload.applicationSnapshot)
+        return payload.ratchets
+    }
+
+    public func importPythonIdentity(_ rawIdentity: Data) throws {
+        let identity = try SidebandProfileArchive.importPythonIdentity(rawIdentity)
+        guard let privateKey = identity.privateKey else { throw SidebandProfileArchive.ArchiveError.invalidPayload }
+        switch SecureIdentityStore.replace(privateKey, account: "lxmf.messaging", synchronizable: true) {
+        case .failure: throw SidebandProfileArchive.ArchiveError.invalidPayload
+        case .success: messagingIdentity = identity
+        }
     }
 
     public func validatedSnapshot(from data: Data) throws -> AppSnapshot {

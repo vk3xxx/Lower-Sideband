@@ -42,6 +42,27 @@ import Testing
     #expect(announce.validate())
 }
 
+@Test func encryptedProfileAndPortableIdentityRoundTrip() throws {
+    let identity = ReticulumIdentity()
+    let privateText = try ReticulumIdentityText.encodePrivate(identity)
+    #expect(privateText.hasPrefix("RNS-PRIVATE-1:"))
+    #expect(try ReticulumIdentityText.decodePrivate(privateText).privateKey == identity.privateKey)
+    #expect(try SidebandProfileArchive.importPythonIdentity(try #require(identity.privateKey)).publicKey == identity.publicKey)
+
+    let snapshot = Data(#"{"schemaVersion":1}"#.utf8)
+    let payload = try SidebandProfileArchive.Payload(messagingIdentity: try #require(identity.privateKey), applicationSnapshot: snapshot)
+    let archive = try SidebandProfileArchive.seal(
+        payload, passphrase: "correct horse battery staple",
+        salt: Data(repeating: 0x44, count: 32), nonce: try AES.GCM.Nonce(data: Data(repeating: 0x55, count: 12))
+    )
+    let opened = try SidebandProfileArchive.open(archive, passphrase: "correct horse battery staple")
+    #expect(opened.messagingIdentity == identity.privateKey)
+    #expect(opened.applicationSnapshot == snapshot)
+    #expect(throws: SidebandProfileArchive.ArchiveError.self) {
+        try SidebandProfileArchive.open(archive, passphrase: "this password is wrong")
+    }
+}
+
 private struct TestNativePlugin: SidebandCommandPlugin {
     let manifest = SidebandPluginManifest(identifier: "test.native", name: "Test Plugin", version: "1", commands: ["test-echo"])
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {

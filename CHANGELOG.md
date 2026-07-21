@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.5 (33) - 2026-07-21
+
+- Added authenticated, passphrase-encrypted complete profile archives.
+- Added portable Base32 private identity export/import.
+- Added direct import of Python Reticulum `primary_identity` files.
+- Profile restore validates data before atomically replacing the active identity and application snapshot.
+
 ## 1.2.4 (32) - 2026-07-21
 
 - Added native LXMF proof-of-work stamp generation and validation.

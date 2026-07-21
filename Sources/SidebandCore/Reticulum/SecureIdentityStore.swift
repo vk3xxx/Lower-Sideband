@@ -48,6 +48,16 @@ enum SecureIdentityStore {
 #endif
     }
 
+    static func replace(_ material: Data, account: String, synchronizable: Bool = false) -> Result<Void, StoreError> {
+        guard material.count == 64 else { return .failure(.invalidStoredMaterial) }
+#if os(iOS) || os(macOS)
+        return writeKeychain(material, account: account, synchronizable: synchronizable)
+#else
+        UserDefaults.standard.set(material, forKey: account)
+        return .success(())
+#endif
+    }
+
 #if DEBUG && (os(iOS) || os(macOS))
     private static let debugLock = NSLock()
     nonisolated(unsafe) private static var debugProcessMaterials: [String: Data] = [:]
