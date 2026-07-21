@@ -85,7 +85,7 @@ public struct ReticulumIdentity: Sendable {
     public static func fullHash(_ data: Data) -> Data { Data(SHA256.hash(data: data)) }
     public static func truncatedHash(_ data: Data) -> Data { Data(SHA256.hash(data: data).prefix(16)) }
 
-    public enum IdentityError: Error { case invalidKeyLength, privateKeyRequired }
+    public enum IdentityError: Error { case invalidKeyLength, privateKeyRequired, invalidCiphertext, ratchetRequired }
 }
 
 private extension Data {

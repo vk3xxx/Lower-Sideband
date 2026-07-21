@@ -3,6 +3,45 @@ import CryptoKit
 import Testing
 @testable import SidebandCore
 
+@Test func lxmfStampsTicketsAndStampedPayloadsAreInteroperable() async throws {
+    let material = Data(repeating: 0x42, count: 32)
+    let block = LXMFStamp.workblock(material: material, rounds: 2)
+    #expect(block.count == 512)
+    let generated = try await LXMFStamp.generate(for: material, cost: 4, expansionRounds: 2, maximumAttempts: 100_000)
+    #expect(LXMFStamp.validate(generated.stamp, cost: 4, workblock: block))
+    #expect(generated.value >= 4)
+
+    let ticket = Data(repeating: 0x7a, count: LXMFStamp.ticketSize)
+    let ticketStamp = try LXMFStamp.ticketStamp(ticket: ticket, messageID: material)
+    #expect(LXMFStamp.validateTicketStamp(ticketStamp, tickets: [ticket], messageID: material))
+
+    let source = ReticulumIdentity()
+    let destination = Data(repeating: 0x11, count: 16)
+    let message = try LXMFMessage(destinationHash: destination, sourceHash: source.hash, sourceIdentity: source, content: Data("stamped".utf8), stamp: ticketStamp)
+    let received = try LXMFReceivedMessage(packed: message.packed)
+    #expect(received.stamp == ticketStamp)
+    #expect(received.messageID == message.messageID)
+    #expect(received.validate(with: source))
+}
+
+@Test func destinationRatchetsRotateAdvertiseAndDecrypt() throws {
+    let identity = ReticulumIdentity()
+    var ratchets = ReticulumRatchetState(retentionCount: 2, rotationInterval: 60, now: Date(timeIntervalSince1970: 0))
+    let firstPublic = try #require(ratchets.currentPublicKey)
+    let ciphertext = try identity.encrypt(Data("forward secret".utf8), ephemeralPrivateKey: Data(0..<32), ratchet: firstPublic)
+    #expect(try identity.decrypt(ciphertext, ratchets: ratchets.privateKeys, enforceRatchets: true) == Data("forward secret".utf8))
+
+    ratchets.rotateIfNeeded(now: Date(timeIntervalSince1970: 61))
+    #expect(ratchets.privateKeys.count == 2)
+    #expect(ratchets.currentPublicKey != firstPublic)
+    #expect(try identity.decrypt(ciphertext, ratchets: ratchets.privateKeys, enforceRatchets: true) == Data("forward secret".utf8))
+
+    let raw = try ReticulumAnnounceBuilder.packet(identity: identity, destinationName: "lxmf.delivery", randomHash: Data(repeating: 3, count: 10), ratchet: ratchets.currentPublicKey)
+    let announce = try ReticulumAnnounce(packet: ReticulumPacket(raw: raw))
+    #expect(announce.ratchet == ratchets.currentPublicKey)
+    #expect(announce.validate())
+}
+
 private struct TestNativePlugin: SidebandCommandPlugin {
     let manifest = SidebandPluginManifest(identifier: "test.native", name: "Test Plugin", version: "1", commands: ["test-echo"])
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {

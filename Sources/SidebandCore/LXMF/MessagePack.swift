@@ -70,8 +70,8 @@ public enum MessagePack {
         var bits = UInt64(bitPattern: value).bigEndian
         return Data([0xd3]) + withUnsafeBytes(of: &bits) { Data($0) }
     }
-    public static func lxmfPayload(timestamp: Double, title: Data, content: Data, fields: [UInt64: Data] = [:], encodedFields: [UInt64: Data] = [:]) -> Data {
-        var output = Data([0x94])
+    public static func lxmfPayload(timestamp: Double, title: Data, content: Data, fields: [UInt64: Data] = [:], encodedFields: [UInt64: Data] = [:], stamp: Data? = nil) -> Data {
+        var output = Data([stamp == nil ? 0x94 : 0x95])
         output.append(0xcb)
         var bits = timestamp.bitPattern.bigEndian
         withUnsafeBytes(of: &bits) { output.append(contentsOf: $0) }
@@ -79,6 +79,7 @@ public enum MessagePack {
         output.append(binary(content))
         let keys = Set(fields.keys).union(encodedFields.keys).sorted()
         output.append(map(keys.map { key in (key, encodedFields[key] ?? binary(fields[key]!)) }))
+        if let stamp { output.append(binary(stamp)) }
         return output
     }
 

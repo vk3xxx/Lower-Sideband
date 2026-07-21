@@ -11,8 +11,9 @@ public struct LXMFMessage: Sendable {
     public let messageID: Data
     public let signature: Data
     public let packed: Data
+    public let stamp: Data?
 
-    public init(destinationHash: Data, sourceHash: Data, sourceIdentity: ReticulumIdentity, timestamp: Double = Date().timeIntervalSince1970, title: Data = Data(), content: Data, fields: [UInt64: Data] = [:], encodedFields: [UInt64: Data] = [:]) throws {
+    public init(destinationHash: Data, sourceHash: Data, sourceIdentity: ReticulumIdentity, timestamp: Double = Date().timeIntervalSince1970, title: Data = Data(), content: Data, fields: [UInt64: Data] = [:], encodedFields: [UInt64: Data] = [:], stamp: Data? = nil) throws {
         guard destinationHash.count == 16, sourceHash.count == 16 else { throw MessageError.invalidDestination }
         self.destinationHash = destinationHash
         self.sourceHash = sourceHash
@@ -20,15 +21,19 @@ public struct LXMFMessage: Sendable {
         self.title = title
         self.content = content
         self.fields = fields
-        payload = MessagePack.lxmfPayload(timestamp: timestamp, title: title, content: content, fields: fields, encodedFields: encodedFields)
-        let hashedPart = destinationHash + sourceHash + payload
+        if let stamp, stamp.count != LXMFStamp.stampSize && stamp.count != LXMFStamp.ticketSize { throw MessageError.invalidStamp }
+        self.stamp = stamp
+        let unsignedPayload = MessagePack.lxmfPayload(timestamp: timestamp, title: title, content: content, fields: fields, encodedFields: encodedFields)
+        payload = MessagePack.lxmfPayload(timestamp: timestamp, title: title, content: content, fields: fields, encodedFields: encodedFields, stamp: stamp)
+        let hashedPart = destinationHash + sourceHash + unsignedPayload
         messageID = ReticulumIdentity.fullHash(hashedPart)
         signature = try sourceIdentity.sign(hashedPart + messageID)
         packed = destinationHash + sourceHash + signature + payload
     }
 
     public func validate(with sourceIdentity: ReticulumIdentity) -> Bool {
-        let hashedPart = destinationHash + sourceHash + payload
+        let unsignedPayload = MessagePack.lxmfPayload(timestamp: timestamp, title: title, content: content, fields: fields)
+        let hashedPart = destinationHash + sourceHash + unsignedPayload
         return ReticulumIdentity.fullHash(hashedPart) == messageID && sourceIdentity.validate(signature: signature, message: hashedPart + messageID)
     }
 
@@ -50,7 +55,7 @@ public struct LXMFMessage: Sendable {
         let encrypted = try recipientIdentity.encrypt(Data(packed.dropFirst(16)), ephemeralPrivateKey: ephemeralPrivateKey, iv: iv, ratchet: ratchet)
         return try LXMURI.encode(destinationHash + encrypted)
     }
-    public enum MessageError: Error { case invalidDestination }
+    public enum MessageError: Error { case invalidDestination, invalidStamp }
 }
 
 public enum LXMURI {

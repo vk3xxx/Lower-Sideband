@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.4 (32) - 2026-07-21
+
+- Added native LXMF proof-of-work stamp generation and validation.
+- Added trusted-peer delivery ticket stamps and expiry metadata.
+- Added rotating Reticulum destination ratchets, retained-key decryption and ratchet-bearing announces.
+- Corrected signed message validation for stamped LXMF payloads.
+
 Notable changes to Lower Sideband are documented here. Builds remain development/TestFlight builds unless explicitly designated as release candidates.
 
 ## [1.2.3] - 2026-07-21

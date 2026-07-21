@@ -10,6 +10,7 @@ public struct LXMFReceivedMessage: Sendable {
     public let title: Data
     public let content: Data
     public let fields: [UInt64: MessagePackValue]
+    public let stamp: Data?
 
     public init(packed: Data) throws {
         guard packed.count >= 96 else { throw ParseError.truncated }
@@ -17,10 +18,10 @@ public struct LXMFReceivedMessage: Sendable {
         sourceHash = packed.subdata(in: 16..<32)
         signature = packed.subdata(in: 32..<96)
         payload = Data(packed.dropFirst(96))
-        messageID = ReticulumIdentity.fullHash(destinationHash + sourceHash + payload)
         guard case let .array(parts) = try MessagePackDecoder.decode(payload), parts.count >= 4,
               case let .double(ts) = parts[0], case let .binary(title) = parts[1], case let .binary(content) = parts[2],
               case let .map(fieldEntries) = parts[3] else { throw ParseError.invalidPayload }
+        stamp = if parts.count > 4, case let .binary(value) = parts[4] { value } else { nil }
         timestamp = ts; self.title = title; self.content = content
         var decodedFields: [UInt64: MessagePackValue] = [:]
         for (key, value) in fieldEntries {
@@ -28,10 +29,13 @@ public struct LXMFReceivedMessage: Sendable {
             decodedFields[fieldID] = value
         }
         fields = decodedFields
+        let unsignedPayload = MessagePack.lxmfPayload(timestamp: timestamp, title: title, content: content, encodedFields: fields.mapValues(MessagePack.encode))
+        messageID = ReticulumIdentity.fullHash(destinationHash + sourceHash + unsignedPayload)
     }
 
     public func validate(with identity: ReticulumIdentity) -> Bool {
-        let hashed = destinationHash + sourceHash + payload
+        let unsignedPayload = MessagePack.lxmfPayload(timestamp: timestamp, title: title, content: content, encodedFields: fields.mapValues(MessagePack.encode))
+        let hashed = destinationHash + sourceHash + unsignedPayload
         return identity.validate(signature: signature, message: hashed + messageID)
     }
     public func binaryField(_ fieldID: UInt64) -> Data? {
