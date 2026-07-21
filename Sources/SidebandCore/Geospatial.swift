@@ -6,6 +6,7 @@ public enum SidebandGeospatial {
         public let straightLineDistanceMeters: Double
         public let initialBearingDegrees: Double
         public let verticalSeparationMeters: Double
+        public let elevationAngleDegrees: Double
         public let sharedRadioHorizonMeters: Double
         public let withinRadioHorizon: Bool
     }
@@ -25,8 +26,9 @@ public enum SidebandGeospatial {
         // ITU effective-earth-radius approximation, equivalent to the
         // radio-horizon information presented by upstream Sideband.
         let horizon = 4_120 * (sqrt(max(0, origin.altitude)) + sqrt(max(0, target.altitude)))
+        let elevation = atan2(vertical, max(surface, 0.001)).degrees
         return Relationship(surfaceDistanceMeters: surface, straightLineDistanceMeters: straight,
-                            initialBearingDegrees: bearing, verticalSeparationMeters: vertical,
+                            initialBearingDegrees: bearing, verticalSeparationMeters: vertical, elevationAngleDegrees: elevation,
                             sharedRadioHorizonMeters: horizon, withinRadioHorizon: surface <= horizon)
     }
 }

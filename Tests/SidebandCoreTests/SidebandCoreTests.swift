@@ -63,6 +63,31 @@ import Testing
     }
 }
 
+@Test func extendedTelemetrySchedulingMQTTAndOfflineTiles() throws {
+    var telemetry = SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_000))
+    telemetry.setScalarSensor(.pressure, value: 1_013.25)
+    telemetry.setScalarSensor(.temperature, value: 21.5)
+    telemetry.setScalarSensor(.humidity, value: 42)
+    telemetry.setVectorSensor(.gravity, value: SidebandVector3(x: 0, y: 0, z: -9.81))
+    let decoded = try SidebandTelemetry(packed: telemetry.packed())
+    #expect(decoded.pressureMillibars == 1_013.25)
+    #expect(decoded.temperatureCelsius == 21.5)
+    #expect(decoded.relativeHumidityPercent == 42)
+    #expect(decoded.gravity?.z == -9.81)
+
+    let destination = "0123456789abcdef0123456789abcdef"
+    let schedule = SidebandTelemetrySchedule(interval: 60, excludedDestinationHashes: [destination])
+    #expect(!schedule.shouldSend(lastSent: nil, destinationHash: destination))
+    #expect(SidebandTelemetryMQTT.records(decoded, root: "lower sideband", source: "unit/one").contains { $0.topic == "lower_sideband/unit_one/pressure/mbar" })
+
+    let temporary = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: temporary.appending(path: "tiles/0/0"), withIntermediateDirectories: true)
+    let manifest = SidebandOfflineMapManifest(name: "Test", format: "png", minimumZoom: 0, maximumZoom: 1, bounds: [-180, -90, 180, 90])
+    try JSONEncoder().encode(manifest).write(to: temporary.appending(path: "manifest.json"))
+    try Data([0x89, 0x50, 0x4e, 0x47]).write(to: temporary.appending(path: "tiles/0/0/0.png"))
+    #expect(try SidebandOfflineMapPackage.validate(directory: temporary).name == "Test")
+}
+
 private struct TestNativePlugin: SidebandCommandPlugin {
     let manifest = SidebandPluginManifest(identifier: "test.native", name: "Test Plugin", version: "1", commands: ["test-echo"])
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {

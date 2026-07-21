@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.6 (34) - 2026-07-21
+
+- Added typed upstream-compatible motion, environmental and magnetic telemetry.
+- Added scheduled telemetry policies, exclusions, propagation-only preference and safe MQTT record export.
+- Added validated offline tile-package manifests and situation trails.
+- Added elevation-angle calculations alongside distance, bearing and shared radio horizon.
+
 ## 1.2.5 (33) - 2026-07-21
 
 - Added authenticated, passphrase-encrypted complete profile archives.
