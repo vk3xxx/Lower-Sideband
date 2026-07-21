@@ -139,7 +139,7 @@ struct ContentView: View {
                 .toolbar {
                     Button(action: { showingNetwork = true }) {
                         Label(networkToolbarLabel, systemImage: networkToolbarIcon)
-                    }.help("Reticulum network status")
+                    }.help(networkToolbarHelp)
                     Button { showingArchived.toggle() } label: {
                         Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
                     }
@@ -188,6 +188,7 @@ struct ContentView: View {
                     .help("Import contacts or conversation archives")
                     Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
                         .keyboardShortcut("n", modifiers: .command)
+                        .help("Start a conversation using an LXMF destination address or contact link")
                         .accessibilityIdentifier("new-conversation")
                 }
                 .sidebandSidebarSizing()
@@ -363,6 +364,19 @@ struct ContentView: View {
         }
     }
 
+    private var networkToolbarHelp: String {
+        switch store.networkState {
+        case .ready:
+            return "Reticulum is online with \(store.knownPathCount) known path\(store.knownPathCount == 1 ? "" : "s"). Open Network Status for active TCP, AutoInterface and RNode connections."
+        case .connecting:
+            return "Reticulum is connecting automatically. Open Network Status to see the current discovery and fallback stage."
+        case .failed(let reason):
+            return "Reticulum connection needs attention: \(reason). Open Network Status for diagnostics and retry controls."
+        case .stopped:
+            return "Reticulum is offline. Open Network Status to connect or configure automatic discovery."
+        }
+    }
+
     private var missedCallCount: Int {
         store.voiceCallHistory.count { $0.historyOutcome == .missed }
     }
@@ -381,6 +395,7 @@ struct ContentView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                     .textSelection(.enabled)
+                    .help("Your current LXMF delivery destination: \(store.localDeliveryHash)")
                     .accessibilityLabel("Current LXMF ID \\(store.localDeliveryHash)")
             }
             Spacer(minLength: 4)
@@ -547,6 +562,7 @@ struct ContentView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-\(conversation.id.uuidString)")
+        .help(conversationHoverHelp(conversation))
     }
 
     @ViewBuilder private func discoveryRow(_ discovery: DiscoveredDestination) -> some View {
@@ -554,6 +570,7 @@ struct ContentView: View {
             DiscoveredDestinationRow(discovery: discovery)
         }
         .buttonStyle(.plain)
+        .help("\(discovery.announcedDisplayName ?? discovery.destinationHash) — \(discovery.hops) hop\(discovery.hops == 1 ? "" : "s"), \(discovery.isValidated ? "cryptographically validated" : "not yet validated"), last seen \(discovery.lastSeen.formatted(date: .omitted, time: .standard)). Select to start or open a conversation.")
         .contextMenu {
             Button { copyToSystemClipboard(discovery.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
             if let contactLink = SidebandContactLink(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName, publicKey: discovery.isValidated ? discovery.publicKey : nil) {
@@ -800,6 +817,18 @@ struct ContentView: View {
         if store.isPathPending(to: conversation.destinationHash) { return "Finding route" }
         return "No known route"
     }
+    private func conversationHoverHelp(_ conversation: Conversation) -> String {
+        var state = [sidebarRouteLabel(for: conversation)]
+        if conversation.unreadCount > 0 { state.append("\(conversation.unreadCount) unread") }
+        if conversation.isPinned { state.append("pinned") }
+        if conversation.notificationsMuted { state.append("notifications muted") }
+        if conversation.isBlocked { state.append("blocked") }
+        if conversation.isTrusted { state.append("trusted") }
+        if let message = store.latestMessage(for: conversation.id) {
+            state.append("latest message \(message.state.rawValue)")
+        }
+        return "\(conversation.displayName) — \(state.joined(separator: ", ")). Select to open; right-click for conversation actions."
+    }
     private var networkToolbarIcon: String {
         switch store.networkState {
         case .ready: "network.badge.shield.half.filled"
@@ -855,14 +884,17 @@ private struct NetworkView: View {
                     Text("Network Status").font(.title2.bold())
                     Spacer()
                     Label(statusText, systemImage: statusIcon).foregroundStyle(statusColor)
+                        .help("Overall Reticulum state: \(statusText). Active transport: \(transportSummary).")
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Network Status").font(.title2.bold())
                     Label(statusText, systemImage: statusIcon).foregroundStyle(statusColor)
+                        .help("Overall Reticulum state: \(statusText). Active transport: \(transportSummary).")
                 }
             }
             Text("Connect automatically over TCP, Bluetooth, USB serial or Wi-Fi RNode interfaces. Incoming packets and announces are parsed and cryptographically validated by the native Swift stack.")
                 .font(.callout).foregroundStyle(.secondary)
+                .help("Current state: \(statusText). Lower Sideband can keep IP and radio interfaces active at the same time.")
             GroupBox("Interface") {
                 if horizontalSizeClass == .compact {
                     compactInterfaceSettings
@@ -1174,6 +1206,7 @@ private struct NetworkView: View {
                         get: { store.rnodeManager.automaticDiscoveryEnabled },
                         set: { store.rnodeManager.setAutomaticDiscovery($0) }
                     ))
+                    .help(store.rnodeManager.automaticDiscoveryEnabled ? "Automatic RNode discovery is on. The app scans for compatible Bluetooth LE radios and reconnects in the background when permitted." : "Automatic RNode discovery is off. Add a Bluetooth, Wi-Fi/TCP or USB serial RNode manually.")
                     Text("Uses native RNode KISS control and Reticulum packets over Bluetooth LE, Wi-Fi/TCP, or USB serial on Mac. Radio and IP interfaces can remain active together.")
                         .font(.caption).foregroundStyle(.secondary)
                     if store.rnodeManager.configurations.isEmpty {
@@ -1190,6 +1223,7 @@ private struct NetworkView: View {
                                 Label(rnodeStateText(snapshot?.state ?? .stopped), systemImage: rnodeStateIcon(snapshot?.state ?? .stopped))
                                     .font(.caption)
                                     .foregroundStyle(snapshot?.state == .ready ? Color.green : Color.secondary)
+                                    .help("\(configuration.name): \(rnodeStateText(snapshot?.state ?? .stopped)). \(rnodeConfigurationSummary(configuration))")
                             }
                             Text(rnodeConfigurationSummary(configuration))
                                 .font(.caption.monospaced()).foregroundStyle(.secondary)
@@ -1206,14 +1240,18 @@ private struct NetworkView: View {
                             }
                             HStack {
                                 Button("Edit") { editingRNode = configuration }
+                                    .help("Edit the transport and LoRa radio parameters for \(configuration.name)")
                                 Button("Blink") { Task { await store.rnodeManager.blink(configuration.id) } }
                                     .disabled(snapshot?.state != .ready)
+                                    .help(snapshot?.state == .ready ? "Blink \(configuration.name) to identify the physical radio" : "Blink is unavailable because \(configuration.name) is not connected")
                                 Button(configuration.enabled ? "Disable" : "Enable") {
                                     var changed = configuration; changed.enabled.toggle()
                                     Task { try? await store.rnodeManager.upsert(changed) }
                                 }
+                                .help(configuration.enabled ? "Stop and disable automatic reconnection for \(configuration.name)" : "Enable and connect \(configuration.name)")
                                 Spacer()
                                 Button("Remove", role: .destructive) { Task { await store.rnodeManager.remove(configuration.id) } }
+                                    .help("Remove \(configuration.name) from this device")
                             }.font(.caption)
                         }
                         .padding(8)
@@ -1221,8 +1259,11 @@ private struct NetworkView: View {
                     }
                     HStack {
                         Button { editingRNode = RNodeConfiguration() } label: { Label("Add RNode", systemImage: "plus") }
+                            .help("Add a Bluetooth LE, Wi-Fi/TCP or USB serial RNode")
                         Button("Start radios") { Task { await store.rnodeManager.startAll() } }
+                            .help("Start every enabled RNode interface; current ready count: \(store.rnodeManager.readyInterfaceIDs.count)")
                         Button("Run self-test") { Task { await store.rnodeManager.runSelfTest() } }
+                            .help("Run a deterministic 100-packet RNode protocol loopback without requiring radio hardware")
                         Spacer()
                         if let result = store.rnodeManager.selfTestResult { Text(result).font(.caption).foregroundStyle(result.hasPrefix("Passed") ? Color.green : Color.secondary) }
                     }
@@ -1467,6 +1508,7 @@ private struct NetworkView: View {
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .help(networkSettingHelp(title))
     }
 
     private func secondarySettingText(_ value: String) -> some View {
@@ -1477,10 +1519,35 @@ private struct NetworkView: View {
     }
 
     private func metric(_ title: String, _ value: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) { Text(value.formatted()).font(.title3.monospacedDigit()); Text(title).font(.caption).foregroundStyle(.secondary) }.frame(minWidth: 125, alignment: .leading)
+        VStack(alignment: .leading, spacing: 2) { Text(value.formatted()).font(.title3.monospacedDigit()); Text(title).font(.caption).foregroundStyle(.secondary) }
+            .frame(minWidth: 125, alignment: .leading)
+            .help("\(title): \(value.formatted())")
     }
     private func capability(_ title: String, complete: Bool) -> some View {
-        Label(title, systemImage: complete ? "checkmark.circle.fill" : "circle.dotted").foregroundStyle(complete ? Color.green : Color.secondary)
+        Label(title, systemImage: complete ? "checkmark.circle.fill" : "circle.dotted")
+            .foregroundStyle(complete ? Color.green : Color.secondary)
+            .help("\(title): \(complete ? "implemented in the native Swift engine" : "not yet implemented")")
+    }
+    private func networkSettingHelp(_ title: String) -> String {
+        switch title {
+        case "Local name": "The display name included in your signed LXMF announce."
+        case "Host": "Optional configured IPv4 address or DNS hostname. Automatic mode can discover local gateways without this."
+        case "IPv6 host": "Optional configured IPv6 Reticulum gateway, preferred when IPv6 is available."
+        case "Internet override": "Optional public Reticulum gateway used before built-in public fallbacks."
+        case "Internet port", "Port": "TCP port used by the configured Reticulum server; port formatting never changes its numeric value."
+        case "Connection mode": "Automatic discovers local interfaces first and then uses public fallbacks; Configured prioritises entered addresses."
+        case "Addressing": "Prefer native IPv6 where reachable and fall back to IPv4 automatically."
+        case "Connection policy": "Internet-only mode skips local Bonjour gateway discovery."
+        case "Reconnect": "Automatically restore Reticulum connections after launch, wake or network changes."
+        case "Automatic connection": "The current stage of automatic gateway discovery and connection."
+        case "Discovery order": "The order used to find a usable Reticulum interface without user intervention."
+        case "Transport": "The currently active Reticulum transport types and endpoints."
+        case "System network": "The network path and IP families currently reported by the operating system."
+        case "Discovered interfaces": "Authenticated Reticulum interfaces learned from signed network announces."
+        case "Last connected": "The last time any Reticulum TCP or RNode interface became ready."
+        case "Background refresh": "The most recent background propagation synchronisation attempt."
+        default: "Current state for \(title)."
+        }
     }
     private func pluginPermissionSummary(_ permissions: Set<SidebandPluginPermission>) -> String {
         guard !permissions.isEmpty else { return "Permissions: none" }
@@ -1728,6 +1795,7 @@ private struct ConversationView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 220)
                     .focused($focusedField, equals: .search)
+                    .help(messageSearch.isEmpty ? "Search message text, attachment names and metadata in this conversation" : "Showing \(conversationMessages.count) matching message\(conversationMessages.count == 1 ? "" : "s")")
                     .accessibilityIdentifier("message-search")
                 if !messageSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Picker("Search scope", selection: $messageSearchScope) {
@@ -1826,6 +1894,8 @@ private struct ConversationView: View {
                 Label(routingStatus, systemImage: routingIcon)
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityLabel("Routing status: \(routingStatus)")
+                    .help(routingHelp)
+                    .help(routingHelp)
                 }.padding()
             }
             Divider()
@@ -1933,6 +2003,7 @@ private struct ConversationView: View {
                                 .background(message.direction == .outgoing ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                                 .accessibilityElement(children: .combine)
                                 .accessibilityLabel(messageAccessibilityLabel(message, summaries: reactionSummaries))
+                                .help(messageHoverHelp(message))
                                 .contextMenu {
                                     Button { store.setMessageStarred(!message.isStarred, messageID: message.id) } label: {
                                         Label(message.isStarred ? "Remove Star" : "Star Message", systemImage: message.isStarred ? "star.slash" : "star")
@@ -2008,6 +2079,7 @@ private struct ConversationView: View {
                         Spacer()
                         Button { self.replyingTo = nil } label: { Image(systemName: "xmark.circle.fill") }
                             .buttonStyle(.plain).accessibilityLabel("Cancel reply")
+                            .help("Cancel this reply and return to a normal message")
                     }
                     .padding(8)
                     .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
@@ -2027,6 +2099,7 @@ private struct ConversationView: View {
                                     Button { discardPendingAttachment(attachment) } label: { Image(systemName: "xmark.circle.fill") }
                                         .buttonStyle(.plain)
                                         .accessibilityLabel("Remove \(attachment.filename)")
+                                        .help("Remove \(attachment.filename) from this outgoing message")
                                 }.font(.caption).padding(6).background(.quaternary, in: Capsule())
                             }
                         }
@@ -2076,11 +2149,13 @@ private struct ConversationView: View {
                         .submitLabel(.send)
                         .onSubmit(send)
                         .disabled(voiceRecorder.isRecording)
+                        .help(voiceRecorder.isRecording ? "Finish or cancel the voice recording before entering text" : "Compose a message for \(conversation.displayName). \(remainingDraftCharacters) characters remain.")
                         .accessibilityIdentifier("message-composer")
                     Button(action: send) { Image(systemName: "paperplane.fill") }
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(!canSend || voiceRecorder.isRecording)
+                        .help(sendButtonHelp)
                         .accessibilityLabel("Send message")
                         .accessibilityIdentifier("send-message")
                 }
@@ -2092,6 +2167,7 @@ private struct ConversationView: View {
                             .accessibilityLabel("Recording voice message, \(formatDuration(voiceRecorder.elapsed))")
                         Button("Cancel recording", role: .destructive) { voiceRecorder.cancel() }
                             .font(.caption)
+                            .help("Discard the current \(formatDuration(voiceRecorder.elapsed)) voice recording")
                     }
                     Spacer()
                     Text("\(remainingDraftCharacters.formatted()) characters remaining")
@@ -2263,9 +2339,11 @@ private struct ConversationView: View {
                     .frame(maxWidth: .infinity)
                     .focused($focusedField, equals: .search)
                     .accessibilityIdentifier("message-search")
+                    .help(messageSearch.isEmpty ? "Search messages in this conversation" : "Search is active with \(filteredMessages.count) result\(filteredMessages.count == 1 ? "" : "s")")
                 if store.contactLink(for: conversation.id) != nil {
                     Button { showingContactQR = true } label: { Image(systemName: "qrcode") }
                         .buttonStyle(.plain)
+                        .help("Show the contact link for \(conversation.displayName) as a QR code")
                         .accessibilityLabel("Show contact QR code")
                 }
                 Button { showingIdentityVerification = true } label: {
@@ -2273,12 +2351,14 @@ private struct ConversationView: View {
                         .foregroundStyle(store.isConversationIdentityVerified(conversation.id) ? .green : .secondary)
                 }
                 .buttonStyle(.plain)
+                .help(store.isConversationIdentityVerified(conversation.id) ? "Identity fingerprint verified for \(conversation.displayName)" : "Compare and verify \(conversation.displayName)'s identity fingerprint")
                 .accessibilityLabel(store.isConversationIdentityVerified(conversation.id) ? "Contact identity verified" : "Verify contact identity")
                 Button { Task { await store.startVoiceCall(conversationID: conversation.id) } } label: {
                     Image(systemName: "phone.fill")
                 }
                 .buttonStyle(.plain)
                 .disabled(store.voiceCall != nil || conversation.isBlocked || store.networkState != .ready)
+                .help(conversation.isBlocked ? "Voice calling is unavailable because this contact is blocked" : (store.networkState == .ready ? "Start an end-to-end encrypted LXST voice call" : "Voice calling requires an active Reticulum connection"))
                 .accessibilityLabel("Start encrypted voice call")
                 compactConversationMenu
             }
@@ -2356,6 +2436,7 @@ private struct ConversationView: View {
             Image(systemName: "ellipsis.circle")
         }
         .buttonStyle(.plain)
+        .help("More actions for \(conversation.displayName), including export, search, LXMF commands and reporting")
         .accessibilityLabel("More conversation actions")
     }
 
@@ -2691,6 +2772,29 @@ private struct ConversationView: View {
         if store.isPathPending(to: conversation.destinationHash) { return "Finding route" }
         if store.hasPath(to: conversation.destinationHash) { return "Route available" }
         return store.networkState == .ready ? "Ready" : "Connecting"
+    }
+    private var routingHelp: String {
+        if store.activeLinkHashes.contains(conversation.destinationHash) { return "An authenticated encrypted Reticulum link to \(conversation.displayName) is active." }
+        if store.pendingLinkHashes.contains(conversation.destinationHash) { return "An encrypted link to \(conversation.displayName) is being established." }
+        if store.isPathPending(to: conversation.destinationHash) { return "Reticulum is currently searching all active interfaces for a path to \(conversation.displayName)." }
+        if store.hasPath(to: conversation.destinationHash) { return "A Reticulum route to \(conversation.displayName) is available; messages can be sent." }
+        return store.networkState == .ready ? "The network is ready, but no route to \(conversation.displayName) is known yet." : "The app is connecting to Reticulum before it can find this contact."
+    }
+    private var sendButtonHelp: String {
+        if voiceRecorder.isRecording { return "Finish or cancel the voice recording before sending" }
+        if conversation.isBlocked { return "Unblock \(conversation.displayName) before sending a message" }
+        if draft.count > SidebandMessageLimits.maximumTextCharacters { return "The message exceeds the maximum length" }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && pendingAttachments.isEmpty { return "Enter a message or add an attachment before sending" }
+        if let scheduledFor { return "Queue this message for \(scheduledFor.formatted(date: .abbreviated, time: .shortened))" }
+        return "Send this message to \(conversation.displayName); it will remain queued until Reticulum accepts it"
+    }
+    private func messageHoverHelp(_ message: Message) -> String {
+        var text = message.direction == .outgoing ? "Outgoing message" : "Incoming message from \(conversation.displayName)"
+        text += " — \(message.state.rawValue), \(message.timestamp.formatted(date: .abbreviated, time: .standard))"
+        if message.deliveryAttemptCount > 1 { text += ", \(message.deliveryAttemptCount) delivery attempts" }
+        if let failure = message.lastDeliveryFailure { text += ". Last issue: \(failure)" }
+        else if message.state == .queued { text += ". Waiting for a usable route or scheduled delivery time." }
+        return text + " Right-click for message actions."
     }
     private var routingIcon: String {
         if store.activeLinkHashes.contains(conversation.destinationHash) { return "lock.shield.fill" }
