@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1 (39) - 2026-07-21
+
+- Added content-free CloudKit silent-push subscriptions for encrypted cross-device background synchronisation.
+- Added read-only native migration of historical Python Sideband SQLite conversations and messages.
+- Added verified chunked RNode firmware flashing, a macOS vendor-bootloader adapter and physical acceptance hooks.
+- Added a native macOS Reticulum PipeInterface and hardened runtime memory, low-power and thermal diagnostics.
+- Added dual-stack gateway health checks and proof-based Mac/iOS delivery soak automation for automatic, local and public network modes.
+
 ## 1.3.0 (38) - 2026-07-21
 
 - Embedded reproducible official Codec2 1.2.0 builds for iPhone, iPad, Simulator, and universal macOS.

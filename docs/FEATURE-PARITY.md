@@ -13,20 +13,22 @@ perform the work in Swift/C without loading Python.
 | Reticulum interfaces and services | TCP client/server, UDP, AutoInterface, RNode/KISS, shared instance, I2P SAM and Weave framing | Wire-format, bounds, interface-mode, forwarding and simulated transport tests |
 | Plugins | Compiled permission-scoped APIs plus bounded declarative JSON plugins with no downloaded code execution | Schema, permission, template, timeout, audit and command safety tests |
 | RNode lifecycle and presentation | BLE/Wi-Fi/USB transports, configuration, metrics, framebuffer/ROM, signed catalogues, verified downloads, configuration archives and pluggable flashing | Protocol simulator, high-volume loopback, catalogue signature, digest, hardware-match and archive tests |
+| Background and migration | CloudKit-operated content-free APNs wakes, bounded reconnect/propagation sync, and read-only Python Sideband SQLite conversion | Subscription, cancellation, corruption, source-integrity and migration fixture tests |
+| Operations and specialised links | Health-ranked gateway pool, endpoint probes, proof-based dual-app soak runner and native macOS PipeInterface | Automatic/local/public test modes, HDLC framing and process lifecycle checks |
 
 ## Boundaries that are not app-code parity gaps
 
-- APNs wake delivery needs an operated provider and remains subject to iOS
-  scheduling.
+- CloudKit operates content-free APNs wakes for encrypted cross-device changes.
+  A separately operated wake provider is still needed for immediate arbitrary
+  Reticulum ingress, and every silent wake remains subject to iOS scheduling.
 - Public gateways and propagation nodes are external, independently operated
   infrastructure.
 - RF performance, BLE restoration and bootloader flashing require physical
   hardware acceptance on each supported RNode family.
 - Downloaded executable Python plugins are intentionally replaced by
   App-Store-safe native/declarative plugins.
-- Legacy raw identities and structured archives import natively. Direct
-  conversion of every historical Python SQLite schema revision remains a
-  compatibility extension rather than a runtime dependency.
+- Legacy raw identities, structured archives and the historical Python
+  `conv`/`lxm` SQLite schema import natively without modifying the source file.
 
 See `PORTING.md` for the detailed capability table and `docs/TESTING.md` for
 the live acceptance matrix.

@@ -25,11 +25,12 @@ targets:
     dependencies:
       - package: Ed25519
       - framework: Vendor/Codec2.xcframework
+      - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core
-        MARKETING_VERSION: 1.3.0
-        CURRENT_PROJECT_VERSION: 38
+        MARKETING_VERSION: 1.3.1
+        CURRENT_PROJECT_VERSION: 39
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandIOS:
@@ -46,8 +47,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Sideband
-        MARKETING_VERSION: 1.3.0
-        CURRENT_PROJECT_VERSION: 38
+        MARKETING_VERSION: 1.3.1
+        CURRENT_PROJECT_VERSION: 39
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-iOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -66,13 +67,14 @@ targets:
     dependencies:
       - package: Ed25519
       - framework: Vendor/Codec2.xcframework
+      - sdk: libsqlite3.tbd
     settings:
       base:
         PRODUCT_NAME: SidebandCore
         PRODUCT_MODULE_NAME: SidebandCore
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core.mac
-        MARKETING_VERSION: 1.3.0
-        CURRENT_PROJECT_VERSION: 38
+        MARKETING_VERSION: 1.3.1
+        CURRENT_PROJECT_VERSION: 39
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandMac:
@@ -89,8 +91,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Lower Sideband
-        MARKETING_VERSION: 1.3.0
-        CURRENT_PROJECT_VERSION: 38
+        MARKETING_VERSION: 1.3.1
+        CURRENT_PROJECT_VERSION: 39
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-macOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

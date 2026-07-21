@@ -13,7 +13,11 @@ let package = Package(
     ],
     targets: [
         .binaryTarget(name: "CCodec2", path: "Vendor/Codec2.xcframework"),
-        .target(name: "SidebandCore", dependencies: ["CCodec2", .product(name: "Ed25519", package: "ed25519")]),
+        .target(
+            name: "SidebandCore",
+            dependencies: ["CCodec2", .product(name: "Ed25519", package: "ed25519")],
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
         .executableTarget(name: "SidebandMac", dependencies: ["SidebandCore"]),
         .testTarget(name: "SidebandCoreTests", dependencies: ["SidebandCore"])
     ]

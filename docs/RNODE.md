@@ -29,7 +29,7 @@ The native implementation includes:
 
 ## Firmware updates
 
-Lower Sideband validates a selected firmware package against the connected board and prepares an update plan before placing hardware into update mode. Bootloader flashing itself is platform- and board-specific and is intentionally handed off to the appropriate ESP, Nordic, or AVR flashing tool. The app does not claim that arbitrary firmware has been installed merely because update mode was entered.
+Lower Sideband validates a selected firmware package against the connected board and prepares an update plan before placing hardware into update mode. `RNodeChunkedFirmwareFlasher` provides bounded writes, cancellation and final SHA-256 verification to native BLE/serial/Wi-Fi bootloader adapters. On macOS, `RNodeExternalBootloaderFlasher` can hand a protected temporary image to an explicitly installed ESP, Nordic or AVR vendor tool and requires a successful exit status. The app does not claim that firmware was installed merely because update mode was entered.
 
 Always obtain firmware from a trusted source and verify that it targets the detected platform and board.
 
@@ -66,5 +66,6 @@ Scripts/test-rnode.sh all
 5. Exchange packets with another compatible node and watch RX/TX counters.
 6. Test reconnect after radio power loss and application foreground/background transitions.
 7. Repeat with TCP/public interfaces active to confirm independent routes remain stable.
+8. For every supported board, flash a signed catalogue image, reboot, verify the reported version and run the 100-packet loopback.
 
 Hardware tests must not transmit outside authorised spectrum or power limits.

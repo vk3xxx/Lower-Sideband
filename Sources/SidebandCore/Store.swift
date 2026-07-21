@@ -116,6 +116,7 @@ public final class SidebandStore {
     public let notifications = LocalNotificationManager()
     public let privacyLock = AppPrivacyLock()
     public let backgroundRefresh = BackgroundRefreshCoordinator()
+    public let runtimeHealth = SidebandRuntimeHealth()
     public let rnodeManager = RNodeManager()
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
@@ -308,6 +309,7 @@ public final class SidebandStore {
             guard let self else { return false }
             return await self.performBackgroundRefresh()
         }
+        runtimeHealth.start()
         Task { try? await resourceStagingStore.removeStale(olderThan: Date(timeIntervalSinceNow: -86_400)) }
         Task { [weak self] in _ = await self?.cleanOrphanedAttachments() }
         syncUnreadBadge()
@@ -315,6 +317,19 @@ public final class SidebandStore {
 
     public var selectedConversation: Conversation? {
         conversations.first { $0.id == selectedConversationID }
+    }
+
+    /// Drops rebuildable indexes and transcript data after an operating-system
+    /// memory warning. Encrypted durable messages and attachments are retained.
+    public func handleMemoryPressure() {
+        transcriptCache.removeAll(keepingCapacity: false)
+        messagesByConversation.removeAll(keepingCapacity: false)
+        latestMessageByConversation.removeAll(keepingCapacity: false)
+        failedMessageCountByConversation.removeAll(keepingCapacity: false)
+        latestMessageDateByConversation.removeAll(keepingCapacity: false)
+        reactionCountsByConversationAndTarget.removeAll(keepingCapacity: false)
+        messageIndexesAreDirty = true
+        runtimeHealth.recordMemoryPressure()
     }
 
     public var localVoiceHash: String { LXSTVoice.destinationHash(for: messagingIdentity).hex }
@@ -1958,6 +1973,7 @@ public final class SidebandStore {
             "Plugins: \(pluginRegistry.manifests.count) loaded, \(pluginRegistry.rejectedPluginDescriptions.count) rejected, \(pluginAuditEvents.count) audit events",
             "Propagation node: \(propagationNodeHash.isEmpty ? "not discovered" : propagationNodeHash) (\(propagationNodeIsAutomatic ? "automatic" : "manual"))",
             "Remote wake token: \(UserDefaults.standard.string(forKey: "sidebandAPNsDeviceToken") == nil ? "not registered" : "registered")",
+            "Runtime: low power \(runtimeHealth.isLowPowerModeEnabled ? "on" : "off"), thermal \(runtimeHealth.thermalState.rawValue), memory warnings \(runtimeHealth.memoryPressureEvents)",
             "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")",
             "Background refresh: \(lastBackgroundRefreshAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never") · \(lastBackgroundRefreshSucceeded.map { $0 ? "succeeded" : "incomplete" } ?? "not run")"
         ].joined(separator: "\n")
@@ -2030,6 +2046,24 @@ public final class SidebandStore {
         case .failure: throw SidebandProfileArchive.ArchiveError.invalidPayload
         case .success: messagingIdentity = identity
         }
+    }
+
+    /// Imports conversations and messages directly from a historical Python
+    /// Sideband SQLite database without modifying the source file.
+    @discardableResult
+    public func importLegacySidebandDatabase(at url: URL) throws -> LegacySidebandSQLiteImporter.Report {
+        let report = try LegacySidebandSQLiteImporter.load(from: url)
+        let local = AppSnapshot(
+            conversations: conversations, messages: messages, discoveries: discoveries,
+            drafts: drafts, voiceCallHistory: voiceCallHistory,
+            pluginAuditEvents: pluginAuditEvents,
+            deletedConversationDestinations: deletedConversationDestinations
+        )
+        let merged = local.mergingCloudSnapshot(report.snapshot)
+        applyCloudSnapshot(merged)
+        save()
+        syncUnreadBadge()
+        return report
     }
 
     public func validatedSnapshot(from data: Data) throws -> AppSnapshot {

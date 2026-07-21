@@ -132,6 +132,7 @@ private struct CloudAttachmentEnvelope: Codable {
 
 public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
     public static let containerIdentifier = "iCloud.com.supes.MacSideband"
+    public static let subscriptionIdentifier = "lower-sideband-private-database-v1"
     private let containerIdentifier: String
     private let cipher: CloudPayloadCipher
 
@@ -147,7 +148,9 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
         guard Bundle.main.bundleIdentifier == "com.supes.MacSideband" else { return false }
         #endif
         let container = CKContainer(identifier: containerIdentifier)
-        return (try? await container.accountStatus()) == .available
+        guard (try? await container.accountStatus()) == .available else { return false }
+        try? await ensureSilentPushSubscription(in: container.privateCloudDatabase)
+        return true
     }
 
     public func fetchSnapshot() async throws -> CloudSnapshotPayload? {
@@ -232,6 +235,22 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
 
     private func snapshotRecordID() throws -> CKRecord.ID {
         CKRecord.ID(recordName: try cipher.recordName(for: "snapshot-v1"))
+    }
+
+    /// CloudKit operates the APNs provider for private-database changes. The
+    /// notification carries no conversation content; it only wakes the app so
+    /// the encrypted snapshot and LXMF propagation queue can be synchronised.
+    private func ensureSilentPushSubscription(in database: CKDatabase) async throws {
+        do {
+            _ = try await database.subscription(for: Self.subscriptionIdentifier)
+            return
+        } catch let error as CKError where error.code == .unknownItem {
+            let subscription = CKDatabaseSubscription(subscriptionID: Self.subscriptionIdentifier)
+            let info = CKSubscription.NotificationInfo()
+            info.shouldSendContentAvailable = true
+            subscription.notificationInfo = info
+            _ = try await database.save(subscription)
+        }
     }
 }
 

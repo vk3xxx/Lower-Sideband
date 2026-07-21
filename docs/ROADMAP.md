@@ -8,20 +8,20 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
 - Exercise attachments, propagation sync, voice, telemetry, RNode, and network transitions across physical iPhone, iPad, and Mac hardware.
 - Expand accessibility audits, localisation preparation, performance profiling, and long-running memory/power tests.
 - Strengthen public endpoint health data and operator documentation without embedding private infrastructure assumptions.
-- Expand automated migration tests for every persisted snapshot version.
+- Expand automated migration fixtures as new upstream historical schemas are found.
 
 ## Infrastructure-dependent
 
 - Deploy and monitor redundant project-controlled Reticulum gateways and LXMF propagation nodes.
-- Operate an APNs provider for content-free wake hints and token lifecycle management.
+- Operate an optional project-controlled APNs provider for immediate Reticulum ingress; encrypted cross-device CloudKit changes already use CloudKit-operated content-free wakes.
 - Add service health and abuse-response procedures suitable for a public production deployment.
 
 ## Compatibility extensions
 
-- Expand direct legacy Python Sideband SQLite history conversion beyond the current identity/profile and structured archive migration paths.
+- Expand direct legacy Python Sideband SQLite conversion if upstream introduces additional table shapes beyond `conv` and `lxm`.
 - Broaden support for specialised Reticulum interfaces not available through TCP, AutoInterface, RNode, or generic KISS.
 - Extend native plugin APIs while retaining App Store sandboxing, explicit permissions, and deterministic reviewability.
-- Integrate supported platform-specific firmware flashing tools where this can be done safely and within Apple distribution rules.
+- Add physical-board bootloader acceptance evidence for each supported RNode family.
 - Continue expanding less-common telemetry collectors and renderer types.
 
 ## Explicit non-goals

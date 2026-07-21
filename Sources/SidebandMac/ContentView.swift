@@ -114,6 +114,7 @@ struct ContentView: View {
     @State private var showingContactCollectionExporter = false
     @State private var showingContactCollectionImporter = false
     @State private var showingConversationArchiveImporter = false
+    @State private var showingLegacyDatabaseImporter = false
     @State private var pendingRestoreData: Data?
 
     var body: some View {
@@ -188,6 +189,7 @@ struct ContentView: View {
                         Button { showingContactCollectionImporter = true } label: { Label("Import Contacts", systemImage: "person.crop.circle.badge.plus") }
                         Divider()
                         Button { showingConversationArchiveImporter = true } label: { Label("Import Conversation Archive", systemImage: "bubble.left.and.text.bubble.right") }
+                        Button { showingLegacyDatabaseImporter = true } label: { Label("Import Python Sideband Database", systemImage: "cylinder.split.1x2") }
                     } label: { Label("Contacts", systemImage: "person.2") }
                     .help("Import contacts or conversation archives")
                     Button(action: { showingNewConversation = true }) { Label("New conversation", systemImage: "square.and.pencil") }
@@ -233,6 +235,12 @@ struct ContentView: View {
             switch result {
             case .success(let url): importConversationArchive(from: url)
             case .failure(let error): store.lastError = "Could not open conversation archive: \(error.localizedDescription)"
+            }
+        }
+        .fileImporter(isPresented: $showingLegacyDatabaseImporter, allowedContentTypes: [.data]) { result in
+            switch result {
+            case .success(let url): importLegacyDatabase(from: url)
+            case .failure(let error): store.lastError = "Could not open legacy database: \(error.localizedDescription)"
             }
         }
         .alert("Lower Sideband", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.clearError() } })) {
@@ -472,6 +480,20 @@ struct ContentView: View {
             store.lastError = count == 0 ? "The conversation archive contained no new messages." : "Imported \(count) archived message\(count == 1 ? "" : "s"). Attachment metadata was retained, but archive files do not contain attachment payloads."
         } catch {
             store.lastError = "Could not import conversation archive: \(error.localizedDescription)"
+        }
+    }
+
+    private func importLegacyDatabase(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let report = try store.importLegacySidebandDatabase(at: url)
+            let conversationCount = report.snapshot.conversations.count
+            let messageCount = report.snapshot.messages.count
+            let skipped = report.skippedMessages == 0 ? "" : " \(report.skippedMessages) unmatched message rows were skipped."
+            store.lastError = "Imported \(conversationCount) conversation\(conversationCount == 1 ? "" : "s") and \(messageCount) message\(messageCount == 1 ? "" : "s") from the read-only Python database.\(skipped)"
+        } catch {
+            store.lastError = "Could not import Python Sideband database: \(error.localizedDescription)"
         }
     }
 

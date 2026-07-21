@@ -71,6 +71,19 @@ The simulated transport supports handshake, fragmented streams, packet loopback,
 
 ## Delivery acceptance
 
+The automated two-app runner builds both clients, launches them with separate
+identities and requires delivery proofs, ordering and de-duplication in both
+directions:
+
+```sh
+Scripts/run-delivery-soak.sh <simulator-udid> <mac-lxmf-id> <sim-lxmf-id> automatic 100
+Scripts/run-delivery-soak.sh <simulator-udid> <mac-lxmf-id> <sim-lxmf-id> local 100
+Scripts/run-delivery-soak.sh <simulator-udid> <mac-lxmf-id> <sim-lxmf-id> public 100
+```
+
+For explicit local/public endpoints, set `SIDEBAND_SOAK_HOST` and
+`SIDEBAND_SOAK_PORT`. The runner does not modify DNS.
+
 For end-to-end testing between two app instances:
 
 1. Use distinct identities and confirm each app announces.

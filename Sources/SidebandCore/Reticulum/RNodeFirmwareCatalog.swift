@@ -67,6 +67,90 @@ public protocol RNodeFirmwareFlasher: Sendable {
     func flash(_ package: RNodeFirmwarePackage, progress: @escaping @Sendable (Double) async -> Void) async throws
 }
 
+/// Bootloader adapter used by BLE, serial and Wi-Fi implementations. Hardware
+/// families can provide their own erase/write/verify commands while sharing
+/// digest validation, bounded chunking and monotonic progress reporting.
+public protocol RNodeBootloaderTransport: Sendable {
+    func begin(imageBytes: Int, sha256: Data) async throws
+    func write(offset: Int, bytes: Data) async throws
+    func finish() async throws -> Data
+    func cancel() async
+}
+
+public struct RNodeChunkedFirmwareFlasher: RNodeFirmwareFlasher, Sendable {
+    public enum Error: Swift.Error, Equatable { case invalidChunkSize, verificationFailed }
+    private let transport: any RNodeBootloaderTransport
+    private let chunkSize: Int
+
+    public init(transport: any RNodeBootloaderTransport, chunkSize: Int = 1_024) throws {
+        guard (128...16_384).contains(chunkSize) else { throw Error.invalidChunkSize }
+        self.transport = transport; self.chunkSize = chunkSize
+    }
+
+    public func flash(_ package: RNodeFirmwarePackage, progress: @escaping @Sendable (Double) async -> Void) async throws {
+        try package.validate(against: RNodeMetrics())
+        do {
+            try await transport.begin(imageBytes: package.image.count, sha256: package.sha256)
+            await progress(0)
+            var offset = 0
+            while offset < package.image.count {
+                try Task.checkCancellation()
+                let end = min(package.image.count, offset + chunkSize)
+                try await transport.write(offset: offset, bytes: package.image.subdata(in: offset..<end))
+                offset = end
+                await progress(Double(offset) / Double(package.image.count))
+            }
+            guard try await transport.finish() == package.sha256 else { throw Error.verificationFailed }
+            await progress(1)
+        } catch {
+            await transport.cancel()
+            throw error
+        }
+    }
+}
+
+#if os(macOS)
+/// Executes an explicitly installed native vendor bootloader on macOS. The
+/// firmware is written to a private temporary file and removed after use.
+public struct RNodeExternalBootloaderFlasher: RNodeFirmwareFlasher, Sendable {
+    public enum Error: LocalizedError {
+        case unsafeExecutable, failed(Int32, String)
+        public var errorDescription: String? {
+            switch self {
+            case .unsafeExecutable: "The selected RNode bootloader is not an executable absolute path."
+            case let .failed(code, output): "The RNode bootloader exited with status \(code): \(output)"
+            }
+        }
+    }
+    public let executableURL: URL
+    public let arguments: [String]
+    public let imagePlaceholder: String
+
+    public init(executableURL: URL, arguments: [String], imagePlaceholder: String = "{image}") {
+        self.executableURL = executableURL; self.arguments = arguments; self.imagePlaceholder = imagePlaceholder
+    }
+
+    public func flash(_ package: RNodeFirmwarePackage, progress: @escaping @Sendable (Double) async -> Void) async throws {
+        try package.validate(against: RNodeMetrics())
+        guard executableURL.isFileURL, executableURL.path.hasPrefix("/"),
+              FileManager.default.isExecutableFile(atPath: executableURL.path) else { throw Error.unsafeExecutable }
+        let directory = FileManager.default.temporaryDirectory.appending(path: "lower-sideband-rnode-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let imageURL = directory.appending(path: "firmware.bin")
+        try package.image.write(to: imageURL, options: [.atomic, .completeFileProtection])
+        await progress(0.1)
+        let process = Process(); process.executableURL = executableURL
+        process.arguments = arguments.map { $0.replacingOccurrences(of: imagePlaceholder, with: imageURL.path) }
+        let pipe = Pipe(); process.standardOutput = pipe; process.standardError = pipe
+        try process.run(); process.waitUntilExit()
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile().prefix(8_192), encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else { throw Error.failed(process.terminationStatus, output) }
+        await progress(1)
+    }
+}
+#endif
+
 public enum RNodeConfigurationArchive {
     public static func encode(_ configurations: [RNodeConfiguration]) throws -> Data {
         guard configurations.count <= 32 else { throw Error.invalid }

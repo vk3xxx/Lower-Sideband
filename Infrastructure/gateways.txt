@@ -1,0 +1,3 @@
+# label|host|port
+# Production operators should list at least two independently hosted gateways.
+# Public defaults are maintained in Sources/SidebandCore/Reticulum/LANGatewayDiscovery.swift.

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import SQLite3
 import Testing
 @testable import SidebandCore
 
@@ -3507,6 +3508,63 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
         pages += 1; offset += length
     }
     #expect(pages == 3)
+}
+
+@Test func legacyPythonSQLiteDatabaseImportsReadOnly() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: "sideband-legacy-\(UUID().uuidString).db")
+    defer { try? FileManager.default.removeItem(at: url) }
+    var database: OpaquePointer?
+    #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
+    guard let database else { return }
+    let sql = """
+    CREATE TABLE conv (dest_context BLOB PRIMARY KEY, last_tx INTEGER, last_rx INTEGER, unread INTEGER, type INTEGER, trust INTEGER, name BLOB, data BLOB);
+    CREATE TABLE lxm (lxm_hash BLOB PRIMARY KEY, dest BLOB, source BLOB, title BLOB, tx_ts INTEGER, rx_ts INTEGER, state INTEGER, method INTEGER, t_encrypted INTEGER, t_encryption INTEGER, data BLOB, extra BLOB);
+    INSERT INTO conv VALUES (x'00112233445566778899aabbccddeeff',10,20,1,0,1,x'4c65676163792050656572',NULL);
+    INSERT INTO lxm VALUES (x'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',x'ffffffffffffffffffffffffffffffff',x'00112233445566778899aabbccddeeff',x'',0,21,4,0,0,0,x'68656c6c6f206c6567616379',NULL);
+    """
+    #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close(database)
+
+    let before = try Data(contentsOf: url)
+    let report = try LegacySidebandSQLiteImporter.load(from: url)
+    #expect(report.snapshot.conversations.count == 1)
+    #expect(report.snapshot.conversations[0].displayName == "Legacy Peer")
+    #expect(report.snapshot.conversations[0].isTrusted)
+    #expect(report.snapshot.messages.count == 1)
+    #expect(report.snapshot.messages[0].body == "hello legacy")
+    #expect(report.snapshot.messages[0].direction == .incoming)
+    #expect(try Data(contentsOf: url) == before)
+}
+
+@Test func chunkedRNodeFlasherWritesInOrderAndVerifiesDigest() async throws {
+    let image = Data((0..<2_500).map { UInt8($0 % 251) })
+    let package = RNodeFirmwarePackage(version: "1.0", platform: 1, trustedImage: image)
+    let transport = TestBootloaderTransport()
+    let flasher = try RNodeChunkedFirmwareFlasher(transport: transport, chunkSize: 512)
+    let progress = TestProgressRecorder()
+    try await flasher.flash(package) { value in await progress.add(value) }
+    #expect(await transport.image() == image)
+    let values = await progress.values()
+    #expect(values.first == 0 && values.last == 1)
+    #expect(zip(values, values.dropFirst()).allSatisfy { $0 <= $1 })
+}
+
+private actor TestBootloaderTransport: RNodeBootloaderTransport {
+    private var bytes = Data(); private var digest = Data()
+    func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }
+    func write(offset: Int, bytes value: Data) throws {
+        guard offset == bytes.count else { throw RNodeChunkedFirmwareFlasher.Error.verificationFailed }
+        bytes.append(value)
+    }
+    func finish() -> Data { Data(SHA256.hash(data: bytes)) }
+    func cancel() {}
+    func image() -> Data { bytes }
+}
+
+private actor TestProgressRecorder {
+    private var recorded: [Double] = []
+    func add(_ value: Double) { recorded.append(value) }
+    func values() -> [Double] { recorded }
 }
 
 private extension Data {

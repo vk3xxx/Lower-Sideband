@@ -38,7 +38,10 @@ struct SidebandApp: App {
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
                     await store.notifications.prepare()
-                    RemoteWakeBridge.shared.install { [store] in await store.performRemoteWakeSync() }
+                    RemoteWakeBridge.shared.install(
+                        wake: { [store] in await store.performRemoteWakeSync() },
+                        memoryPressure: { [store] in store.handleMemoryPressure() }
+                    )
                     UIApplication.shared.registerForRemoteNotifications()
                 }
         }
@@ -349,9 +352,13 @@ final class CallKitCoordinator: NSObject, CXProviderDelegate {
 private final class RemoteWakeBridge {
     static let shared = RemoteWakeBridge()
     private var handler: (@MainActor () async -> Bool)?
+    private var memoryPressureHandler: (@MainActor () -> Void)?
 
-    func install(_ handler: @escaping @MainActor () async -> Bool) { self.handler = handler }
+    func install(wake handler: @escaping @MainActor () async -> Bool, memoryPressure: @escaping @MainActor () -> Void) {
+        self.handler = handler; memoryPressureHandler = memoryPressure
+    }
     func perform() async -> Bool { await handler?() ?? false }
+    func handleMemoryPressure() { memoryPressureHandler?() }
 }
 
 @MainActor
@@ -371,6 +378,10 @@ final class SidebandAppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         UserDefaults.standard.set(error.localizedDescription, forKey: "sidebandAPNsRegistrationError")
+    }
+
+    func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
+        RemoteWakeBridge.shared.handleMemoryPressure()
     }
 
     func application(
