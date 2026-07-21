@@ -100,6 +100,11 @@ public final class SidebandStore {
     public private(set) var connectionMode: NetworkConnectionMode
     public var internetOnlyEnabled: Bool
     public var autoInterfaceEnabled: Bool
+    public private(set) var transportInstanceEnabled: Bool
+    public private(set) var transportInstanceSnapshot = ReticulumTransportSnapshot(
+        enabled: false, knownRoutes: 0, forwardedPackets: 0, duplicatePackets: 0,
+        ignoredPackets: 0, lastForwardedAt: nil
+    )
     public var propagationNodeHash: String
     public private(set) var propagationNodeIsAutomatic: Bool
     public private(set) var discoveredPropagationNodeCount = 0
@@ -205,6 +210,7 @@ public final class SidebandStore {
     private let transportIdentity: ReticulumIdentity
     private let tcpInterfaceHash: Data
     private let messagingIdentity: ReticulumIdentity
+    @ObservationIgnored private lazy var transportInstance = ReticulumTransportInstance(identityHash: transportIdentity.hash)
 
     private struct MessageStatistics {
         var incoming = 0
@@ -258,6 +264,11 @@ public final class SidebandStore {
         connectionMode = UserDefaults.standard.string(forKey: "reticulumConnectionMode").flatMap(NetworkConnectionMode.init(rawValue:)) ?? .automatic
         internetOnlyEnabled = UserDefaults.standard.bool(forKey: "reticulumInternetOnly")
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
+        #if os(macOS)
+        transportInstanceEnabled = UserDefaults.standard.bool(forKey: "reticulumTransportInstanceEnabled")
+        #else
+        transportInstanceEnabled = false
+        #endif
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
         propagationNodeIsAutomatic = UserDefaults.standard.object(forKey: "lxmfPropagationNodeAutomatic") as? Bool ?? true
         localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Lower Sideband"
@@ -283,9 +294,9 @@ public final class SidebandStore {
         } else {
             lastError = "Secure Keychain data is temporarily unavailable. Lower Sideband will remain offline and will not read or overwrite encrypted data. Unlock the device and reopen the app."
         }
-        autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
+        autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receiveFromInterface(packet, interfaceID: "auto") }
         rnodeManager.setHandlers { [weak self] interfaceID, packet in
-            await self?.receive(packet, interfaceID: interfaceID)
+            await self?.receiveFromInterface(packet, interfaceID: interfaceID)
         } state: { [weak self] in
             self?.refreshAggregateNetworkState()
         }
@@ -1485,6 +1496,8 @@ public final class SidebandStore {
     public func startTransport() async {
         await transport.start()
         transportState = await transport.state
+        await transportInstance.setEnabled(transportInstanceEnabled)
+        transportInstanceSnapshot = await transportInstance.snapshot()
     }
 
     public func clearError() { lastError = nil }
@@ -1824,6 +1837,19 @@ public final class SidebandStore {
         attemptedGatewayIDs.removeAll()
         attemptedInternetGatewayIDs.removeAll()
         if autoConnectEnabled { Task { await reconnectNetwork() } }
+    }
+
+    public func setTransportInstanceEnabled(_ enabled: Bool) {
+        #if os(macOS)
+        transportInstanceEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "reticulumTransportInstanceEnabled")
+        Task {
+            await transportInstance.setEnabled(enabled)
+            transportInstanceSnapshot = await transportInstance.snapshot()
+        }
+        #else
+        transportInstanceEnabled = false
+        #endif
     }
 
     public func setPreferIPv6(_ enabled: Bool) {
@@ -2294,7 +2320,7 @@ public final class SidebandStore {
 
     private func makeInterfacePool(generation: UUID) -> ReticulumTCPInterfacePool {
         ReticulumTCPInterfacePool { [weak self] interfaceID, packet in
-            await self?.receive(packet, interfaceID: interfaceID)
+            await self?.receiveFromInterface(packet, interfaceID: interfaceID)
         } stateHandler: { [weak self] state, snapshots in
             await self?.setNetworkState(state, generation: generation, snapshots: snapshots)
         }
@@ -2603,6 +2629,38 @@ public final class SidebandStore {
         } catch {
             // Connection transitions are retried by the engine. An announce is
             // maintenance traffic and must never interrupt the user with a modal.
+        }
+    }
+
+    private func receiveFromInterface(_ packet: ReticulumPacket, interfaceID: String) async {
+        guard transportInstanceEnabled else { receive(packet, interfaceID: interfaceID); return }
+        await transportInstance.setEnabled(true)
+        var interfaces: [ReticulumTransportInterfaceDescriptor] = []
+        if let pool = networkInterfacePool {
+            interfaces += await pool.readyInterfaceIDs().map { ReticulumTransportInterfaceDescriptor(id: $0, mode: .full) }
+        }
+        interfaces += rnodeManager.readyInterfaceIDs.map { ReticulumTransportInterfaceDescriptor(id: "rnode:\($0.uuidString)", mode: .full) }
+        if autoInterfaceDiscovery.isListening, !autoInterfaceDiscovery.peers.isEmpty {
+            interfaces.append(ReticulumTransportInterfaceDescriptor(id: "auto", mode: .internalMode))
+        }
+        let source = interfaces.first(where: { $0.id == interfaceID })
+            ?? ReticulumTransportInterfaceDescriptor(id: interfaceID, mode: interfaceID == "auto" ? .internalMode : .full)
+        if !interfaces.contains(where: { $0.id == interfaceID }) { interfaces.append(source) }
+        let localDestinations = Set([localDeliveryHash, localVoiceHash].compactMap(Data.init(hexadecimal:)))
+        let result = await transportInstance.process(packet, from: source, available: interfaces, localDestinations: localDestinations)
+        for forward in result.forwards { await transmitTransportForward(forward) }
+        transportInstanceSnapshot = await transportInstance.snapshot()
+        if result.deliverLocally { receive(packet, interfaceID: interfaceID) }
+    }
+
+    private func transmitTransportForward(_ forward: ReticulumTransportForward) async {
+        if forward.interfaceID.hasPrefix("rnode:"),
+           let id = UUID(uuidString: String(forward.interfaceID.dropFirst("rnode:".count))) {
+            try? await rnodeManager.send(rawPacket: forward.rawPacket, on: id)
+        } else if forward.interfaceID == "auto" {
+            for peer in autoInterfaceDiscovery.peers { autoInterfaceDiscovery.send(rawPacket: forward.rawPacket, to: peer) }
+        } else {
+            try? await networkInterfacePool?.send(rawPacket: forward.rawPacket, on: forward.interfaceID)
         }
     }
 

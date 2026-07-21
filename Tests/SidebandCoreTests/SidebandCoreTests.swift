@@ -153,6 +153,65 @@ private actor RNodeTestCounter {
     #expect(throws: RNodeFirmwareValidationError.boardMismatch) { try wrongBoard.validate(against: metrics) }
 }
 
+@Test func nativeTransportInstanceRoutesOneHundredPacketsBothWaysWithoutLoops() async throws {
+    let transportIdentity = try ReticulumIdentity(privateKey: Data(repeating: 0x71, count: 64))
+    let alice = try ReticulumIdentity(privateKey: Data(repeating: 0x72, count: 64))
+    let bob = try ReticulumIdentity(privateKey: Data(repeating: 0x73, count: 64))
+    let router = ReticulumTransportInstance(identityHash: transportIdentity.hash, enabled: true)
+    let a = ReticulumTransportInterfaceDescriptor(id: "tcp-a", mode: .gateway)
+    let b = ReticulumTransportInterfaceDescriptor(id: "rnode-b", mode: .full)
+    let interfaces = [a, b]
+    let aliceAnnounce = try ReticulumPacket(raw: ReticulumAnnounceBuilder.packet(identity: alice, destinationName: "lxmf.delivery"))
+    let bobAnnounce = try ReticulumPacket(raw: ReticulumAnnounceBuilder.packet(identity: bob, destinationName: "lxmf.delivery"))
+    _ = await router.process(aliceAnnounce, from: a, available: interfaces)
+    _ = await router.process(bobAnnounce, from: b, available: interfaces)
+
+    for sequence in 0..<100 {
+        let toBob = try ReticulumPacket(raw: testTransportData(destination: bobAnnounce.destinationHash, sequence: sequence))
+        let forward = await router.process(toBob, from: a, available: interfaces)
+        #expect(forward.forwards.map { $0.interfaceID } == [b.id])
+        #expect(try ReticulumPacket(raw: forward.forwards[0].rawPacket).destinationHash == bobAnnounce.destinationHash)
+
+        let toAlice = try ReticulumPacket(raw: testTransportData(destination: aliceAnnounce.destinationHash, sequence: sequence + 100))
+        let reverse = await router.process(toAlice, from: b, available: interfaces)
+        #expect(reverse.forwards.map { $0.interfaceID } == [a.id])
+    }
+    let duplicate = try ReticulumPacket(raw: testTransportData(destination: bobAnnounce.destinationHash, sequence: 99))
+    #expect(await router.process(duplicate, from: a, available: interfaces).forwards.isEmpty)
+    let snapshot = await router.snapshot()
+    #expect(snapshot.forwardedPackets == 202)
+    #expect(snapshot.duplicatePackets == 1)
+    #expect(snapshot.knownRoutes == 2)
+}
+
+@Test func nativeTransportInstanceEnforcesAddressingAndInterfaceModeBoundaries() async throws {
+    let local = try ReticulumIdentity(privateKey: Data(repeating: 0x74, count: 64))
+    let remote = try ReticulumIdentity(privateKey: Data(repeating: 0x75, count: 64))
+    let router = ReticulumTransportInstance(identityHash: local.hash, enabled: true)
+    let boundary = ReticulumTransportInterfaceDescriptor(id: "boundary", mode: .boundary)
+    let roaming = ReticulumTransportInterfaceDescriptor(id: "roaming", mode: .roaming)
+    let full = ReticulumTransportInterfaceDescriptor(id: "full", mode: .full)
+    let announce = try ReticulumPacket(raw: ReticulumAnnounceBuilder.packet(identity: remote, destinationName: "lxmf.delivery"))
+    let result = await router.process(announce, from: boundary, available: [boundary, roaming, full])
+    #expect(result.forwards.map { $0.interfaceID } == [full.id])
+
+    let otherTransport = try ReticulumIdentity(privateKey: Data(repeating: 0x76, count: 64))
+    let ordinary = try ReticulumPacket(raw: testTransportData(destination: announce.destinationHash, sequence: 1))
+    let addressedElsewhere = try ReticulumPacket(raw: ordinary.routed(via: otherTransport.hash))
+    let ignored = await router.process(addressedElsewhere, from: full, available: [boundary, full])
+    #expect(!ignored.deliverLocally)
+    #expect(ignored.forwards.isEmpty)
+    #expect(await router.snapshot().ignoredPackets == 1)
+}
+
+private func testTransportData(destination: Data, sequence: Int) -> Data {
+    var raw = Data([0x00, 0x00])
+    raw.append(destination)
+    raw.append(0x00)
+    raw.append(contentsOf: withUnsafeBytes(of: UInt32(sequence).bigEndian, Array.init))
+    return raw
+}
+
 private struct PermissionProbePlugin: SidebandCommandPlugin {
     let manifest: SidebandPluginManifest
     init(permissions: Set<SidebandPluginPermission>) {

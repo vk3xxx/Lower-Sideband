@@ -927,6 +927,29 @@ private struct NetworkView: View {
                     GridRow { metric("Recovered outbox", store.recoveredOutboundCount); metric("Failed messages", store.failedMessageCount) }
                 }.padding(6).frame(maxWidth: .infinity, alignment: .leading)
             }
+            #if os(macOS)
+            GroupBox("Reticulum Transport Instance") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("Route packets between this Mac's interfaces", isOn: Binding(
+                        get: { store.transportInstanceEnabled },
+                        set: { store.setTransportInstanceEnabled($0) }
+                    ))
+                    .help(store.transportInstanceEnabled
+                          ? "Transport Instance is active. This Mac validates announces and forwards eligible packets between TCP, RNode and AutoInterface links while suppressing loops."
+                          : "Transport Instance is off. Lower Sideband behaves only as an endpoint and does not route packets for other Reticulum nodes.")
+                    Text("Use this only on a Mac intended to remain online as a router. Interface modes prevent prohibited announce crossings, and duplicate packet hashes are suppressed.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                        GridRow { Text("State"); Text(store.transportInstanceEnabled ? "Routing" : "Endpoint only") }
+                        GridRow { Text("Transport identity"); Text(store.transportInstanceSnapshot.enabled ? "Active" : "Inactive") }
+                        GridRow { Text("Learned routes"); Text(store.transportInstanceSnapshot.knownRoutes.formatted()) }
+                        GridRow { Text("Forwarded"); Text(store.transportInstanceSnapshot.forwardedPackets.formatted()) }
+                        GridRow { Text("Duplicates blocked"); Text(store.transportInstanceSnapshot.duplicatePackets.formatted()) }
+                        GridRow { Text("Packets ignored"); Text(store.transportInstanceSnapshot.ignoredPackets.formatted()) }
+                    }.font(.caption)
+                }.padding(6)
+            }
+            #endif
             GroupBox("Delivery health") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
