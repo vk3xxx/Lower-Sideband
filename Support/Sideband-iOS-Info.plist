@@ -28,12 +28,13 @@
         <string>_rns._tcp</string>
         <string>_sideband._tcp</string>
     </array>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>Lower Sideband connects to nearby RNode radios over Bluetooth Low Energy for off-grid Reticulum messaging.</string>
     <key>NSCameraUsageDescription</key><string>Lower Sideband uses the camera only when you choose to scan a contact or encrypted paper-message QR code.</string>
     <key>NSLocalNetworkUsageDescription</key><string>Lower Sideband discovers and connects to Reticulum gateways and peers on your local network.</string>
     <key>NSLocationWhenInUseUsageDescription</key><string>Lower Sideband uses your location only when you choose to share telemetry with a contact.</string>
     <key>NSMicrophoneUsageDescription</key><string>Lower Sideband uses the microphone when you choose to record a voice message or make an encrypted voice call.</string>
     <key>UIApplicationSupportsIndirectInputEvents</key><true/>
-    <key>UIBackgroundModes</key><array><string>fetch</string><string>remote-notification</string></array>
+    <key>UIBackgroundModes</key><array><string>bluetooth-central</string><string>fetch</string><string>remote-notification</string></array>
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key>
     <array>

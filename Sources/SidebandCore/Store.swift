@@ -106,6 +106,7 @@ public final class SidebandStore {
     public let notifications = LocalNotificationManager()
     public let privacyLock = AppPrivacyLock()
     public let backgroundRefresh = BackgroundRefreshCoordinator()
+    public let rnodeManager = RNodeManager()
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
     public private(set) var attachmentStorageReport: AttachmentStorageReport?
@@ -142,6 +143,7 @@ public final class SidebandStore {
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
     private var networkInterfacePool: ReticulumTCPInterfacePool?
+    private var tcpNetworkState: ReticulumTCPInterface.State = .stopped
     private var autoConnectedDiscoveredInterfaceIDs: Set<String> = []
     private var networkConnectionGeneration = UUID()
     private let pathTable = ReticulumPathTable()
@@ -274,6 +276,11 @@ public final class SidebandStore {
             lastError = "Secure Keychain data is temporarily unavailable. Lower Sideband will remain offline and will not read or overwrite encrypted data. Unlock the device and reopen the app."
         }
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
+        rnodeManager.setHandlers { [weak self] interfaceID, packet in
+            await self?.receive(packet, interfaceID: interfaceID)
+        } state: { [weak self] in
+            self?.refreshAggregateNetworkState()
+        }
         lanDiscovery.setUpdateHandler { [weak self] gateways in self?.gatewayResultsChanged(gateways) }
         reachability.setStatusHandler { [weak self] status in self?.reachabilityChanged(status) }
         backgroundRefresh.register { [weak self] in
@@ -1463,7 +1470,7 @@ public final class SidebandStore {
             lastError = "Secure Keychain data is unavailable. Reopen Lower Sideband after unlocking the device."
             return
         }
-        guard networkState != .connecting, networkState != .ready else { return }
+        guard tcpNetworkState != .connecting, tcpNetworkState != .ready else { return }
         let useIPv6 = !forceIPv4 && preferIPv6 && reachability.supportsIPv6 && !networkIPv6Host.isEmpty
         let selectedHost = explicitHost ?? (useIPv6 ? networkIPv6Host : networkHost)
         let selectedPort = explicitPort ?? UInt16(exactly: networkPort)
@@ -1471,7 +1478,8 @@ public final class SidebandStore {
             lastError = "Enter a valid TCP host and port."
             return
         }
-        networkState = .connecting
+        tcpNetworkState = .connecting
+        refreshAggregateNetworkState()
         networkConnectionStartedAt = .now
         let generation = UUID()
         networkConnectionGeneration = generation
@@ -1526,10 +1534,12 @@ public final class SidebandStore {
         stopPeriodicPropagationSync()
         resetLinkState()
         await networkInterfacePool?.stop()
+        await rnodeManager.stopAll()
         networkInterfacePool = nil
         networkInterfaces = []
         autoConnectedDiscoveredInterfaceIDs.removeAll()
-        networkState = .stopped
+        tcpNetworkState = .stopped
+        refreshAggregateNetworkState()
         activeNetworkHost = nil
         activeNetworkPort = nil
     }
@@ -1542,7 +1552,10 @@ public final class SidebandStore {
     public func applicationDidBecomeActive() async {
         isApplicationActive = true
         if let visibleConversationID { markConversationRead(visibleConversationID) }
-        if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
+        // Re-evaluate every configured transport on foregrounding. The aggregate
+        // state may already be ready through a radio while the TCP pool still
+        // needs to reconnect (or vice versa).
+        if autoConnectEnabled { await startAutomaticConnection() }
         if autoInterfaceEnabled, !autoInterfaceDiscovery.isListening { autoInterfaceDiscovery.start() }
         startPeriodicPropagationSync()
         await syncPropagationNow()
@@ -1843,6 +1856,20 @@ public final class SidebandStore {
         case .ready: state = "ready"
         case .failed(let reason): state = "failed: \(reason)"
         }
+        let rnodeDetails = rnodeManager.snapshots.map { snapshot in
+            let state: String
+            switch snapshot.state {
+            case .stopped: state = "stopped"
+            case .searching: state = "searching"
+            case .connecting: state = "connecting"
+            case .detecting: state = "detecting"
+            case .configuring: state = "configuring"
+            case .ready: state = "ready"
+            case .failed(let reason): state = "failed: \(reason)"
+            }
+            let firmware = if let major = snapshot.metrics.firmwareMajor, let minor = snapshot.metrics.firmwareMinor { "\(major).\(minor)" } else { "unknown" }
+            return "\(snapshot.name)[\(snapshot.transport.rawValue)]=\(state), firmware \(firmware), RX \(snapshot.metrics.receivedBytes ?? 0) B, TX \(snapshot.metrics.transmittedBytes ?? 0) B"
+        }.joined(separator: ", ")
         return [
             "Lower Sideband Network Diagnostics",
             "Generated: \(ISO8601DateFormatter().string(from: .now))",
@@ -1850,6 +1877,8 @@ public final class SidebandStore {
             "Local destination: \(localDeliveryHash)",
             "Network state: \(state)",
             "TCP endpoint: \(networkInterfaces.map { "\($0.name)\($0.isBootstrap ? "[bootstrap]" : "[discovered]")=\($0.state)" }.joined(separator: ", "))",
+            "RNode interfaces: \(rnodeDetails.isEmpty ? "none" : rnodeDetails)",
+            "RNode automatic discovery: \(rnodeManager.automaticDiscoveryEnabled)",
             "Authenticated network interfaces discovered: \(discoveredNetworkInterfaces.count)",
             "Prefer IPv6: \(preferIPv6)",
             "System interface: \(reachability.interfaceSummary)",
@@ -2021,8 +2050,9 @@ public final class SidebandStore {
             lastError = "Secure Keychain data is unavailable. Reopen Lower Sideband after unlocking the device."
             return
         }
-        guard networkState != .connecting else { return }
-        networkState = .connecting
+        guard tcpNetworkState != .connecting else { return }
+        tcpNetworkState = .connecting
+        refreshAggregateNetworkState()
         let generation = UUID()
         networkConnectionGeneration = generation
         await networkInterfacePool?.stop()
@@ -2048,7 +2078,7 @@ public final class SidebandStore {
             return
         }
         let normalized = destinationHash.lowercased()
-        guard networkState == .ready, let networkInterfacePool else {
+        guard networkState == .ready else {
             deferredPathRequests.insert(normalized)
             pendingPathHashes.insert(normalized)
             switch networkState {
@@ -2061,8 +2091,7 @@ public final class SidebandStore {
         }
         do {
             let packet = try ReticulumPathRequest.packet(targetHash: target)
-            try await networkInterfacePool.send(rawPacket: packet)
-            for peer in autoInterfaceDiscovery.peers { autoInterfaceDiscovery.send(rawPacket: packet, to: peer) }
+            try await transmitRawPacket(packet)
             await pathTable.markRequested(target)
             pendingPathHashes.insert(destinationHash.lowercased())
             Task {
@@ -2117,7 +2146,7 @@ public final class SidebandStore {
             deferLinkRequest(to: normalized)
             return
         }
-        guard networkState == .ready, networkInterfacePool != nil else {
+        guard networkState == .ready else {
             deferLinkRequest(to: normalized)
             if networkState != .connecting { await startAutomaticConnection() }
             return
@@ -2240,10 +2269,9 @@ public final class SidebandStore {
     ) {
         guard generation == networkConnectionGeneration else { return }
         networkInterfaces = snapshots
-        networkState = state
+        tcpNetworkState = state
+        refreshAggregateNetworkState()
         if state == .ready {
-            lastNetworkReadyAt = .now
-            UserDefaults.standard.set(lastNetworkReadyAt, forKey: "reticulumLastReadyAt")
             reconnectTask?.cancel()
             reconnectTask = nil
             reconnectAttempt = 0
@@ -2267,18 +2295,9 @@ public final class SidebandStore {
                 preferredInternetGatewayID = activeInternetGatewayID
                 UserDefaults.standard.set(activeInternetGatewayID, forKey: "reticulumPreferredInternetGatewayID")
             }
-            startPeriodicPropagationSync()
             Task {
                 await synthesizeTCPTunnel()
                 await announceLocalDeliveryDestination()
-                let deferred = deferredPathRequests
-                deferredPathRequests.removeAll()
-                for destination in deferred {
-                    pendingPathHashes.remove(destination)
-                    await requestPath(to: destination)
-                }
-                if DestinationHash.isValid(propagationNodeHash), !propagationNodeHasPath, !propagationNodePathPending { await requestPropagationNodePath() }
-                for conversation in conversations { await attemptDelivery(for: conversation.id) }
             }
         }
         switch state {
@@ -2290,17 +2309,66 @@ public final class SidebandStore {
             }
             persistGatewayHealth()
             networkConnectionStartedAt = nil
-            stopPeriodicPropagationSync()
-            resetLinkState()
+            if networkState != .ready {
+                stopPeriodicPropagationSync()
+                resetLinkState()
+            }
             if autoConnectEnabled, !intentionallyDisconnected {
                 Task { await tryNextAutomaticConnection() }
             } else {
                 scheduleReconnect()
             }
         case .stopped:
-            stopPeriodicPropagationSync()
-            resetLinkState()
+            if networkState != .ready {
+                stopPeriodicPropagationSync()
+                resetLinkState()
+            }
         case .connecting, .ready: break
+        }
+    }
+
+    private func refreshAggregateNetworkState() {
+        let previous = networkState
+        let rnodeReady = rnodeManager.hasReadyInterface
+        let rnodeConnecting = rnodeManager.snapshots.contains {
+            switch $0.state {
+            case .searching, .connecting, .detecting, .configuring: true
+            default: false
+            }
+        }
+        if tcpNetworkState == .ready || rnodeReady {
+            networkState = .ready
+        } else if tcpNetworkState == .connecting || rnodeConnecting {
+            networkState = .connecting
+        } else if case .failed(let reason) = tcpNetworkState {
+            networkState = .failed(reason)
+        } else if let reason = rnodeManager.snapshots.compactMap({ snapshot -> String? in
+            if case .failed(let reason) = snapshot.state { return reason }
+            return nil
+        }).first {
+            networkState = .failed(reason)
+        } else {
+            networkState = .stopped
+        }
+
+        guard previous != .ready, networkState == .ready else { return }
+        lastNetworkReadyAt = .now
+        UserDefaults.standard.set(lastNetworkReadyAt, forKey: "reticulumLastReadyAt")
+        if rnodeReady && tcpNetworkState != .ready {
+            automaticConnectionDescription = "Connected directly through RNode radio"
+        }
+        startPeriodicPropagationSync()
+        Task {
+            if tcpNetworkState == .ready { await synthesizeTCPTunnel() }
+            await announceLocalDeliveryDestination()
+            let deferred = deferredPathRequests
+            deferredPathRequests.removeAll()
+            for destination in deferred {
+                pendingPathHashes.remove(destination)
+                await requestPath(to: destination)
+            }
+            if DestinationHash.isValid(propagationNodeHash), !propagationNodeHasPath, !propagationNodePathPending { await requestPropagationNodePath() }
+            for conversation in conversations { await attemptDelivery(for: conversation.id) }
         }
     }
 
@@ -2330,9 +2398,11 @@ public final class SidebandStore {
         }
         guard autoConnectEnabled, !intentionallyDisconnected || networkState == .stopped else { return }
         intentionallyDisconnected = false
+        await rnodeManager.startAll()
+        refreshAggregateNetworkState()
         if internetOnlyEnabled { lanDiscovery.stop() }
         else { lanDiscovery.start() }
-        guard networkState != .ready, networkState != .connecting else { return }
+        guard tcpNetworkState != .ready, tcpNetworkState != .connecting else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
         attemptedGatewayIDs.removeAll()
@@ -2351,7 +2421,7 @@ public final class SidebandStore {
             automaticConnectionDescription = "Waiting for a network"
             return
         }
-        guard networkState != .ready, networkState != .connecting else { return }
+        guard tcpNetworkState != .ready, tcpNetworkState != .connecting else { return }
 
         if !internetOnlyEnabled, connectionMode == .configured {
             let configuredCandidates = ConfiguredReticulumGateways.ordered(
@@ -2433,7 +2503,7 @@ public final class SidebandStore {
 
     private func gatewayResultsChanged(_ gateways: [LANGateway]) {
         guard autoConnectEnabled, !internetOnlyEnabled, !gateways.isEmpty else { return }
-        if networkState == .ready,
+        if tcpNetworkState == .ready,
            AutomaticGatewayFailoverPolicy.shouldPreferDiscoveredLAN(
                activeInternetGatewayID: activeInternetGatewayID,
                discoveredGatewayCount: gateways.count
@@ -2449,7 +2519,7 @@ public final class SidebandStore {
             }
             return
         }
-        guard networkState != .ready, networkState != .connecting else { return }
+        guard tcpNetworkState != .ready, tcpNetworkState != .connecting else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
         Task { await tryNextAutomaticConnection() }
@@ -2466,7 +2536,7 @@ public final class SidebandStore {
 
     private func reachabilityChanged(_ status: NetworkReachability.Status) {
         guard autoConnectEnabled else { return }
-        if status == .available, networkState != .ready, networkState != .connecting {
+        if status == .available, tcpNetworkState != .ready, tcpNetworkState != .connecting {
             reconnectTask?.cancel()
             reconnectTask = nil
             attemptedGatewayIDs.removeAll()
@@ -3133,25 +3203,35 @@ public final class SidebandStore {
 
     private func transmitRawPacket(_ packet: Data) async throws {
         var transmitted = false
-        if let networkInterfacePool, networkState == .ready {
-            if let decoded = try? ReticulumPacket(raw: packet),
-               let interfaceID = linkInterfaceIDs[decoded.destinationHash.hex] {
-                try await networkInterfacePool.send(rawPacket: packet, on: interfaceID)
-            } else {
-                try await networkInterfacePool.send(rawPacket: packet)
+        var finalError: Error?
+        let linkedInterfaceID = (try? ReticulumPacket(raw: packet)).flatMap { linkInterfaceIDs[$0.destinationHash.hex] }
+        if let linkedInterfaceID, linkedInterfaceID.hasPrefix("rnode:"),
+           let id = UUID(uuidString: String(linkedInterfaceID.dropFirst("rnode:".count))) {
+            do { try await rnodeManager.send(rawPacket: packet, on: id); transmitted = true }
+            catch { finalError = error }
+        } else if let networkInterfacePool, tcpNetworkState == .ready {
+            do {
+                if let interfaceID = linkedInterfaceID { try await networkInterfacePool.send(rawPacket: packet, on: interfaceID) }
+                else { try await networkInterfacePool.send(rawPacket: packet) }
+                transmitted = true
+            } catch {
+                finalError = error
             }
-            transmitted = true
+        }
+        if linkedInterfaceID == nil, rnodeManager.hasReadyInterface {
+            do { _ = try await rnodeManager.send(rawPacket: packet); transmitted = true }
+            catch { finalError = error }
         }
         for peer in autoInterfaceDiscovery.peers {
             autoInterfaceDiscovery.send(rawPacket: packet, to: peer)
             transmitted = true
         }
-        if !transmitted { throw TransportError.nativeEngineUnavailable }
+        if !transmitted { throw finalError ?? TransportError.nativeEngineUnavailable }
     }
 
     private func transmitDestinationPacket(_ packet: Data, destinationHash: Data) async throws {
         var transmitted = false
-        if let networkInterfacePool, networkState == .ready {
+        if let networkInterfacePool, tcpNetworkState == .ready {
             let interfaceIDs = await networkInterfacePool.readyInterfaceIDs()
             var tcpSent = false
             for interfaceID in interfaceIDs {
@@ -3169,6 +3249,16 @@ public final class SidebandStore {
                 }
             }
             transmitted = tcpSent
+        }
+        for id in rnodeManager.readyInterfaceIDs {
+            let interfaceID = "rnode:\(id.uuidString)"
+            let routedPacket: Data
+            if let nextHop = await pathTable.path(to: destinationHash, on: interfaceID)?.nextHop {
+                routedPacket = (try? ReticulumPacket(raw: packet).routed(via: nextHop)) ?? packet
+            } else {
+                routedPacket = packet
+            }
+            if (try? await rnodeManager.send(rawPacket: routedPacket, on: id)) != nil { transmitted = true }
         }
         for peer in autoInterfaceDiscovery.peers {
             autoInterfaceDiscovery.send(rawPacket: packet, to: peer)

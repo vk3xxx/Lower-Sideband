@@ -845,6 +845,7 @@ private struct NetworkView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Bindable var store: SidebandStore
     @State private var showingLocalContactQR = false
+    @State private var editingRNode: RNodeConfiguration?
 
     var body: some View {
         ScrollView {
@@ -860,7 +861,7 @@ private struct NetworkView: View {
                     Label(statusText, systemImage: statusIcon).foregroundStyle(statusColor)
                 }
             }
-            Text("Connect to a Reticulum TCP Server Interface. Incoming packets and announces are parsed and cryptographically validated by the native Swift stack.")
+            Text("Connect automatically over TCP, Bluetooth, USB serial or Wi-Fi RNode interfaces. Incoming packets and announces are parsed and cryptographically validated by the native Swift stack.")
                 .font(.callout).foregroundStyle(.secondary)
             GroupBox("Interface") {
                 if horizontalSizeClass == .compact {
@@ -1167,6 +1168,66 @@ private struct NetworkView: View {
                     }.padding(6)
                 }
             }
+            GroupBox("RNode radio interfaces") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Discover and reconnect Bluetooth RNodes automatically", isOn: Binding(
+                        get: { store.rnodeManager.automaticDiscoveryEnabled },
+                        set: { store.rnodeManager.setAutomaticDiscovery($0) }
+                    ))
+                    Text("Uses native RNode KISS control and Reticulum packets over Bluetooth LE, Wi-Fi/TCP, or USB serial on Mac. Radio and IP interfaces can remain active together.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if store.rnodeManager.configurations.isEmpty {
+                        ContentUnavailableView("No RNodes configured", systemImage: "antenna.radiowaves.left.and.right", description: Text("Automatic discovery will attach a nearby BLE RNode, or add one manually."))
+                            .frame(maxHeight: 100)
+                    }
+                    ForEach(store.rnodeManager.configurations) { configuration in
+                        let snapshot = store.rnodeManager.snapshots.first { $0.id == configuration.id }
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Label(configuration.name, systemImage: rnodeIcon(configuration.transport))
+                                    .font(.headline)
+                                Spacer()
+                                Label(rnodeStateText(snapshot?.state ?? .stopped), systemImage: rnodeStateIcon(snapshot?.state ?? .stopped))
+                                    .font(.caption)
+                                    .foregroundStyle(snapshot?.state == .ready ? Color.green : Color.secondary)
+                            }
+                            Text(rnodeConfigurationSummary(configuration))
+                                .font(.caption.monospaced()).foregroundStyle(.secondary)
+                            if let metrics = snapshot?.metrics {
+                                HStack(spacing: 14) {
+                                    if let rssi = metrics.rssi { Text("RSSI \(rssi) dBm") }
+                                    if let snr = metrics.snr { Text("SNR \(snr.formatted(.number.precision(.fractionLength(1)))) dB") }
+                                    if let battery = metrics.batteryPercent { Text("Battery \(battery)%") }
+                                    if let airtime = metrics.airtimeLong { Text("Airtime \(airtime.formatted(.number.precision(.fractionLength(1))))%") }
+                                }.font(.caption2).foregroundStyle(.secondary)
+                            }
+                            if let error = snapshot?.lastError {
+                                Label(error, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                            }
+                            HStack {
+                                Button("Edit") { editingRNode = configuration }
+                                Button("Blink") { Task { await store.rnodeManager.blink(configuration.id) } }
+                                    .disabled(snapshot?.state != .ready)
+                                Button(configuration.enabled ? "Disable" : "Enable") {
+                                    var changed = configuration; changed.enabled.toggle()
+                                    Task { try? await store.rnodeManager.upsert(changed) }
+                                }
+                                Spacer()
+                                Button("Remove", role: .destructive) { Task { await store.rnodeManager.remove(configuration.id) } }
+                            }.font(.caption)
+                        }
+                        .padding(8)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    HStack {
+                        Button { editingRNode = RNodeConfiguration() } label: { Label("Add RNode", systemImage: "plus") }
+                        Button("Start radios") { Task { await store.rnodeManager.startAll() } }
+                        Button("Run self-test") { Task { await store.rnodeManager.runSelfTest() } }
+                        Spacer()
+                        if let result = store.rnodeManager.selfTestResult { Text(result).font(.caption).foregroundStyle(result.hasPrefix("Passed") ? Color.green : Color.secondary) }
+                    }
+                }.padding(6)
+            }
             GroupBox("LAN gateways") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -1235,6 +1296,7 @@ private struct NetworkView: View {
             GroupBox("Native engine") {
                 VStack(alignment: .leading, spacing: 7) {
                     capability("TCP/HDLC interface", complete: true)
+                    capability("RNode Bluetooth, TCP and USB serial interfaces", complete: true)
                     capability("Identity and announce validation", complete: true)
                     capability("Path discovery and route table", complete: true)
                     capability("AutoInterface discovery and UDP data plane", complete: true)
@@ -1263,6 +1325,14 @@ private struct NetworkView: View {
         .platformNetworkSheetSize()
         .sheet(isPresented: $showingLocalContactQR) {
             ContactQRCodeView(name: store.localDisplayName, link: store.localContactLink.url)
+        }
+        .sheet(item: $editingRNode) { configuration in
+            RNodeEditorView(configuration: configuration) { saved in
+                Task {
+                    do { try await store.rnodeManager.upsert(saved); editingRNode = nil }
+                    catch { store.lastError = error.localizedDescription }
+                }
+            } onCancel: { editingRNode = nil }
         }
     }
 
@@ -1477,7 +1547,15 @@ private struct NetworkView: View {
         return ([store.reachability.interfaceSummary, protocols] + flags).filter { !$0.isEmpty }.joined(separator: " · ")
     }
     private var transportSummary: String {
-        var value = "TCP · HDLC"
+        var components: [String] = []
+        if !store.networkInterfaces.isEmpty { components.append("TCP · HDLC") }
+        let readyRNodes = store.rnodeManager.snapshots.filter { $0.state == .ready }
+        if !readyRNodes.isEmpty {
+            let kinds = Set(readyRNodes.map { $0.transport.title }).sorted().joined(separator: "/")
+            components.append("RNode \(kinds)")
+        }
+        if components.isEmpty { components.append("No active transport") }
+        var value = components.joined(separator: " · ")
         if store.networkInterfaces.count > 1 {
             value += " · \(store.networkInterfaces.count) concurrent gateways"
         } else if let host = store.activeNetworkHost {
@@ -1507,11 +1585,46 @@ private struct NetworkView: View {
         case .failed: "exclamationmark.triangle"
         }
     }
+    private func rnodeIcon(_ transport: RNodeTransportKind) -> String {
+        switch transport {
+        case .bluetoothLE: "wave.3.right"
+        case .tcp: "wifi"
+        case .serial: "cable.connector"
+        case .simulated: "testtube.2"
+        }
+    }
+    private func rnodeStateText(_ state: RNodeInterface.State) -> String {
+        switch state {
+        case .stopped: "Stopped"
+        case .searching: "Searching"
+        case .connecting: "Connecting"
+        case .detecting: "Detecting"
+        case .configuring: "Configuring"
+        case .ready: "Radio ready"
+        case .failed(let reason): "Unavailable · \(reason)"
+        }
+    }
+    private func rnodeStateIcon(_ state: RNodeInterface.State) -> String {
+        switch state {
+        case .ready: "checkmark.circle.fill"
+        case .searching, .connecting, .detecting, .configuring: "arrow.triangle.2.circlepath"
+        case .failed: "exclamationmark.triangle"
+        case .stopped: "circle"
+        }
+    }
+    private func rnodeConfigurationSummary(_ configuration: RNodeConfiguration) -> String {
+        let target = configuration.target.isEmpty ? "any nearby RNode" : configuration.target
+        let mhz = String(format: "%.4f", Double(configuration.frequency) / 1_000_000)
+        return "\(configuration.transport.title) · \(target) · \(mhz) MHz · BW \(configuration.bandwidth) · SF\(configuration.spreadingFactor) · CR\(configuration.codingRate) · \(configuration.txPower) dBm"
+    }
     private var statusText: String {
         switch store.networkState {
         case .stopped: "Disconnected"
         case .connecting: "Connecting"
-        case .ready: "TCP connected"
+        case .ready:
+            if store.rnodeManager.hasReadyInterface && !store.networkInterfaces.contains(where: { $0.state == .ready }) { "RNode connected" }
+            else if store.rnodeManager.hasReadyInterface { "TCP and RNode connected" }
+            else { "TCP connected" }
         case .failed(let reason): store.reconnectDelaySeconds.map { "Retrying in \($0)s · \(reason)" } ?? "Failed: \(reason)"
         }
     }

@@ -20,6 +20,7 @@
     </array>
     <key>LSMinimumSystemVersion</key><string>$(MACOSX_DEPLOYMENT_TARGET)</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>Lower Sideband connects to nearby RNode radios over Bluetooth Low Energy for off-grid Reticulum messaging.</string>
     <key>NSLocalNetworkUsageDescription</key><string>Lower Sideband discovers and connects to Reticulum gateways and peers on your local network.</string>
     <key>NSLocationWhenInUseUsageDescription</key><string>Lower Sideband uses your location only when you choose to share telemetry with a contact.</string>
     <key>NSMicrophoneUsageDescription</key><string>Lower Sideband uses the microphone when you choose to record a voice message or make an encrypted voice call.</string>

@@ -10,6 +10,89 @@ private struct TestNativePlugin: SidebandCommandPlugin {
     }
 }
 
+@Test func rnodeKISSEscapingAndChunkedDecodingRoundTrips() {
+    let payload = Data([0x01, RNodeKISS.frameEnd, 0x02, RNodeKISS.frameEscape, 0x03])
+    let framed = RNodeKISS.frame(command: .data, payload: payload)
+    #expect(framed == Data([0xC0, 0x00, 0x01, 0xDB, 0xDC, 0x02, 0xDB, 0xDD, 0x03, 0xC0]))
+    var decoder = RNodeKISSDecoder()
+    var decoded: [RNodeKISSFrame] = []
+    for byte in framed { decoded += decoder.consume(Data([byte])) }
+    #expect(decoded == [RNodeKISSFrame(command: .data, payload: payload)])
+}
+
+@Test func rnodeConfigurationProducesReferenceCommandsAndValidatesSafetyBounds() throws {
+    let configuration = RNodeConfiguration(
+        transport: .tcp, target: "rnode.local", frequency: 867_200_000,
+        bandwidth: 125_000, txPower: 7, spreadingFactor: 8, codingRate: 5,
+        shortTermAirtimeLimit: 33, longTermAirtimeLimit: 1.5
+    )
+    _ = try configuration.validated()
+    let commands = RNodeProtocolEngine().configurationCommands(configuration)
+    var decoder = RNodeKISSDecoder()
+    let frames = decoder.consume(commands)
+    #expect(frames.map(\.command) == [.frequency, .bandwidth, .txPower, .spreadingFactor, .codingRate, .shortTermAirtimeLock, .longTermAirtimeLock, .radioState])
+    #expect(frames[0].payload == Data([0x33, 0xB0, 0x6C, 0x00]))
+    #expect(frames[5].payload == Data([0x0C, 0xE4]))
+    #expect(frames[6].payload == Data([0x00, 0x96]))
+    var invalid = configuration
+    invalid.spreadingFactor = 13
+    #expect(throws: RNodeError.invalidSpreadingFactor) { try invalid.validated() }
+}
+
+@Test func rnodeProtocolInterpretsDetectionFirmwareAndRadioTelemetry() {
+    var engine = RNodeProtocolEngine()
+    let bytes = RNodeKISS.frame(command: .detect, payload: Data([RNodeProtocolEngine.detectResponse]))
+        + RNodeKISS.frame(command: .firmwareVersion, payload: Data([1, 80]))
+        + RNodeKISS.frame(command: .rssi, payload: Data([77]))
+        + RNodeKISS.frame(command: .snr, payload: Data([20]))
+        + RNodeKISS.frame(command: .battery, payload: Data([2, 93]))
+    let events = engine.consume(bytes)
+    #expect(events.contains(.detected))
+    #expect(engine.metrics.firmwareMajor == 1)
+    #expect(engine.metrics.firmwareMinor == 80)
+    #expect(engine.metrics.rssi == -80)
+    #expect(engine.metrics.snr == 5)
+    #expect(engine.metrics.batteryState == .charging)
+    #expect(engine.metrics.batteryPercent == 93)
+}
+
+@Test func simulatedRNodeCompletesHandshakeAndLoopsBackReticulumPackets() async throws {
+    let transport = SimulatedRNodeTransport(loopbackPackets: true, responseChunkSize: 1)
+    let configuration = RNodeConfiguration(name: "Test RNode", transport: .simulated, target: "simulation")
+    let counter = RNodeTestCounter()
+    let interface = RNodeInterface(
+        configuration: configuration,
+        transportFactory: { _ in transport },
+        packetHandler: { packet in await counter.record(packet) }
+    )
+    await interface.start()
+    let readyDeadline = ContinuousClock.now + .seconds(2)
+    while await interface.snapshot().state != .ready, ContinuousClock.now < readyDeadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await interface.snapshot().state == .ready)
+    var expected: [Data] = []
+    for sequence in 0..<100 {
+        let raw = Data([0x00, 0x00]) + Data(repeating: UInt8(sequence), count: 16) + Data([0x00]) + Data([UInt8(sequence), 0xC0, 0xDB])
+        expected.append(raw)
+        try await interface.send(rawPacket: raw)
+    }
+    let receiveDeadline = ContinuousClock.now + .seconds(2)
+    while await counter.count < 100, ContinuousClock.now < receiveDeadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await counter.count == 100)
+    #expect(await counter.lastPacket == expected.last)
+    #expect(await transport.transmittedPackets == expected)
+    await interface.stop()
+}
+
+private actor RNodeTestCounter {
+    private(set) var count = 0
+    private(set) var lastPacket: Data?
+    func record(_ packet: Data) { count += 1; lastPacket = packet }
+}
+
 private struct PermissionProbePlugin: SidebandCommandPlugin {
     let manifest: SidebandPluginManifest
     init(permissions: Set<SidebandPluginPermission>) {
