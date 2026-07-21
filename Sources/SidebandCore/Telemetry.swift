@@ -1,6 +1,47 @@
 import Foundation
 
 public struct SidebandTelemetry: Codable, Hashable, Sendable {
+    public enum SensorKind: UInt8, CaseIterable, Codable, Hashable, Sendable {
+        case time = 0x01, location = 0x02, pressure = 0x03, battery = 0x04
+        case physicalLink = 0x05, acceleration = 0x06, temperature = 0x07, humidity = 0x08
+        case magneticField = 0x09, ambientLight = 0x0A, gravity = 0x0B, angularVelocity = 0x0C
+        case proximity = 0x0E, information = 0x0F, received = 0x10
+        case powerConsumption = 0x11, powerProduction = 0x12, processor = 0x13
+        case ram = 0x14, nonVolatileMemory = 0x15, tank = 0x16, fuel = 0x17
+        case lxmfPropagation = 0x18, rnsTransport = 0x19, connectionMap = 0x1A, custom = 0xFF
+
+        public var displayName: String {
+            switch self {
+            case .time: "Timestamp"
+            case .location: "Location"
+            case .pressure: "Ambient pressure"
+            case .battery: "Battery"
+            case .physicalLink: "Physical link"
+            case .acceleration: "Acceleration"
+            case .temperature: "Temperature"
+            case .humidity: "Humidity"
+            case .magneticField: "Magnetic field"
+            case .ambientLight: "Ambient light"
+            case .gravity: "Gravity"
+            case .angularVelocity: "Angular velocity"
+            case .proximity: "Proximity"
+            case .information: "Information"
+            case .received: "Received"
+            case .powerConsumption: "Power consumption"
+            case .powerProduction: "Power production"
+            case .processor: "Processor"
+            case .ram: "Memory"
+            case .nonVolatileMemory: "Storage"
+            case .tank: "Tank"
+            case .fuel: "Fuel"
+            case .lxmfPropagation: "LXMF propagation"
+            case .rnsTransport: "Reticulum transport"
+            case .connectionMap: "Connection map"
+            case .custom: "Custom"
+            }
+        }
+    }
+
     public struct Location: Codable, Hashable, Sendable {
         public var latitude: Double
         public var longitude: Double
@@ -36,11 +77,24 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
     public var capturedAt: Date
     public var location: Location?
     public var battery: Battery?
+    /// Canonical MessagePack values for every upstream telemetry sensor not
+    /// represented by a strongly typed property. Keeping the encoded value
+    /// makes the Swift client lossless when relaying newer or plugin sensors.
+    public var additionalSensors: [UInt8: Data]
 
-    public init(capturedAt: Date = .now, location: Location? = nil, battery: Battery? = nil) {
+    public init(capturedAt: Date = .now, location: Location? = nil, battery: Battery? = nil, additionalSensors: [UInt8: Data] = [:]) {
         self.capturedAt = capturedAt
         self.location = location
         self.battery = battery
+        self.additionalSensors = additionalSensors
+    }
+
+    public var sensorKinds: [SensorKind] {
+        var kinds: Set<SensorKind> = [.time]
+        if location != nil { kinds.insert(.location) }
+        if battery != nil { kinds.insert(.battery) }
+        kinds.formUnion(additionalSensors.keys.compactMap(SensorKind.init(rawValue:)))
+        return kinds.sorted { $0.rawValue < $1.rawValue }
     }
 
     public var mostRecentSensorDate: Date { max(capturedAt, location?.updatedAt ?? capturedAt) }
@@ -90,6 +144,11 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
                 battery.temperature.map(MessagePack.double) ?? MessagePack.null
             ])))
         }
+        for (identifier, encoded) in additionalSensors.sorted(by: { $0.key < $1.key })
+            where UInt64(identifier) != SensorID.time && UInt64(identifier) != SensorID.location && UInt64(identifier) != SensorID.battery {
+            guard encoded.count <= 65_536, (try? MessagePackDecoder.decode(encoded)) != nil else { continue }
+            sensors.append((UInt64(identifier), encoded))
+        }
         return MessagePack.map(sensors)
     }
 
@@ -98,6 +157,7 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
         var timestamp: Date?
         var decodedLocation: Location?
         var decodedBattery: Battery?
+        var decodedAdditional: [UInt8: Data] = [:]
         for (key, value) in entries {
             guard let sensorID = key.unsignedValue else { continue }
             switch sensorID {
@@ -109,12 +169,16 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
             case SensorID.battery:
                 decodedBattery = try Self.decodeBattery(value)
             default:
-                continue
+                guard sensorID <= UInt64(UInt8.max), decodedAdditional.count < 64 else { continue }
+                let encoded = MessagePack.encode(value)
+                guard encoded.count <= 65_536 else { continue }
+                decodedAdditional[UInt8(sensorID)] = encoded
             }
         }
         capturedAt = timestamp ?? decodedLocation?.updatedAt ?? .distantPast
         location = decodedLocation
         battery = decodedBattery
+        additionalSensors = decodedAdditional
         guard validationError == nil else { throw DecodeError.invalidPayload }
     }
 
@@ -190,6 +254,47 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
 public enum SidebandTelemetryExportFormat: String, CaseIterable, Sendable {
     case csv
     case gpx
+}
+
+public struct SidebandTelemetryStreamEntry: Codable, Hashable, Sendable {
+    public var sourceHash: Data
+    public var timestamp: Date
+    public var telemetry: SidebandTelemetry
+    public var encodedAppearance: Data?
+
+    public init(sourceHash: Data, timestamp: Date, telemetry: SidebandTelemetry, encodedAppearance: Data? = nil) {
+        self.sourceHash = sourceHash
+        self.timestamp = timestamp
+        self.telemetry = telemetry
+        self.encodedAppearance = encodedAppearance
+    }
+
+    public var encoded: Data? {
+        guard sourceHash.count == 16, telemetry.validationError == nil else { return nil }
+        return MessagePack.array([
+            MessagePack.binary(sourceHash), MessagePack.double(timestamp.timeIntervalSince1970),
+            MessagePack.binary(telemetry.packed()), encodedAppearance ?? MessagePack.null
+        ])
+    }
+
+    public static func encode(_ entries: [Self]) -> Data? {
+        guard entries.count <= 512 else { return nil }
+        let encoded = entries.compactMap(\.encoded)
+        return encoded.count == entries.count ? MessagePack.array(encoded) : nil
+    }
+
+    public static func decode(_ value: MessagePackValue?) -> [Self] {
+        guard case let .array(entries) = value, entries.count <= 512 else { return [] }
+        return entries.compactMap { entry in
+            guard case let .array(parts) = entry, parts.count == 4,
+                  case let .binary(source) = parts[0], source.count == 16,
+                  let timestamp = parts[1].numberValue,
+                  case let .binary(packed) = parts[2], packed.count <= 65_536,
+                  let telemetry = try? SidebandTelemetry(packed: packed) else { return nil }
+            return Self(sourceHash: source, timestamp: Date(timeIntervalSince1970: timestamp), telemetry: telemetry,
+                        encodedAppearance: parts[3] == .null ? nil : MessagePack.encode(parts[3]))
+        }
+    }
 }
 
 public struct SidebandTelemetryHistorySummary: Equatable, Sendable {

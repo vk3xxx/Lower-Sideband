@@ -1021,6 +1021,28 @@ private struct NetworkView: View {
                     }
                 }.padding(6)
             }
+            GroupBox("Telemetry service") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Answer telemetry requests from trusted contacts", isOn: Binding(
+                        get: { store.telemetryRespondToTrustedRequests },
+                        set: { store.setTelemetryRespondToTrustedRequests($0) }
+                    ))
+                    Toggle("Act as a telemetry collector", isOn: Binding(
+                        get: { store.telemetryCollectorEnabled },
+                        set: { store.setTelemetryCollectorEnabled($0) }
+                    ))
+                    Toggle("Return only the newest reading per source", isOn: Binding(
+                        get: { store.telemetryCollectorLatestOnly },
+                        set: { store.setTelemetryCollectorLatestOnly($0) }
+                    )).disabled(!store.telemetryCollectorEnabled)
+                    TextField("Preferred collector LXMF destination", text: Binding(
+                        get: { store.telemetryCollectorHash },
+                        set: { store.setTelemetryCollectorHash($0) }
+                    )).font(.body.monospaced()).textFieldStyle(.roundedBorder)
+                    Text("Requests are authenticated by the LXMF sender identity. Collector responses include telemetry from trusted contacts only and never include message text.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }.padding(6)
+            }
             GroupBox("iCloud device sync") {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Sync identity, conversations and messages", isOn: Binding(
@@ -1874,6 +1896,9 @@ private struct ConversationView: View {
                     Button { Task { await store.sendCommand(.signalReport, conversationID: conversation.id) } } label: {
                         Label("Request signal report", systemImage: "chart.bar")
                     }
+                    Button { Task { await store.requestTelemetry(conversationID: conversation.id, since: .now.addingTimeInterval(-604_800)) } } label: {
+                        Label("Request telemetry", systemImage: "location.viewfinder")
+                    }
                     Menu("Plugin request", systemImage: "puzzlepiece.extension") {
                         ForEach(store.pluginRegistry.manifests) { manifest in
                             if store.isPluginEnabled(manifest.identifier) {
@@ -1894,7 +1919,6 @@ private struct ConversationView: View {
                 Label(routingStatus, systemImage: routingIcon)
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityLabel("Routing status: \(routingStatus)")
-                    .help(routingHelp)
                     .help(routingHelp)
                 }.padding()
             }
@@ -1936,6 +1960,17 @@ private struct ConversationView: View {
                                         Button { showingTelemetryMap = true } label: { TelemetryMessageCard(telemetry: telemetry) }
                                             .buttonStyle(.plain)
                                             .help("Show telemetry on map")
+                                    }
+                                    if !message.telemetryStream.isEmpty {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Label("Telemetry stream", systemImage: "point.3.connected.trianglepath.dotted")
+                                                .font(.caption.bold())
+                                            Text("\(message.telemetryStream.count) source update\(message.telemetryStream.count == 1 ? "" : "s")")
+                                                .font(.caption2).foregroundStyle(.secondary)
+                                            Text(Array(Set(message.telemetryStream.flatMap { $0.telemetry.sensorKinds.map(\.displayName) })).sorted().joined(separator: " · "))
+                                                .font(.caption2).foregroundStyle(.secondary).lineLimit(3)
+                                        }
+                                        .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                                     }
                                     ForEach(message.attachments) { attachment in
                                         if isImage(attachment) {
@@ -2416,6 +2451,9 @@ private struct ConversationView: View {
             }
             Button { Task { await store.sendCommand(.signalReport, conversationID: conversation.id) } } label: {
                 Label("Request signal report", systemImage: "chart.bar")
+            }
+            Button { Task { await store.requestTelemetry(conversationID: conversation.id, since: .now.addingTimeInterval(-604_800)) } } label: {
+                Label("Request telemetry", systemImage: "location.viewfinder")
             }
             Menu("Plugin request", systemImage: "puzzlepiece.extension") {
                 ForEach(store.pluginRegistry.manifests) { manifest in

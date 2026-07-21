@@ -312,6 +312,34 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(decoded == telemetry)
 }
 
+@Test func telemetryPreservesEveryUpstreamAndPluginSensorLosslessly() throws {
+    let extra: [UInt8: Data] = [
+        SidebandTelemetry.SensorKind.pressure.rawValue: MessagePack.double(1_013.25),
+        SidebandTelemetry.SensorKind.temperature.rawValue: MessagePack.double(22.5),
+        SidebandTelemetry.SensorKind.physicalLink.rawValue: MessagePack.array([MessagePack.signed(-92), MessagePack.double(7.25), MessagePack.unsigned(74)]),
+        SidebandTelemetry.SensorKind.custom.rawValue: MessagePack.map([("sensor", MessagePack.string("value"))])
+    ]
+    let telemetry = SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_000), additionalSensors: extra)
+    let decoded = try SidebandTelemetry(packed: telemetry.packed())
+    #expect(decoded == telemetry)
+    #expect(decoded.sensorKinds.contains(.pressure))
+    #expect(decoded.sensorKinds.contains(.temperature))
+    #expect(decoded.sensorKinds.contains(.physicalLink))
+    #expect(decoded.sensorKinds.contains(.custom))
+}
+
+@Test func telemetryCollectorStreamMatchesUpstreamFieldShapeAndRoundTrips() throws {
+    let entry = SidebandTelemetryStreamEntry(
+        sourceHash: Data(repeating: 0x42, count: 16),
+        timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+        telemetry: SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                                     additionalSensors: [SidebandTelemetry.SensorKind.humidity.rawValue: MessagePack.double(62.5)])
+    )
+    let encoded = try #require(SidebandTelemetryStreamEntry.encode([entry]))
+    let decoded = SidebandTelemetryStreamEntry.decode(try MessagePackDecoder.decode(encoded))
+    #expect(decoded == [entry])
+}
+
 @Test func telemetryHistorySummarizesTrackAndExportsInteroperableFiles() throws {
     let conversationID = UUID()
     let first = SidebandTelemetry(capturedAt: Date(timeIntervalSince1970: 1_700_000_000), location: .init(latitude: -37.8136, longitude: 144.9631, altitude: 12, accuracy: 5, updatedAt: Date(timeIntervalSince1970: 1_700_000_000)))
@@ -1034,7 +1062,8 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
 }
 
 @Test func typedLXMFCommandsMatchPythonSidebandFieldShape() throws {
-    let encoded = try #require(LXMFCommand.encode([.ping, .echo("hello"), .signalReport]))
+    let request = LXMFCommand.telemetryRequest(timebase: Date(timeIntervalSince1970: 1_700_000_000), collector: true)
+    let encoded = try #require(LXMFCommand.encode([request, .ping, .echo("hello"), .signalReport]))
     let sender = ReticulumIdentity()
     let message = try LXMFMessage(
         destinationHash: Data(repeating: 0x01, count: 16),
@@ -1044,7 +1073,7 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
         encodedFields: [0x09: encoded]
     )
     let received = try LXMFReceivedMessage(packed: message.packed)
-    #expect(LXMFCommand.decode(received.fields[0x09]) == [.ping, .echo("hello"), .signalReport])
+    #expect(LXMFCommand.decode(received.fields[0x09]) == [request, .ping, .echo("hello"), .signalReport])
     #expect(received.validate(with: sender))
 }
 

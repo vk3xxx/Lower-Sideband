@@ -86,6 +86,10 @@ public final class SidebandStore {
     public private(set) var voiceTrustedOnly: Bool
     public private(set) var richTextTrustedOnly: Bool
     public private(set) var preferredVoiceProfile: LXSTVoice.Profile
+    public private(set) var telemetryRespondToTrustedRequests: Bool
+    public private(set) var telemetryCollectorEnabled: Bool
+    public private(set) var telemetryCollectorHash: String
+    public private(set) var telemetryCollectorLatestOnly: Bool
     public var networkHost: String
     public var networkIPv6Host: String
     public var networkInternetHost: String
@@ -260,6 +264,10 @@ public final class SidebandStore {
         voiceTrustedOnly = UserDefaults.standard.bool(forKey: "lxstVoiceTrustedOnly")
         richTextTrustedOnly = UserDefaults.standard.object(forKey: "lxmfRichTextTrustedOnly") as? Bool ?? true
         preferredVoiceProfile = LXSTVoice.Profile(rawValue: UInt64(UserDefaults.standard.integer(forKey: "lxstVoiceProfile"))) ?? .mediumQuality
+        telemetryRespondToTrustedRequests = UserDefaults.standard.bool(forKey: "telemetryRespondToTrustedRequests")
+        telemetryCollectorEnabled = UserDefaults.standard.bool(forKey: "telemetryCollectorEnabled")
+        telemetryCollectorHash = UserDefaults.standard.string(forKey: "telemetryCollectorHash") ?? ""
+        telemetryCollectorLatestOnly = UserDefaults.standard.object(forKey: "telemetryCollectorLatestOnly") as? Bool ?? true
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         lastBackgroundRefreshAt = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshAt") as? Date
         lastBackgroundRefreshSucceeded = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshSucceeded") as? Bool
@@ -319,6 +327,27 @@ public final class SidebandStore {
         guard profile.isLocallySupported else { return }
         preferredVoiceProfile = profile
         UserDefaults.standard.set(Int(profile.rawValue), forKey: "lxstVoiceProfile")
+    }
+
+    public func setTelemetryRespondToTrustedRequests(_ enabled: Bool) {
+        telemetryRespondToTrustedRequests = enabled
+        UserDefaults.standard.set(enabled, forKey: "telemetryRespondToTrustedRequests")
+    }
+
+    public func setTelemetryCollectorEnabled(_ enabled: Bool) {
+        telemetryCollectorEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "telemetryCollectorEnabled")
+    }
+
+    public func setTelemetryCollectorHash(_ destinationHash: String) {
+        let normalized = destinationHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        telemetryCollectorHash = DestinationHash.isValid(normalized) ? normalized : ""
+        UserDefaults.standard.set(telemetryCollectorHash, forKey: "telemetryCollectorHash")
+    }
+
+    public func setTelemetryCollectorLatestOnly(_ enabled: Bool) {
+        telemetryCollectorLatestOnly = enabled
+        UserDefaults.standard.set(enabled, forKey: "telemetryCollectorLatestOnly")
     }
 
     public func setVoiceFrameHandler(_ handler: ((Data) -> Void)?) { voiceFrameHandler = handler }
@@ -1266,6 +1295,10 @@ public final class SidebandStore {
         await attemptDelivery(for: conversationID)
     }
 
+    public func requestTelemetry(conversationID: UUID, since: Date = Date(timeIntervalSince1970: 0), collector: Bool = false) async {
+        await sendCommand(.telemetryRequest(timebase: since, collector: collector), conversationID: conversationID)
+    }
+
     public func sendPluginCommand(_ command: String, arguments: [String] = [], conversationID: UUID) async {
         guard SidebandPluginCommandLine.encode(command: command, arguments: arguments) != nil else {
             lastError = "Plugin command names, arguments or total payload are invalid."
@@ -2001,6 +2034,10 @@ public final class SidebandStore {
             (message.reactionContent == nil || (message.reactionTo.map { Message.isValidReaction(content: message.reactionContent ?? "", target: $0) } ?? false)) &&
             (message.commentTo == nil || message.commentTo?.count == 32) &&
             (message.continuationOf == nil || message.continuationOf?.count == 32) &&
+            message.telemetryStream.count <= 512 && message.telemetryStream.allSatisfy {
+                $0.sourceHash.count == 16 && supportedMessageDates.contains($0.timestamp) &&
+                $0.telemetry.validationError == nil && ($0.encodedAppearance?.count ?? 0) <= 4_096
+            } &&
             message.commands.count <= LXMFCommand.maximumCommandsPerMessage
     }
 
@@ -3135,6 +3172,7 @@ public final class SidebandStore {
               let body = String(data: message.content, encoding: .utf8),
               isAcceptableMessageBody(body) else { return false }
         let telemetry = message.binaryField(0x02).flatMap { try? SidebandTelemetry(packed: $0) }
+        let telemetryStream = SidebandTelemetryStreamEntry.decode(message.fields[0x03])
         let replyTo = message.binaryField(0x30)
         let replyQuote = message.binaryField(0x31).flatMap { String(data: $0, encoding: .utf8) }
         let reactionTarget = message.binaryMapField(0x40, key: 0x00)
@@ -3165,6 +3203,7 @@ public final class SidebandStore {
             direction: .incoming,
             state: .delivered,
             telemetry: telemetry,
+            telemetryStream: telemetryStream,
             renderer: renderer,
             lxmfID: message.messageID,
             replyTo: replyTo,
@@ -3715,6 +3754,8 @@ public final class SidebandStore {
             fields[0x42] = MessagePack.map([(0x00, MessagePack.binary(target))])
         }
         if let commands = LXMFCommand.encode(message.commands) { fields[0x09] = commands }
+        if !message.telemetryStream.isEmpty,
+           let stream = SidebandTelemetryStreamEntry.encode(message.telemetryStream) { fields[0x03] = stream }
         return fields
     }
 
@@ -3725,6 +3766,34 @@ public final class SidebandStore {
         for command in commands {
             let response: String
             switch command {
+            case .telemetryRequest(let timebase, let collector):
+                guard let conversation = conversations.first(where: { $0.id == conversationID }),
+                      conversation.isTrusted, conversation.telemetrySharingEnabled,
+                      telemetryRespondToTrustedRequests else { continue }
+                if collector, telemetryCollectorEnabled {
+                    let stream = telemetryCollectorEntries(since: timebase, excluding: conversation.destinationHash)
+                    guard !stream.isEmpty else { continue }
+                    messages.append(Message(
+                        conversationID: conversationID,
+                        body: "Telemetry collector response",
+                        direction: .outgoing,
+                        state: .queued,
+                        telemetryStream: stream,
+                        outboxOwnerID: syncDeviceID,
+                        outboxOwnerUpdatedAt: .now
+                    ))
+                } else if let latest = messages
+                    .filter({ $0.direction == .outgoing && $0.telemetry != nil && $0.timestamp >= timebase })
+                    .sorted(by: { $0.timestamp > $1.timestamp }).first?.telemetry {
+                    messages.append(Message(conversationID: conversationID, body: "Telemetry response", direction: .outgoing,
+                                            state: .queued, telemetry: latest, outboxOwnerID: syncDeviceID,
+                                            outboxOwnerUpdatedAt: .now))
+                } else {
+                    continue
+                }
+                touch(conversationID)
+                save()
+                continue
             case .ping:
                 response = "Ping reply"
             case .echo(let value):
@@ -3753,6 +3822,29 @@ public final class SidebandStore {
             enqueueAutomatedResponse(response, conversationID: conversationID)
         }
         await attemptDelivery(for: conversationID)
+    }
+
+    private func telemetryCollectorEntries(since: Date, excluding destinationHash: String) -> [SidebandTelemetryStreamEntry] {
+        let localHash = Data(hexadecimal: localDeliveryHash) ?? Data()
+        let trustedIDs = Set(conversations.filter(\.isTrusted).map(\.id))
+        let destinations = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0.destinationHash) })
+        var collected: [SidebandTelemetryStreamEntry] = messages.flatMap { message -> [SidebandTelemetryStreamEntry] in
+            guard trustedIDs.contains(message.conversationID), message.timestamp >= since else { return [] }
+            var entries = message.telemetryStream.filter { $0.timestamp >= since && $0.sourceHash.hex != destinationHash }
+            if let telemetry = message.telemetry {
+                let source = message.direction == .outgoing ? localHash : Data(hexadecimal: destinations[message.conversationID] ?? "") ?? Data()
+                if source.count == 16, source.hex != destinationHash {
+                    entries.append(.init(sourceHash: source, timestamp: telemetry.capturedAt, telemetry: telemetry))
+                }
+            }
+            return entries
+        }
+        collected.sort { $0.timestamp > $1.timestamp }
+        if telemetryCollectorLatestOnly {
+            var seen: Set<Data> = []
+            collected = collected.filter { seen.insert($0.sourceHash).inserted }
+        }
+        return Array(collected.prefix(512))
     }
 
     private func recordPluginAudit(command: String, conversationID: UUID, pluginIdentifier: String?, outcome: SidebandPluginExecutionOutcome) {

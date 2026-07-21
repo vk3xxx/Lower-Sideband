@@ -1,9 +1,23 @@
 import Foundation
 
 public enum MessagePack {
+    public static func encode(_ value: MessagePackValue) -> Data {
+        switch value {
+        case .null: null
+        case .bool(let value): bool(value)
+        case .unsigned(let value): unsigned(value)
+        case .signed(let value): signed(value)
+        case .double(let value): double(value)
+        case .binary(let value): binary(value)
+        case .string(let value): string(value)
+        case .array(let values): array(values.map(encode))
+        case .map(let entries): map(entries.map { (encode($0.0), encode($0.1)) })
+        }
+    }
+
     public static func array(_ values: [Data]) -> Data {
-        precondition(values.count < 16)
-        return Data([0x90 | UInt8(values.count)]) + values.reduce(into: Data()) { $0.append($1) }
+        collectionHeader(fixedBase: 0x90, count: values.count, marker16: 0xdc, marker32: 0xdd) +
+            values.reduce(into: Data()) { $0.append($1) }
     }
 
     public static func double(_ value: Double) -> Data {

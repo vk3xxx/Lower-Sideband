@@ -1,6 +1,7 @@
 import Foundation
 
 public enum LXMFCommand: Codable, Hashable, Sendable {
+    case telemetryRequest(timebase: Date, collector: Bool)
     case ping
     case echo(String)
     case signalReport
@@ -11,6 +12,11 @@ public enum LXMFCommand: Codable, Hashable, Sendable {
 
     public var encoded: Data? {
         switch self {
+        case .telemetryRequest(let timebase, let collector):
+            return MessagePack.map([(0x01, MessagePack.array([
+                MessagePack.unsigned(UInt64(max(0, Int64(timebase.timeIntervalSince1970)))),
+                MessagePack.bool(collector)
+            ]))])
         case .ping:
             return MessagePack.map([(0x02, MessagePack.bool(true))])
         case .echo(let value):
@@ -37,6 +43,12 @@ public enum LXMFCommand: Codable, Hashable, Sendable {
             for (key, value) in entries {
                 guard case let .unsigned(commandID) = key else { continue }
                 switch commandID {
+                case 0x01:
+                    guard case let .array(parts) = value, parts.count == 2,
+                          let seconds = parts[0].numberValue,
+                          case let .bool(collector) = parts[1],
+                          seconds >= 0 else { return nil }
+                    return .telemetryRequest(timebase: Date(timeIntervalSince1970: seconds), collector: collector)
                 case 0x00:
                     let line: String?
                     switch value {
@@ -65,6 +77,17 @@ public enum LXMFCommand: Codable, Hashable, Sendable {
                 }
             }
             return nil
+        }
+    }
+}
+
+private extension MessagePackValue {
+    var numberValue: Double? {
+        switch self {
+        case .unsigned(let value): Double(value)
+        case .signed(let value): Double(value)
+        case .double(let value): value
+        default: nil
         }
     }
 }
