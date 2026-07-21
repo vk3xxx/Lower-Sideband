@@ -19,7 +19,7 @@
 - Content rights: Necessary third-party content rights confirmed by the developer
 - User safety: Contacts can be blocked; contacts and individual incoming messages can be reported through a user-reviewed support email that excludes private content and keys by default
 - Add for Review: Complete
-- TestFlight: Build 20 uploaded successfully on 21 July 2026 and is processing for internal TestFlight distribution
+- TestFlight: Build 20 uploaded and processed on 21 July 2026; assigned to `MacSideband Internal` with test notes saved
 - Submit for Review: 1.1.0 build 18 remains Waiting for Review; build 20 is not a release candidate and must not be submitted for App Review
 - App Review submission ID: `21163873-76cc-404f-a5b7-0cc74e0f050b`
 - Apple Developer Support case ID: `102946262465`
