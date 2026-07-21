@@ -2,18 +2,18 @@
 
 ## Release
 
-- Version: 1.0.0
-- Build: 17
-- App Store Connect: Build 17 is the corrected archive built with Xcode 26.6 and the iOS 26.5 SDK; build 16 was rejected with `ITMS-90111`
+- Version: 1.1.0
+- Build: 18
+- App Store Connect: Build 18 is the corrected archive built with Xcode 26.6 and the iOS 26.5 SDK; build 16 was rejected with `ITMS-90111`
 - Price: Free
 - Availability: All storefronts, including future storefronts
-- Release: Manual release after App Review approval
+- Release: Automatically release after App Review approval
 
 ## Submission checklist
 
 - Product metadata and screenshots: Complete
 - App Privacy and age rating: Complete
-- App Store build: Build 17 is ready for upload after local archive validation; build 16 remains the rejected invalid binary
+- App Store build: Build 18 was uploaded and submitted to App Review on 21 July 2026; status is Waiting for Review
 - App Review contact: Complete, including phone number
 - EU Digital Services Act status: Non-trader, active
 - Content rights: Necessary third-party content rights confirmed by the developer
