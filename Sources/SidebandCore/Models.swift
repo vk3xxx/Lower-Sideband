@@ -117,6 +117,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var attachments: [Attachment]
     public var telemetry: SidebandTelemetry?
     public var telemetryStream: [SidebandTelemetryStreamEntry]
+    public var voiceAudio: LXMFVoiceMessageAudio?
     public var renderer: Renderer
     /// Full LXMF message hash used by interoperable replies and references.
     public var lxmfID: Data?
@@ -138,7 +139,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
     public var starredUpdatedAt: Date?
     public var scheduledFor: Date?
 
-    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, telemetryStream: [SidebandTelemetryStreamEntry] = [], renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, commentTo: Data? = nil, continuationOf: Data? = nil, commands: [LXMFCommand] = [], outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil, deliveryAttemptCount: Int = 0, lastDeliveryAttemptAt: Date? = nil, lastDeliveryMode: DeliveryMode? = nil, lastDeliveryFailure: String? = nil, isStarred: Bool = false, starredUpdatedAt: Date? = nil, scheduledFor: Date? = nil) {
+    public init(id: UUID = UUID(), conversationID: UUID, body: String, timestamp: Date = .now, direction: Direction, state: DeliveryState, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, telemetryStream: [SidebandTelemetryStreamEntry] = [], voiceAudio: LXMFVoiceMessageAudio? = nil, renderer: Renderer = .plain, lxmfID: Data? = nil, replyTo: Data? = nil, replyQuote: String? = nil, reactionTo: Data? = nil, reactionContent: String? = nil, commentTo: Data? = nil, continuationOf: Data? = nil, commands: [LXMFCommand] = [], outboxOwnerID: String? = nil, outboxOwnerUpdatedAt: Date? = nil, deliveryAttemptCount: Int = 0, lastDeliveryAttemptAt: Date? = nil, lastDeliveryMode: DeliveryMode? = nil, lastDeliveryFailure: String? = nil, isStarred: Bool = false, starredUpdatedAt: Date? = nil, scheduledFor: Date? = nil) {
         self.id = id
         self.conversationID = conversationID
         self.body = body
@@ -148,6 +149,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.attachments = attachments
         self.telemetry = telemetry
         self.telemetryStream = telemetryStream
+        self.voiceAudio = voiceAudio
         self.renderer = renderer
         self.lxmfID = lxmfID
         self.replyTo = replyTo
@@ -168,7 +170,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         self.scheduledFor = scheduledFor
     }
 
-    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, telemetryStream, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, commentTo, continuationOf, commands, outboxOwnerID, outboxOwnerUpdatedAt, deliveryAttemptCount, lastDeliveryAttemptAt, lastDeliveryMode, lastDeliveryFailure, isStarred, starredUpdatedAt, scheduledFor }
+    private enum CodingKeys: String, CodingKey { case id, conversationID, body, timestamp, direction, state, attachments, telemetry, telemetryStream, voiceAudio, renderer, lxmfID, replyTo, replyQuote, reactionTo, reactionContent, commentTo, continuationOf, commands, outboxOwnerID, outboxOwnerUpdatedAt, deliveryAttemptCount, lastDeliveryAttemptAt, lastDeliveryMode, lastDeliveryFailure, isStarred, starredUpdatedAt, scheduledFor }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -180,6 +182,7 @@ public struct Message: Identifiable, Codable, Hashable, Sendable {
         attachments = try values.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
         telemetry = try values.decodeIfPresent(SidebandTelemetry.self, forKey: .telemetry)
         telemetryStream = try values.decodeIfPresent([SidebandTelemetryStreamEntry].self, forKey: .telemetryStream) ?? []
+        voiceAudio = try values.decodeIfPresent(LXMFVoiceMessageAudio.self, forKey: .voiceAudio)
         renderer = try values.decodeIfPresent(Renderer.self, forKey: .renderer) ?? .plain
         lxmfID = try values.decodeIfPresent(Data.self, forKey: .lxmfID)
         replyTo = try values.decodeIfPresent(Data.self, forKey: .replyTo)

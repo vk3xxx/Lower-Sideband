@@ -3210,6 +3210,40 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(throws: KISSModemConfiguration.ValidationError.self) { try configuration.validated() }
 }
 
+@Test func lxmfVoiceAudioFieldMatchesPythonShapeAndPersists() throws {
+    let ogg = OggOpusStream.mux(packets: [Data([0x48, 0x83, 0x01]), Data([0x48, 0x83, 0x02])], frameSamplesAt48k: 2_880, serial: 0x12345678)
+    let audio = try LXMFVoiceMessageAudio(mode: .opusOgg, encodedAudio: ogg)
+    let decodedValue = try MessagePackDecoder.decode(audio.encodedField)
+    guard case let .array(parts) = decodedValue else { Issue.record("Audio field was not an array"); return }
+    #expect(parts.count == 2)
+    #expect(parts[0] == .unsigned(0x10))
+    #expect(parts[1] == .binary(ogg))
+    #expect(LXMFVoiceMessageAudio(field: decodedValue) == audio)
+
+    let message = Message(conversationID: UUID(), body: "", direction: .outgoing, state: .queued, voiceAudio: audio)
+    let persisted = try JSONEncoder().encode(message)
+    #expect(try JSONDecoder().decode(Message.self, from: persisted).voiceAudio == audio)
+}
+
+@Test func oggOpusMuxerCreatesChecksummedPagesAndGranules() throws {
+    let stream = OggOpusStream.mux(packets: [Data(repeating: 0xAB, count: 300)], frameSamplesAt48k: 2_880, serial: 7)
+    #expect(OggOpusStream.isOggOpus(stream))
+    var offset = 0
+    var pages = 0
+    while offset < stream.count {
+        #expect(stream.subdata(in: offset..<(offset + 4)) == Data("OggS".utf8))
+        let segmentCount = Int(stream[offset + 26])
+        let lacing = stream.subdata(in: (offset + 27)..<(offset + 27 + segmentCount))
+        let length = 27 + segmentCount + lacing.reduce(0) { $0 + Int($1) }
+        var page = stream.subdata(in: offset..<(offset + length))
+        let stored = UInt32(page[22]) | UInt32(page[23]) << 8 | UInt32(page[24]) << 16 | UInt32(page[25]) << 24
+        page.replaceSubrange(22..<26, with: repeatElement(UInt8(0), count: 4))
+        #expect(OggOpusStream.crc(page) == stored)
+        pages += 1; offset += length
+    }
+    #expect(pages == 3)
+}
+
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
     init(hex: String) {

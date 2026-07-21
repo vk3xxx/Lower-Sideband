@@ -165,7 +165,7 @@ public final class SidebandStore {
     private var pendingReceiptRetryKinds: [String: Set<ReceiptKind>] = [:]
     private struct OutgoingResource {
         let manifest: ReticulumResourceManifest; let parts: [Data]; let expectedProof: Data
-        let messageID: UUID; let attachmentID: UUID; let linkID: String
+        let messageID: UUID; let attachmentID: UUID?; let linkID: String
         let segmentIndex: Int; let totalSegments: Int; let remainingSegments: [ReticulumPreparedResourceSegment]
         var timeoutToken = UUID()
         var sentIndices: Set<Int> = []
@@ -1162,20 +1162,20 @@ public final class SidebandStore {
     }
 
     @discardableResult
-    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain, scheduledFor: Date? = nil) async -> Bool {
+    public func send(_ text: String, attachments: [Attachment], telemetry: SidebandTelemetry? = nil, voiceAudio: LXMFVoiceMessageAudio? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain, scheduledFor: Date? = nil) async -> Bool {
         guard let conversationID = selectedConversationID else { return false }
-        return await send(text, to: conversationID, attachments: attachments, telemetry: telemetry, replyingTo: repliedMessage, renderer: requestedRenderer, scheduledFor: scheduledFor)
+        return await send(text, to: conversationID, attachments: attachments, telemetry: telemetry, voiceAudio: voiceAudio, replyingTo: repliedMessage, renderer: requestedRenderer, scheduledFor: scheduledFor)
     }
 
     @discardableResult
-    public func send(_ text: String, to conversationID: UUID, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain, scheduledFor: Date? = nil) async -> Bool {
+    public func send(_ text: String, to conversationID: UUID, attachments: [Attachment] = [], telemetry: SidebandTelemetry? = nil, voiceAudio: LXMFVoiceMessageAudio? = nil, replyingTo repliedMessage: Message? = nil, renderer requestedRenderer: Message.Renderer = .plain, scheduledFor: Date? = nil) async -> Bool {
         var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var renderer = requestedRenderer
         if body.hasPrefix("#!md\n") {
             body.removeFirst(5)
             renderer = .markdown
         }
-        guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil), let conversation = conversations.first(where: { $0.id == conversationID }) else { return false }
+        guard (!body.isEmpty || !attachments.isEmpty || telemetry != nil || voiceAudio != nil), let conversation = conversations.first(where: { $0.id == conversationID }) else { return false }
         guard !conversation.isBlocked else {
             lastError = "Unblock this contact before sending a message."
             return false
@@ -1208,7 +1208,7 @@ public final class SidebandStore {
         }
         let message = Message(
             conversationID: conversation.id, body: body, direction: .outgoing, state: .queued,
-            attachments: attachments, telemetry: telemetry, renderer: renderer,
+            attachments: attachments, telemetry: telemetry, voiceAudio: voiceAudio, renderer: renderer,
             replyTo: repliedMessage?.lxmfID,
             replyQuote: repliedMessage.map { replyQuote(for: $0) },
             commentTo: repliedMessage?.lxmfID,
@@ -2038,7 +2038,7 @@ public final class SidebandStore {
             message.telemetryStream.count <= 512 && message.telemetryStream.allSatisfy {
                 $0.sourceHash.count == 16 && supportedMessageDates.contains($0.timestamp) &&
                 $0.telemetry.validationError == nil && ($0.encodedAppearance?.count ?? 0) <= 4_096
-            } &&
+            } && (message.voiceAudio?.encodedAudio.count ?? 0) <= LXMFVoiceMessageAudio.maximumEncodedBytes &&
             message.commands.count <= LXMFCommand.maximumCommandsPerMessage
     }
 
@@ -3174,6 +3174,7 @@ public final class SidebandStore {
               isAcceptableMessageBody(body) else { return false }
         let telemetry = message.binaryField(0x02).flatMap { try? SidebandTelemetry(packed: $0) }
         let telemetryStream = SidebandTelemetryStreamEntry.decode(message.fields[0x03])
+        let voiceAudio = LXMFVoiceMessageAudio(field: message.fields[0x07])
         let replyTo = message.binaryField(0x30)
         let replyQuote = message.binaryField(0x31).flatMap { String(data: $0, encoding: .utf8) }
         let reactionTarget = message.binaryMapField(0x40, key: 0x00)
@@ -3181,7 +3182,8 @@ public final class SidebandStore {
         let commentTo = message.binaryMapField(0x41, key: 0x00)
         let continuationOf = message.binaryMapField(0x42, key: 0x00)
         let commands = LXMFCommand.decode(message.fields[0x09])
-        guard replyTo == nil || replyTo?.count == 32,
+        guard (message.fields[0x07] == nil || voiceAudio != nil),
+              replyTo == nil || replyTo?.count == 32,
               isAcceptableReplyQuote(replyQuote),
               commentTo == nil || commentTo?.count == 32,
               continuationOf == nil || continuationOf?.count == 32 else { return false }
@@ -3205,6 +3207,7 @@ public final class SidebandStore {
             state: .delivered,
             telemetry: telemetry,
             telemetryStream: telemetryStream,
+            voiceAudio: voiceAudio,
             renderer: renderer,
             lxmfID: message.messageID,
             replyTo: replyTo,
@@ -3233,7 +3236,7 @@ public final class SidebandStore {
                     conversationID: conversation.id,
                     messageID: incomingMessage.id,
                     title: conversation.displayName,
-                    body: reactionContent.map { "Reacted \($0)" } ?? body,
+                    body: reactionContent.map { "Reacted \($0)" } ?? (voiceAudio == nil ? body : "Voice message"),
                     showPreview: shouldShowNotificationPreview(for: conversation.id)
                 )
             }
@@ -3363,6 +3366,10 @@ public final class SidebandStore {
             do {
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)
+                if lxmf.packed.count > 400 {
+                    try await advertiseLXMFResource(lxmf.packed, messageID: item.id, session: session)
+                    continue
+                }
                 let raw = try session.encryptedPacket(lxmf.packed)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
@@ -3399,7 +3406,16 @@ public final class SidebandStore {
         }
     }
 
-    private func registerOutgoingSegment(_ segment: ReticulumPreparedResourceSegment, remaining: [ReticulumPreparedResourceSegment], messageID: UUID, attachmentID: UUID, session: ReticulumLinkSession) {
+    private func advertiseLXMFResource(_ packed: Data, messageID: UUID, session: ReticulumLinkSession) async throws {
+        let segments = try ReticulumResourceSegmentPlanner.prepare(data: packed, session: session, hasMetadata: false)
+        guard let first = segments.first else { return }
+        registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: messageID, attachmentID: nil, session: session)
+        recordDeliveryAttempt(messageID, mode: .resource)
+        updateMessage(messageID, state: .sent)
+        try await transmitRawPacket(try session.resourceAdvertisementPacket(first.advertisement))
+    }
+
+    private func registerOutgoingSegment(_ segment: ReticulumPreparedResourceSegment, remaining: [ReticulumPreparedResourceSegment], messageID: UUID, attachmentID: UUID?, session: ReticulumLinkSession) {
         outgoingResources[segment.manifest.resourceHash.hex] = OutgoingResource(
             manifest: segment.manifest, parts: segment.parts, expectedProof: segment.expectedProof,
             messageID: messageID, attachmentID: attachmentID, linkID: session.linkID.hex,
@@ -3432,7 +3448,9 @@ public final class SidebandStore {
             outgoingResources[request.resourceHash.hex] = resource
             let segmentProgress = resource.parts.isEmpty ? 1 : Double(resource.sentIndices.count) / Double(resource.parts.count)
             let progress = (Double(resource.segmentIndex - 1) + segmentProgress) / Double(resource.totalSegments)
-            updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .transferring, progress: progress)
+            if let attachmentID = resource.attachmentID {
+                updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .transferring, progress: progress)
+            }
         }
     }
 
@@ -3445,19 +3463,23 @@ public final class SidebandStore {
         if let next = resource.remainingSegments.first, let session = activeLinks[resource.linkID] {
             let remaining = Array(resource.remainingSegments.dropFirst())
             registerOutgoingSegment(next, remaining: remaining, messageID: resource.messageID, attachmentID: resource.attachmentID, session: session)
-            updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .transferring, progress: Double(resource.segmentIndex) / Double(resource.totalSegments))
+            if let attachmentID = resource.attachmentID {
+                updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .transferring, progress: Double(resource.segmentIndex) / Double(resource.totalSegments))
+            }
             Task { try? await transmitRawPacket(try session.resourceAdvertisementPacket(next.advertisement)) }
             return
         }
-        updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .available, progress: 1)
-        if let message = messages.first(where: { $0.id == resource.messageID }), message.attachments.allSatisfy({ $0.state == .available }) {
+        if let attachmentID = resource.attachmentID {
+            updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .available, progress: 1)
+        }
+        if resource.attachmentID == nil || (messages.first(where: { $0.id == resource.messageID })?.attachments.allSatisfy({ $0.state == .available }) == true) {
             updateMessage(resource.messageID, state: .delivered)
         }
     }
 
     private func acceptResourceAdvertisement(_ plaintext: Data, session: ReticulumLinkSession) {
         guard let advertisement = try? ReticulumResourceAdvertisement(encoded: plaintext),
-              advertisement.flags & 0x01 == 0x01, advertisement.flags & 0x20 == 0x20,
+              advertisement.flags & 0x01 == 0x01,
               incomingResources.count < ReticulumResourceLimits.maximumConcurrentIncoming,
               ReticulumResourceLimits.accepts(
                   dataSize: advertisement.dataSize,
@@ -3528,6 +3550,15 @@ public final class SidebandStore {
                   let assembled = try? await resourceStagingStore.assemble(originalHash: incoming.advertisement.originalHash) else { return }
             completeData = assembled
         } else { completeData = data }
+
+        if incoming.advertisement.flags & 0x20 == 0,
+           let message = try? LXMFReceivedMessage(packed: completeData),
+           let identity = inboundRemoteIdentities[incoming.session.linkID.hex]
+                ?? discoveries.first(where: { $0.destinationHash == message.sourceHash.hex })?.publicKey.flatMap({ try? ReticulumIdentity(publicKey: $0) }),
+           message.validate(with: identity), importReceivedMessage(message, sourceIdentity: identity) {
+            incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
+            return
+        }
 
         guard let envelope = try? LXMFResourceEnvelope(encoded: completeData),
               !envelope.filename.isEmpty, envelope.filename.count <= 180,
@@ -3603,13 +3634,19 @@ public final class SidebandStore {
         } else {
             guard let resource = outgoingResources[hash], resource.timeoutToken == token else { return }
             outgoingResources.removeValue(forKey: hash)
-            updateAttachment(messageID: resource.messageID, attachmentID: resource.attachmentID, state: .failed, progress: 0)
+            if let attachmentID = resource.attachmentID {
+                updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .failed, progress: 0)
+            } else { updateMessage(resource.messageID, state: .failed) }
             if let session = activeLinks[resource.linkID] { try? await transmitRawPacket(try session.resourceCancelPacket(resourceHash: resource.manifest.resourceHash, initiatedBySender: true)) }
         }
     }
 
     private func cancelResource(hash: String) {
-        if let outgoing = outgoingResources.removeValue(forKey: hash) { updateAttachment(messageID: outgoing.messageID, attachmentID: outgoing.attachmentID, state: .failed, progress: 0) }
+        if let outgoing = outgoingResources.removeValue(forKey: hash) {
+            if let attachmentID = outgoing.attachmentID {
+                updateAttachment(messageID: outgoing.messageID, attachmentID: attachmentID, state: .failed, progress: 0)
+            } else { updateMessage(outgoing.messageID, state: .failed) }
+        }
         incomingResources.removeValue(forKey: hash)
     }
 
@@ -3757,6 +3794,7 @@ public final class SidebandStore {
         if let commands = LXMFCommand.encode(message.commands) { fields[0x09] = commands }
         if !message.telemetryStream.isEmpty,
            let stream = SidebandTelemetryStreamEntry.encode(message.telemetryStream) { fields[0x03] = stream }
+        if let voiceAudio = message.voiceAudio { fields[0x07] = voiceAudio.encodedField }
         return fields
     }
 

@@ -789,6 +789,7 @@ struct ContentView: View {
 
     private func messagePreview(_ message: Message) -> String {
         if !message.body.isEmpty { return message.body }
+        if message.voiceAudio != nil { return "Voice message" }
         if message.telemetry?.location != nil { return "Location telemetry" }
         if message.attachments.count == 1, let attachment = message.attachments.first { return "Attachment: \(attachment.filename)" }
         return "\(message.attachments.count) attachments"
@@ -1763,6 +1764,7 @@ private struct ConversationView: View {
     let conversation: Conversation
     @State private var draft = ""
     @State private var pendingAttachments: [Attachment] = []
+    @State private var pendingVoiceAudio: LXMFVoiceMessageAudio?
     @State private var showingFileImporter = false
     @State private var messageSearch = ""
     @State private var messageSearchScope: SearchScope = .all
@@ -1963,6 +1965,9 @@ private struct ConversationView: View {
                                         .accessibilityLabel("Replying to: \(replyQuote)")
                                     }
                                     if !message.body.isEmpty { renderedBody(message) }
+                                    if let voiceAudio = message.voiceAudio {
+                                        InlineLXMFVoiceMessageView(audio: voiceAudio)
+                                    }
                                     if let telemetry = message.telemetry {
                                         Button { showingTelemetryMap = true } label: { TelemetryMessageCard(telemetry: telemetry) }
                                             .buttonStyle(.plain)
@@ -2146,6 +2151,15 @@ private struct ConversationView: View {
                             }
                         }
                     }
+                }
+                if let pendingVoiceAudio {
+                    HStack {
+                        Label("Low-bandwidth Opus voice message · \(ByteCountFormatter.string(fromByteCount: Int64(pendingVoiceAudio.encodedAudio.count), countStyle: .file))", systemImage: "waveform")
+                        Spacer()
+                        Button { self.pendingVoiceAudio = nil } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).accessibilityLabel("Remove voice message")
+                    }
+                    .font(.caption).padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                 }
                 if let scheduledFor {
                     HStack {
@@ -2557,17 +2571,19 @@ private struct ConversationView: View {
     private func send() {
         let text = draft
         let attachments = pendingAttachments
+        let voiceAudio = pendingVoiceAudio
         let repliedMessage = replyingTo
         let deliveryDate = scheduledFor
         draftSaveTask?.cancel()
         draft = ""
         store.updateDraft("", for: conversation.id)
         pendingAttachments = []
+        pendingVoiceAudio = nil
         replyingTo = nil
         scheduledFor = nil
         let renderer: Message.Renderer = composeAsMarkdown ? .markdown : .plain
         Task {
-            let accepted = await store.send(text, attachments: attachments, replyingTo: repliedMessage, renderer: renderer, scheduledFor: deliveryDate)
+            let accepted = await store.send(text, attachments: attachments, voiceAudio: voiceAudio, replyingTo: repliedMessage, renderer: renderer, scheduledFor: deliveryDate)
             guard !accepted else { return }
             guard isVisible else {
                 for attachment in attachments { try? await store.attachmentStore.remove(attachment) }
@@ -2580,6 +2596,7 @@ private struct ConversationView: View {
             for attachment in attachments where !pendingAttachments.contains(where: { $0.id == attachment.id }) {
                 pendingAttachments.append(attachment)
             }
+            if pendingVoiceAudio == nil { pendingVoiceAudio = voiceAudio }
             if replyingTo == nil { replyingTo = repliedMessage }
             if scheduledFor == nil { scheduledFor = deliveryDate }
         }
@@ -2611,6 +2628,7 @@ private struct ConversationView: View {
     private func replyPreview(_ message: Message) -> String {
         let body = message.body.trimmingCharacters(in: .whitespacesAndNewlines)
         if !body.isEmpty { return String(body.prefix(280)) }
+        if message.voiceAudio != nil { return "Voice message" }
         if let attachment = message.attachments.first { return "Attachment: \(attachment.filename)" }
         if message.telemetry != nil { return "Shared telemetry" }
         return "Message"
@@ -2651,17 +2669,9 @@ private struct ConversationView: View {
         defer { try? FileManager.default.removeItem(at: url) }
         guard store.validateAttachmentSelection(currentCount: pendingAttachments.count, adding: 1) else { return }
         do {
-            let timestamp = Date().formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
-                .replacingOccurrences(of: ":", with: "-")
-            let attachment = try await store.attachmentStore.importFile(from: url, preferredName: "Voice message \(timestamp).m4a")
-            if store.validateAttachmentIsUnique(attachment, among: pendingAttachments),
-               store.validateAttachmentTotal(pendingAttachments + [attachment]) {
-                pendingAttachments.append(attachment)
-            } else {
-                try? await store.attachmentStore.remove(attachment)
-            }
+            pendingVoiceAudio = try VoiceMessageOpusEncoder.encodeOgg(from: url)
         } catch {
-            store.reportAttachmentImportFailure(filename: "Voice message.m4a", error: error)
+            store.lastError = "Could not encode the voice message: \(error.localizedDescription)"
         }
     }
 
@@ -2672,7 +2682,7 @@ private struct ConversationView: View {
     private var canSend: Bool {
         !conversation.isBlocked &&
         draft.count <= SidebandMessageLimits.maximumTextCharacters &&
-        (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty)
+        (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty || pendingVoiceAudio != nil)
     }
 
     private func messageAccessibilityLabel(_ message: Message, summaries precomputedSummaries: [ReactionSummary]? = nil) -> String {
@@ -2686,6 +2696,7 @@ private struct ConversationView: View {
             parts.append("Attachments: \(message.attachments.map(\.filename).joined(separator: ", "))")
         }
         if message.telemetry != nil { parts.append("Includes telemetry") }
+        if message.voiceAudio != nil { parts.append("Includes a low-bandwidth voice message") }
         let summaries = precomputedSummaries ?? reactionSummaries(for: message)
         if !summaries.isEmpty {
             parts.append("Reactions: " + summaries.map { "\($0.content) \($0.count)" }.joined(separator: ", "))
@@ -2718,6 +2729,10 @@ private struct ConversationView: View {
             lines.append(contentsOf: message.attachments.map {
                 "- \($0.filename) (\(ByteCountFormatter.string(fromByteCount: Int64($0.byteCount), countStyle: .file)), \($0.state.rawValue))"
             })
+        }
+        if let voice = message.voiceAudio {
+            lines.append("LXMF audio mode: 0x\(String(format: "%02x", voice.mode.rawValue))")
+            lines.append("Voice bytes: \(voice.encodedAudio.count)")
         }
         if let telemetry = message.telemetry {
             lines.append("Telemetry captured: \(formatter.string(from: telemetry.capturedAt))")
@@ -3384,6 +3399,51 @@ private struct AttachmentShareButton: View {
             url = nil
             Task { await store.removeMaterializedFile(for: attachment) }
         }
+    }
+}
+
+private struct InlineLXMFVoiceMessageView: View {
+    let audio: LXMFVoiceMessageAudio
+    @State private var player = AudioAttachmentPlayer()
+    @State private var temporaryURL: URL?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Button { player.togglePlayback() } label: {
+                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.title2)
+                }
+                .buttonStyle(.plain).disabled(!player.isReady)
+                Slider(value: Binding(get: { player.currentTime }, set: { player.seek(to: $0) }), in: 0...max(0.1, player.duration))
+                    .frame(minWidth: 120).disabled(!player.isReady)
+                Text("\(format(player.currentTime))/\(format(player.duration))")
+                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            Label("LXMF voice · \(audio.mode == .opusOgg ? "Opus 8 kbps" : "Codec2") · \(ByteCountFormatter.string(fromByteCount: Int64(audio.encodedAudio.count), countStyle: .file))", systemImage: "waveform")
+                .font(.caption)
+        }
+        .frame(maxWidth: 340)
+        .task(id: audio.encodedAudio) {
+            guard audio.mode.isOggOpus else { return }
+            let url = FileManager.default.temporaryDirectory.appending(path: "Sideband-LXMF-\(UUID().uuidString).ogg")
+            do {
+                try audio.encodedAudio.write(to: url, options: .atomic)
+                temporaryURL = url
+                player.load(url)
+            } catch { try? FileManager.default.removeItem(at: url) }
+        }
+        .onDisappear {
+            player.stop()
+            if let temporaryURL { try? FileManager.default.removeItem(at: temporaryURL) }
+            temporaryURL = nil
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("LXMF low-bandwidth voice message")
+    }
+
+    private func format(_ duration: TimeInterval) -> String {
+        let total = duration.isFinite ? max(0, Int(duration.rounded(.down))) : 0
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

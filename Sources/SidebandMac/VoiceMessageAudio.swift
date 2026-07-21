@@ -37,6 +37,7 @@ final class VoiceMessageRecorder {
     private var recorder: AVAudioRecorder?
     private var elapsedTask: Task<Void, Never>?
     private var recordingURL: URL?
+    private let maximumDuration: TimeInterval = 60
 
     func start() async throws {
         guard !isRecording, !isPreparing else { return }
@@ -61,7 +62,7 @@ final class VoiceMessageRecorder {
         ]
         let candidate = try AVAudioRecorder(url: url, settings: settings)
         candidate.isMeteringEnabled = true
-        guard candidate.prepareToRecord(), candidate.record() else {
+        guard candidate.prepareToRecord(), candidate.record(forDuration: maximumDuration) else {
             try? FileManager.default.removeItem(at: url)
             throw VoiceMessageAudioError.recordingUnavailable
         }
@@ -115,6 +116,68 @@ final class VoiceMessageRecorder {
         @unknown default: false
         }
         #endif
+    }
+}
+
+enum VoiceMessageOpusEncoder {
+    static let sampleRate = 12_000.0
+    static let frameLength = 720 // 60 ms
+
+    static func encodeOgg(from sourceURL: URL) throws -> LXMFVoiceMessageAudio {
+        let source = try AVAudioFile(forReading: sourceURL)
+        let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
+        guard let converter = AVAudioConverter(from: source.processingFormat, to: pcmFormat),
+              let opusFormat = AVAudioFormat(settings: [
+                AVFormatIDKey: kAudioFormatOpus, AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 8_000
+              ]), let encoder = AVAudioConverter(from: pcmFormat, to: opusFormat) else {
+            throw VoiceMessageAudioError.recordingUnavailable
+        }
+
+        var samples: [Float] = []
+        let inputCapacity: AVAudioFrameCount = 4_096
+        while source.framePosition < source.length {
+            guard let input = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: inputCapacity) else { break }
+            try source.read(into: input, frameCount: inputCapacity)
+            if input.frameLength == 0 { break }
+            let capacity = AVAudioFrameCount(ceil(Double(input.frameLength) * sampleRate / input.format.sampleRate)) + 16
+            guard let output = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: capacity) else { break }
+            let box = AudioConverterInputBox(input)
+            var conversionError: NSError?
+            let status = converter.convert(to: output, error: &conversionError) { _, inputStatus in box.next(inputStatus) }
+            guard status != .error, let channel = output.floatChannelData?[0] else {
+                throw conversionError ?? VoiceMessageAudioError.recordingUnavailable
+            }
+            samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
+        }
+
+        guard samples.count >= frameLength / 2 else { throw VoiceMessageAudioError.recordingUnavailable }
+        var packets: [Data] = []
+        var offset = 0
+        while offset < samples.count {
+            var frame = Array(samples[offset..<min(offset + frameLength, samples.count)])
+            if frame.count < frameLength { frame.append(contentsOf: repeatElement(0, count: frameLength - frame.count)) }
+            guard let packet = encode(frame, with: encoder, format: pcmFormat, opusFormat: opusFormat) else {
+                throw VoiceMessageAudioError.recordingUnavailable
+            }
+            packets.append(packet)
+            offset += frameLength
+        }
+        let ogg = OggOpusStream.mux(packets: packets, frameSamplesAt48k: 2_880, serial: UInt32.random(in: 1...UInt32.max))
+        return try LXMFVoiceMessageAudio(mode: .opusOgg, encodedAudio: ogg)
+    }
+
+    private static func encode(_ samples: [Float], with encoder: AVAudioConverter, format: AVAudioFormat, opusFormat: AVAudioFormat) -> Data? {
+        guard let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameLength)),
+              let channel = input.floatChannelData?[0] else { return nil }
+        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: frameLength) }
+        input.frameLength = AVAudioFrameCount(frameLength)
+        let output = AVAudioCompressedBuffer(format: opusFormat, packetCapacity: 1, maximumPacketSize: 1_275)
+        let box = AudioConverterInputBox(input)
+        var error: NSError?
+        let status = encoder.convert(to: output, error: &error) { _, inputStatus in box.next(inputStatus) }
+        guard status != .error, output.byteLength > 0 else { return nil }
+        return Data(bytes: output.data, count: Int(output.byteLength))
     }
 }
 
