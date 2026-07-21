@@ -126,6 +126,29 @@ import Testing
     #expect(throws: SidebandDeclarativePluginDefinition.Error.self) { try unsafe.validate() }
 }
 
+@Test func signedRNodeCatalogConfigArchiveAndRichTextAreValidated() throws {
+    let signer = ReticulumIdentity()
+    let entry = RNodeFirmwareCatalog.Entry(
+        version: "1.80", platform: 1, board: 2,
+        imageURL: try #require(URL(string: "https://firmware.example/rnode.bin")),
+        sha256Hex: String(repeating: "a", count: 64)
+    )
+    let catalog = RNodeFirmwareCatalog(generatedAt: Date(timeIntervalSince1970: 1_700_000_000), entries: [entry])
+    let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
+    let payload = try encoder.encode(catalog)
+    let signed = RNodeSignedFirmwareCatalog(payload: payload, signature: try signer.sign(payload))
+    let verified = try signed.verified(publicKey: Data(signer.publicKey.suffix(32)))
+    var metrics = RNodeMetrics(); metrics.platform = 1; metrics.board = 2
+    #expect(verified.bestMatch(for: metrics)?.version == "1.80")
+
+    let configuration = RNodeConfiguration(transport: .simulated)
+    let archived = try RNodeConfigurationArchive.encode([configuration])
+    #expect(try RNodeConfigurationArchive.decode(archived) == [configuration])
+    #expect(SidebandRichTextRenderer.bbcodeToMarkdown("[b]bold[/b] [url=https://example.com]site[/url]") == "**bold** [site](https://example.com)")
+    #expect(SidebandRichTextRenderer.micronToMarkdown("! alert") == "**alert**")
+    #expect(SidebandRichTextRenderer.attributed("[b]bold[/b]", renderer: .bbcode) != nil)
+}
+
 private struct TestNativePlugin: SidebandCommandPlugin {
     let manifest = SidebandPluginManifest(identifier: "test.native", name: "Test Plugin", version: "1", commands: ["test-echo"])
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {

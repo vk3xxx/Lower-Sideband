@@ -2659,9 +2659,9 @@ private struct ConversationView: View {
     }
 
     @ViewBuilder private func renderedBody(_ message: Message) -> some View {
-        if message.renderer == .markdown,
+        if message.renderer != .plain,
            store.shouldRenderRichText(message, conversationID: conversation.id),
-           let attributed = try? AttributedString(markdown: message.body) {
+           let attributed = SidebandRichTextRenderer.attributed(message.body, renderer: message.renderer) {
             Text(attributed)
         } else {
             Text(message.body)

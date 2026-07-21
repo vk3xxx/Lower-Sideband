@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.9 (37) - 2026-07-21
+
+- Added signed RNode firmware catalog verification and HTTPS/digest-verified downloads.
+- Added a platform flasher contract plus portable RNode configuration import/export.
+- Added safe native Micron and BBCode presentation alongside Markdown.
+- Kept unknown rich-text tags visible and trust-gated all non-plain rendering.
+
 ## 1.2.8 (36) - 2026-07-21
 
 - Added an importable, declarative plugin format that cannot execute downloaded code.
