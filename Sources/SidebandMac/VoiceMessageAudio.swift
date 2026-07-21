@@ -181,6 +181,71 @@ enum VoiceMessageOpusEncoder {
     }
 }
 
+enum VoiceMessageCodec2Transcoder {
+    static func encode(from sourceURL: URL, mode: Codec2Codec.Mode) throws -> LXMFVoiceMessageAudio {
+        let codec = try Codec2Codec(mode: mode)
+        let source = try AVAudioFile(forReading: sourceURL)
+        let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(Codec2Codec.sampleRate), channels: 1, interleaved: false)!
+        guard let converter = AVAudioConverter(from: source.processingFormat, to: pcmFormat) else {
+            throw VoiceMessageAudioError.recordingUnavailable
+        }
+        var samples: [Float] = []
+        while source.framePosition < source.length {
+            guard let input = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: 4_096) else { break }
+            try source.read(into: input, frameCount: 4_096)
+            if input.frameLength == 0 { break }
+            let capacity = AVAudioFrameCount(ceil(Double(input.frameLength) * pcmFormat.sampleRate / input.format.sampleRate)) + 16
+            guard let output = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: capacity) else { break }
+            let box = AudioConverterInputBox(input)
+            var error: NSError?
+            let status = converter.convert(to: output, error: &error) { _, inputStatus in box.next(inputStatus) }
+            guard status != .error, let channel = output.floatChannelData?[0] else {
+                throw error ?? VoiceMessageAudioError.recordingUnavailable
+            }
+            samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
+        }
+        guard !samples.isEmpty else { throw VoiceMessageAudioError.recordingUnavailable }
+        var encoded = Data()
+        var offset = 0
+        while offset < samples.count {
+            var frame = Array(samples[offset..<min(offset + codec.samplesPerFrame, samples.count)])
+            if frame.count < codec.samplesPerFrame { frame.append(contentsOf: repeatElement(0, count: codec.samplesPerFrame - frame.count)) }
+            let pcm = frame.map { Int16(clamping: Int((max(-1, min(1, $0)) * Float(Int16.max)).rounded())) }
+            encoded.append(try codec.encode(pcm))
+            offset += codec.samplesPerFrame
+        }
+        let audioMode: LXMFVoiceMessageAudio.Mode = switch mode {
+        case .bitrate700C: .codec2_700C
+        case .bitrate1200: .codec2_1200
+        case .bitrate1300: .codec2_1300
+        case .bitrate1400: .codec2_1400
+        case .bitrate1600: .codec2_1600
+        case .bitrate2400: .codec2_2400
+        case .bitrate3200: .codec2_3200
+        }
+        return try LXMFVoiceMessageAudio(mode: audioMode, encodedAudio: encoded)
+    }
+
+    static func decode(_ audio: LXMFVoiceMessageAudio, to url: URL) throws {
+        guard let mode = audio.mode.codec2Mode else { throw VoiceMessageAudioError.recordingUnavailable }
+        let codec = try Codec2Codec(mode: mode)
+        guard audio.encodedAudio.count.isMultiple(of: codec.bytesPerFrame) else { throw VoiceMessageAudioError.recordingUnavailable }
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(Codec2Codec.sampleRate), channels: 1, interleaved: false)!
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        var offset = 0
+        while offset < audio.encodedAudio.count {
+            let frame = Data(audio.encodedAudio[offset..<(offset + codec.bytesPerFrame)])
+            let decoded = try codec.decode(frame)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(decoded.count)),
+                  let channel = buffer.floatChannelData?[0] else { throw VoiceMessageAudioError.recordingUnavailable }
+            for index in decoded.indices { channel[index] = Float(decoded[index]) / Float(Int16.max) }
+            buffer.frameLength = AVAudioFrameCount(decoded.count)
+            try file.write(from: buffer)
+            offset += codec.bytesPerFrame
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AudioAttachmentPlayer {
@@ -266,12 +331,15 @@ final class LiveVoiceAudioEngine {
     private var captureConverter: AVAudioConverter?
     private var encoder: AVAudioConverter?
     private var decoder: AVAudioConverter?
+    private var codec2: Codec2Codec?
+    private var profile: LXSTVoice.Profile = .mediumQuality
     private var pendingSamples: [Float] = []
     private var jitterBuffer = LXSTJitterBuffer()
     private var playbackTask: Task<Void, Never>?
-    private let sampleRate = 24_000.0
-    private let frameLength = 1_440 // 60 ms, matching LXST's default profile.
-    private let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!
+    private var sampleRate: Double { profile.codec == .codec2 ? Double(Codec2Codec.sampleRate) : 24_000 }
+    private var frameLength: Int { codec2?.samplesPerFrame ?? 1_440 }
+    private var frameInterval: Duration { .milliseconds(Int((Double(frameLength) / sampleRate * 1_000).rounded())) }
+    private var pcmFormat: AVAudioFormat { AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)! }
     @ObservationIgnored private var opusFormat: AVAudioFormat? {
         AVAudioFormat(settings: [
             AVFormatIDKey: kAudioFormatOpus,
@@ -279,6 +347,12 @@ final class LiveVoiceAudioEngine {
             AVNumberOfChannelsKey: 1,
             AVEncoderBitRateKey: 8_000
         ])
+    }
+
+    func configure(profile: LXSTVoice.Profile) throws {
+        guard !isRunning else { return }
+        self.profile = profile
+        codec2 = try profile.codec2Mode.map(Codec2Codec.init(mode:))
     }
 
     func start() async throws {
@@ -301,13 +375,15 @@ final class LiveVoiceAudioEngine {
         try session.overrideOutputAudioPort(hasExternalRoute ? .none : .speaker)
         refreshAudioRoute()
         #endif
-        guard let opusFormat,
-              let encoder = AVAudioConverter(from: pcmFormat, to: opusFormat),
-              let decoder = AVAudioConverter(from: opusFormat, to: pcmFormat) else {
-            throw VoiceMessageAudioError.recordingUnavailable
+        if profile.codec == .opus {
+            guard let opusFormat,
+                  let encoder = AVAudioConverter(from: pcmFormat, to: opusFormat),
+                  let decoder = AVAudioConverter(from: opusFormat, to: pcmFormat) else {
+                throw VoiceMessageAudioError.recordingUnavailable
+            }
+            self.encoder = encoder
+            self.decoder = decoder
         }
-        self.encoder = encoder
-        self.decoder = decoder
         let input = engine.inputNode
         let inputFormat = input.inputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, let captureConverter = AVAudioConverter(from: inputFormat, to: pcmFormat) else {
@@ -340,6 +416,7 @@ final class LiveVoiceAudioEngine {
         captureConverter = nil
         encoder = nil
         decoder = nil
+        codec2 = nil
         pendingSamples.removeAll(keepingCapacity: false)
         jitterBuffer.reset()
         bufferedFrameCount = 0
@@ -354,8 +431,8 @@ final class LiveVoiceAudioEngine {
         #endif
     }
 
-    func play(opus payload: Data) {
-        guard !payload.isEmpty else { return }
+    func play(_ payload: Data, codec: LXSTVoice.Codec) {
+        guard !payload.isEmpty, codec == profile.codec else { return }
         jitterBuffer.enqueue(payload)
         bufferedFrameCount = jitterBuffer.count
         droppedPlaybackFrames = jitterBuffer.droppedFrameCount
@@ -391,7 +468,18 @@ final class LiveVoiceAudioEngine {
     #endif
 
     private func decodeAndSchedule(_ payload: Data) {
-        guard isRunning, let opusFormat, let decoder else { return }
+        guard isRunning else { return }
+        if profile.codec == .codec2 {
+            guard let codec2, let decoded = try? codec2.decode(payload),
+                  let output = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(decoded.count)),
+                  let channel = output.floatChannelData?[0] else { return }
+            for index in decoded.indices { channel[index] = Float(decoded[index]) / Float(Int16.max) }
+            output.frameLength = AVAudioFrameCount(decoded.count)
+            player.scheduleBuffer(output)
+            if !player.isPlaying { player.play() }
+            return
+        }
+        guard let opusFormat, let decoder else { return }
         let compressed = AVAudioCompressedBuffer(format: opusFormat, packetCapacity: 1, maximumPacketSize: max(1_275, payload.count))
         payload.copyBytes(to: compressed.data.assumingMemoryBound(to: UInt8.self), count: payload.count)
         compressed.byteLength = UInt32(payload.count)
@@ -440,12 +528,18 @@ final class LiveVoiceAudioEngine {
                 self.bufferedFrameCount = self.jitterBuffer.count
                 self.playbackUnderruns = self.jitterBuffer.underrunCount
                 self.isPlaybackRecovering = self.playbackUnderruns > 0 && !self.jitterBuffer.isPrimed
-                try? await Task.sleep(for: .milliseconds(60))
+                try? await Task.sleep(for: self.frameInterval)
             }
         }
     }
 
     private func encode(_ samples: [Float]) -> Data? {
+        if profile.codec == .codec2, let codec2 {
+            let pcm = samples.map { sample -> Int16 in
+                Int16(clamping: Int((max(-1, min(1, sample)) * Float(Int16.max)).rounded()))
+            }
+            return try? codec2.encode(pcm)
+        }
         guard let encoder, let opusFormat,
               let input = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(frameLength)),
               let channel = input.floatChannelData?[0] else { return nil }

@@ -38,6 +38,38 @@ struct LXSTVoiceTests {
         #expect(try LXSTVoice.decode(encoded) == .frame(codec: .opus, payload: Data("abc".utf8)))
     }
 
+    @Test func nativeCodec2SupportsEveryPythonBoundMode() throws {
+        for mode in Codec2Codec.Mode.allCases {
+            let codec = try Codec2Codec(mode: mode)
+            #expect(codec.samplesPerFrame > 0)
+            #expect(codec.bitsPerFrame > 0)
+            #expect(codec.bytesPerFrame == (codec.bitsPerFrame + 7) / 8)
+            let payload = try codec.encode([Int16](repeating: 0, count: codec.samplesPerFrame))
+            #expect(payload.count == codec.bytesPerFrame)
+            #expect(try codec.decode(payload).count == codec.samplesPerFrame)
+        }
+    }
+
+    @Test func codec2ProfilesAndLXMFModesMapWithoutAmbiguity() throws {
+        #expect(LXSTVoice.Profile.ultraLowBandwidth.codec2Mode == .bitrate700C)
+        #expect(LXSTVoice.Profile.veryLowBandwidth.codec2Mode == .bitrate1200)
+        #expect(LXSTVoice.Profile.lowBandwidth.codec2Mode == .bitrate2400)
+        #expect(LXSTVoice.Profile.mediumQuality.codec2Mode == nil)
+        #expect(LXSTVoice.Profile.allCases.filter(\.isLocallySupported).count == 4)
+        #expect(LXMFVoiceMessageAudio.Mode.codec2_700C.codec2Mode == .bitrate700C)
+        #expect(LXMFVoiceMessageAudio.Mode.codec2_2400.codec2Mode == .bitrate2400)
+        #expect(LXMFVoiceMessageAudio.Mode.codec2_450.codec2Mode == nil)
+
+        let codec = try Codec2Codec(mode: .bitrate1200)
+        let framed = LXSTVoice.frame(codec: .codec2, payload: try codec.encode(.init(repeating: 0, count: codec.samplesPerFrame)))
+        guard case let .frame(frameCodec, payload) = try LXSTVoice.decode(framed) else {
+            Issue.record("Codec2 LXST frame did not decode")
+            return
+        }
+        #expect(frameCodec == .codec2)
+        #expect(payload.count == codec.bytesPerFrame)
+    }
+
     @Test func pythonCompatibleLXMURIEncodingAndLimits() throws {
         #expect(try LXMURI.encode(Data([0xfb, 0xef])) == "lxm://--8")
         #expect(try LXMURI.decode("lxm://--8") == Data([0xfb, 0xef]))

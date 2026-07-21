@@ -63,9 +63,8 @@ public enum LXSTVoice {
             }
         }
 
-        /// Swift currently provides the native Opus profiles. Codec2 profiles
-        /// remain decodable for interoperability but require a Codec2 runtime.
-        public var isLocallySupported: Bool { self == .mediumQuality }
+        /// Profiles with native, interoperable Codec2 or Opus implementations.
+        public var isLocallySupported: Bool { codec2Mode != nil || self == .mediumQuality }
     }
 
     public enum Event: Equatable, Sendable {

@@ -86,6 +86,7 @@ public final class SidebandStore {
     public private(set) var voiceTrustedOnly: Bool
     public private(set) var richTextTrustedOnly: Bool
     public private(set) var preferredVoiceProfile: LXSTVoice.Profile
+    public private(set) var preferredVoiceMessageMode: LXMFVoiceMessageAudio.Mode
     public private(set) var telemetryRespondToTrustedRequests: Bool
     public private(set) var telemetryCollectorEnabled: Bool
     public private(set) var telemetryCollectorHash: String
@@ -190,7 +191,7 @@ public final class SidebandStore {
     private var pendingVoicePublicKeys: [String: Data] = [:]
     private var activeVoiceLinkID: String?
     private var voiceCallTimeoutTask: Task<Void, Never>?
-    @ObservationIgnored private var voiceFrameHandler: ((Data) -> Void)?
+    @ObservationIgnored private var voiceFrameHandler: ((LXSTVoice.Codec, Data) -> Void)?
     private var propagationSyncTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var attemptedGatewayIDs: Set<String> = []
@@ -275,6 +276,7 @@ public final class SidebandStore {
         voiceTrustedOnly = UserDefaults.standard.bool(forKey: "lxstVoiceTrustedOnly")
         richTextTrustedOnly = UserDefaults.standard.object(forKey: "lxmfRichTextTrustedOnly") as? Bool ?? true
         preferredVoiceProfile = LXSTVoice.Profile(rawValue: UInt64(UserDefaults.standard.integer(forKey: "lxstVoiceProfile"))) ?? .mediumQuality
+        preferredVoiceMessageMode = LXMFVoiceMessageAudio.Mode(rawValue: UInt8(UserDefaults.standard.integer(forKey: "lxmfVoiceMessageMode"))) ?? .opusOgg
         telemetryRespondToTrustedRequests = UserDefaults.standard.bool(forKey: "telemetryRespondToTrustedRequests")
         telemetryCollectorEnabled = UserDefaults.standard.bool(forKey: "telemetryCollectorEnabled")
         telemetryCollectorHash = UserDefaults.standard.string(forKey: "telemetryCollectorHash") ?? ""
@@ -340,6 +342,12 @@ public final class SidebandStore {
         UserDefaults.standard.set(Int(profile.rawValue), forKey: "lxstVoiceProfile")
     }
 
+    public func setPreferredVoiceMessageMode(_ mode: LXMFVoiceMessageAudio.Mode) {
+        guard mode == .opusOgg || mode.codec2Mode != nil else { return }
+        preferredVoiceMessageMode = mode
+        UserDefaults.standard.set(Int(mode.rawValue), forKey: "lxmfVoiceMessageMode")
+    }
+
     public func setTelemetryRespondToTrustedRequests(_ enabled: Bool) {
         telemetryRespondToTrustedRequests = enabled
         UserDefaults.standard.set(enabled, forKey: "telemetryRespondToTrustedRequests")
@@ -361,7 +369,7 @@ public final class SidebandStore {
         UserDefaults.standard.set(enabled, forKey: "telemetryCollectorLatestOnly")
     }
 
-    public func setVoiceFrameHandler(_ handler: ((Data) -> Void)?) { voiceFrameHandler = handler }
+    public func setVoiceFrameHandler(_ handler: ((LXSTVoice.Codec, Data) -> Void)?) { voiceFrameHandler = handler }
 
     public func startVoiceCall(conversationID: UUID) async {
         guard voiceCall == nil,
@@ -433,10 +441,10 @@ public final class SidebandStore {
         finishVoiceCall()
     }
 
-    public func sendVoiceFrame(_ opusPayload: Data) async {
-        guard voiceCall?.state == .active, !opusPayload.isEmpty,
+    public func sendVoiceFrame(_ payload: Data) async {
+        guard let call = voiceCall, call.state == .active, !payload.isEmpty,
               let linkID = activeVoiceLinkID, let session = activeLinks[linkID] else { return }
-        try? await transmitRawPacket(try session.encryptedPacket(LXSTVoice.frame(codec: .opus, payload: opusPayload)))
+        try? await transmitRawPacket(try session.encryptedPacket(LXSTVoice.frame(codec: call.profile.codec, payload: payload)))
     }
 
     public var automaticBackupURL: URL {
@@ -3036,7 +3044,7 @@ public final class SidebandStore {
         case .signals(let signals):
             for signal in signals { handleVoiceSignal(signal, session: session) }
         case .frame(let codec, let payload):
-            if codec == .opus, voiceCall?.state == .active { voiceFrameHandler?(payload) }
+            if codec == voiceCall?.profile.codec, voiceCall?.state == .active { voiceFrameHandler?(codec, payload) }
         }
         return true
     }

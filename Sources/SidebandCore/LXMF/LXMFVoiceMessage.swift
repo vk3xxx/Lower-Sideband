@@ -13,6 +13,19 @@ public struct LXMFVoiceMessageAudio: Codable, Hashable, Sendable {
 
         public var isCodec2: Bool { (0x01...0x09).contains(rawValue) }
         public var isOggOpus: Bool { self == .opusOgg }
+
+        public var codec2Mode: Codec2Codec.Mode? {
+            switch self {
+            case .codec2_700C: .bitrate700C
+            case .codec2_1200: .bitrate1200
+            case .codec2_1300: .bitrate1300
+            case .codec2_1400: .bitrate1400
+            case .codec2_1600: .bitrate1600
+            case .codec2_2400: .bitrate2400
+            case .codec2_3200: .bitrate3200
+            default: nil
+            }
+        }
     }
 
     public static let maximumEncodedBytes = 8 * 1_024 * 1_024

@@ -15,7 +15,8 @@ Status labels:
 | --- | --- | --- |
 | Conversations, messages, drafts, replies, reactions, search | Models, `SidebandStore`, SwiftUI views | Native |
 | Local SQLite state | Versioned encrypted snapshots with atomic writes and rolling recovery | Native replacement |
-| Legacy Sideband SQLite import | — | Planned |
+| Legacy identity/profile portability | Authenticated encrypted archives plus raw Python identity import | Native |
+| Legacy Sideband SQLite history import | Validated snapshot/conversation import path; direct SQLite conversion | Partial |
 | Contacts, names, notes, tags, appearance, trust | Encrypted models, fingerprints, contact links/QR | Native |
 | Attachments and inline images | Encrypted storage and Reticulum Resources | Native; ongoing live matrix |
 | Backups and structured conversation archives | Validated versioned import/export | Native |
@@ -37,7 +38,7 @@ Status labels:
 | AutoInterface | Authenticated beacon and UDP data plane | Native; iOS entitlement-limited |
 | IFAC and interface modes | Native KISS/interface configuration and forwarding policy | Native |
 | macOS Transport Instance | Validated routes, forwarding, reverse/link routes, loop suppression | Native |
-| Every specialised Python Reticulum interface | — | Partial |
+| UDP, TCP server, I2P SAM, Weave, shared instance and specialised interfaces | Native service/interface types | Native; live matrices ongoing |
 
 ## LXMF and Sideband workflows
 
@@ -49,8 +50,8 @@ Status labels:
 | Commands and telemetry requests | Typed LXMF command fields | Native |
 | Telemetry sensors and relay | Canonical sensor maps with lossless unknown sensor preservation | Native |
 | Telemetry history/map/CSV/GPX | Native collectors, MapKit, export | Native |
-| Low-bandwidth voice messages | Python-compatible LXMF voice payloads | Native |
-| LXST real-time calls | Link-authenticated audio, jitter buffer, CallKit | Native; background wake external |
+| Low-bandwidth voice messages | Native Opus and official Codec2 700–3200 bit/s encode/decode | Native |
+| LXST real-time calls | Link-authenticated Opus/Codec2 audio, jitter buffer, CallKit | Native; background wake external |
 | Paper/offline messages | Encrypted contact and message links/QR | Native |
 | Python plugin system | Permission-scoped compiled native plugin APIs | Native replacement |
 | Downloaded executable plugins | — | Explicit non-goal |
@@ -66,7 +67,7 @@ Status labels:
 | RNode radio config and metrics | KISS commands and Network Status UI | Native |
 | Beacon/callsign and framebuffer/display | Native scheduler and binary protocol | Native |
 | ROM and firmware inspection | Native reads and metadata validation | Native |
-| Firmware flashing | Validated package and update-mode handoff | External |
+| Firmware flashing | Signed catalogues, digest-verified downloads, configuration archives, pluggable flasher | Native framework; physical bootloader acceptance required |
 
 ## Platform and infrastructure gaps
 

@@ -18,7 +18,7 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
 
 ## Compatibility extensions
 
-- Import selected legacy Python Sideband SQLite data into the native encrypted store.
+- Expand direct legacy Python Sideband SQLite history conversion beyond the current identity/profile and structured archive migration paths.
 - Broaden support for specialised Reticulum interfaces not available through TCP, AutoInterface, RNode, or generic KISS.
 - Extend native plugin APIs while retaining App Store sandboxing, explicit permissions, and deterministic reviewability.
 - Integrate supported platform-specific firmware flashing tools where this can be done safely and within Apple distribution rules.

@@ -14,16 +14,16 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 ## Highlights
 
 - Native Reticulum packet, identity, announce, path, link, proof, tunnel, and Resource handling
-- LXMF direct, opportunistic, propagation-node, attachment, telemetry, and low-bandwidth voice delivery
+- LXMF direct, opportunistic, propagation-node, attachment, telemetry, stamps/tickets, ratchets, and low-bandwidth voice delivery
 - Automatic local-first gateway discovery with public Internet fallback, IPv6 preference, and IPv4 fallback
 - Concurrent TCP, AutoInterface, RNode, serial, Bluetooth LE, Wi-Fi, and generic KISS interfaces
-- Native RNode configuration, diagnostics, beaconing, framebuffer, ROM inspection, and firmware-update preparation
+- Native RNode configuration, diagnostics, beaconing, framebuffer, ROM inspection, signed firmware catalogues, and verified update packages
 - Encrypted text, images, files, voice notes, voice calls, replies, reactions, and scheduled messages
-- Unified online/offline situation map and interoperable telemetry history
+- Unified online/offline situation map, package validation, trails, and extended interoperable telemetry history
 - Contact fingerprints, QR/contact links, trust pinning, blocking, and user-reviewed safety reports
 - Encrypted local persistence and optional encrypted private CloudKit synchronisation
 - macOS Reticulum Transport Instance mode with route learning and loop suppression
-- Permission-scoped native command, service, and telemetry plugin APIs
+- Permission-scoped native command, service, telemetry, and safe declarative plugin APIs
 
 ## Platform support
 
@@ -33,7 +33,7 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 | iOS | 17 | `SidebandIOS` | iPhone UI, BLE/Wi-Fi RNode, background refresh within iOS limits |
 | iPadOS | 17 | `SidebandIOS` | Adaptive split-view interface |
 
-The app is built with Swift 6 and SwiftUI. Runtime code uses Apple platform frameworks plus the pinned `Ed25519` Swift package. Python is used only by optional developer interoperability checks and is not included in application bundles.
+The app is built with Swift 6 and SwiftUI. Runtime code uses Apple platform frameworks, the pinned `Ed25519` Swift package, and the official native Codec2 1.2.0 library. Python is used only by optional developer interoperability checks and is not included in application bundles.
 
 ## Quick start
 
@@ -69,6 +69,7 @@ Scripts/test-rnode.sh protocol
 - [RNode and radio interfaces](docs/RNODE.md)
 - [Testing and interoperability](docs/TESTING.md)
 - [Porting status and known gaps](PORTING.md)
+- [Native feature parity](docs/FEATURE-PARITY.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Privacy policy](PRIVACY.md)
 - [Support](SUPPORT.md)
@@ -81,6 +82,7 @@ Scripts/test-rnode.sh protocol
 ```text
 Sources/SidebandCore/     Native Reticulum, LXMF, persistence, sync, and models
 Sources/SidebandMac/      Shared SwiftUI application and platform services
+Vendor/                   Reproducibly built native Codec2 XCFramework and licence
 Tests/                    Swift Testing regression and compatibility suite
 Support/                  Entitlements, privacy manifests, assets, and export options
 Scripts/                  Build, bundle, interoperability, and validation tools
@@ -107,4 +109,4 @@ This repository tracks pinned source snapshots of:
 
 They are reference submodules and are not bundled into the Apple application targets. Lower Sideband is an independent adaptation and is not affiliated with or endorsed by the upstream author.
 
-The adaptation is licensed under [CC BY-NC-SA 4.0](LICENSE). Upstream components and the Ed25519 dependency retain their respective licences. See [NOTICE](NOTICE).
+The adaptation is licensed under [CC BY-NC-SA 4.0](LICENSE). Upstream components, the Ed25519 dependency, and Codec2 retain their respective licences. See [NOTICE](NOTICE).

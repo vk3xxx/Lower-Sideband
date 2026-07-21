@@ -179,8 +179,8 @@ final class CallKitCoordinator: NSObject, CXProviderDelegate {
         audioEngine.onEncodedFrame = { [weak store] payload in
             Task { await store?.sendVoiceFrame(payload) }
         }
-        store.setVoiceFrameHandler { [weak audioEngine] payload in
-            audioEngine?.play(opus: payload)
+        store.setVoiceFrameHandler { [weak audioEngine] codec, payload in
+            audioEngine?.play(payload, codec: codec)
         }
     }
 
@@ -280,7 +280,10 @@ final class CallKitCoordinator: NSObject, CXProviderDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { isStartingAudio = false }
-            do { try await audioEngine.start() }
+            do {
+                try audioEngine.configure(profile: store?.voiceCall?.profile ?? .mediumQuality)
+                try await audioEngine.start()
+            }
             catch {
                 store?.lastError = error.localizedDescription
                 await store?.hangUpVoiceCall()

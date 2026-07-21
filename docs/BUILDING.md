@@ -45,6 +45,18 @@ swift run SidebandMac
 
 The SwiftPM executable is useful for development. The provisioned Xcode macOS application is the distribution-equivalent target.
 
+## Codec2
+
+The repository includes a pinned Codec2 1.2.0 XCFramework so normal builds do
+not need CMake. To audit or reproduce it from official source:
+
+```sh
+Scripts/build-codec2-xcframework.sh
+```
+
+The script creates iOS device, iOS Simulator, and universal macOS slices. CMake
+is only required when rebuilding this vendored component.
+
 ## macOS application
 
 ```sh

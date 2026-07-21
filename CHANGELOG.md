@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 (38) - 2026-07-21
+
+- Embedded reproducible official Codec2 1.2.0 builds for iPhone, iPad, Simulator, and universal macOS.
+- Added native 700C–3200 bit/s Codec2 voice-message encoding and playback.
+- Added native Codec2 LXST live-call capture, framing, jitter buffering, and playback.
+- Added user-selectable Opus and low-bandwidth Codec2 voice profiles.
+- Completed and documented the seven-area native feature-parity pass.
+
 ## 1.2.9 (37) - 2026-07-21
 
 - Added signed RNode firmware catalog verification and HTTPS/digest-verified downloads.

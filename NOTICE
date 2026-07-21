@@ -11,3 +11,9 @@ distributed Apple application targets.
 The distributed application uses AndrewBarba/ed25519, including CEd25519 work
 copyright (c) 2017 Zsolt Váradi, under the MIT License. The complete dependency
 licence is available from https://github.com/AndrewBarba/ed25519.
+
+The distributed application includes Codec2 1.2.0 by David Rowe and
+contributors, licensed under the GNU Lesser General Public License version
+2.1. The unmodified library is packaged as a replaceable XCFramework. Its
+complete licence is included at Vendor/CODEC2-LICENSE.txt and its corresponding
+source is available from https://github.com/drowe67/codec2/tree/1.2.0.

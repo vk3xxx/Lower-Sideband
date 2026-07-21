@@ -9,7 +9,7 @@ Scripts/check-repository.sh
 swift test
 ```
 
-The Swift Testing suite covers persistence migrations, cryptographic vectors, packet framing, announces, links, tokens, tunnels, Resources, LXMF, telemetry, plugins, voice, RNode, transport forwarding, outbox recovery, CloudKit merges, and UI-facing store behaviour.
+The Swift Testing suite covers persistence migrations, cryptographic vectors, packet framing, announces, links, tokens, tunnels, Resources, LXMF, telemetry, plugins, Opus/Codec2 voice, RNode, transport forwarding, outbox recovery, CloudKit merges, and UI-facing store behaviour.
 
 Run a focused test by name:
 

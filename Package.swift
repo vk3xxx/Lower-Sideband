@@ -12,7 +12,8 @@ let package = Package(
         .package(url: "https://github.com/AndrewBarba/ed25519.git", from: "1.1.0")
     ],
     targets: [
-        .target(name: "SidebandCore", dependencies: [.product(name: "Ed25519", package: "ed25519")]),
+        .binaryTarget(name: "CCodec2", path: "Vendor/Codec2.xcframework"),
+        .target(name: "SidebandCore", dependencies: ["CCodec2", .product(name: "Ed25519", package: "ed25519")]),
         .executableTarget(name: "SidebandMac", dependencies: ["SidebandCore"]),
         .testTarget(name: "SidebandCoreTests", dependencies: ["SidebandCore"])
     ]

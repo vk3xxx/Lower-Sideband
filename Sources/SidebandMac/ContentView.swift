@@ -1215,6 +1215,15 @@ private struct NetworkView: View {
                             Text(profile.displayName).tag(profile)
                         }
                     }
+                    Picker("Voice message codec", selection: Binding(
+                        get: { store.preferredVoiceMessageMode },
+                        set: { store.setPreferredVoiceMessageMode($0) }
+                    )) {
+                        Text("Opus 8 kbps").tag(LXMFVoiceMessageAudio.Mode.opusOgg)
+                        Text("Codec2 2.4 kbps").tag(LXMFVoiceMessageAudio.Mode.codec2_2400)
+                        Text("Codec2 1.2 kbps").tag(LXMFVoiceMessageAudio.Mode.codec2_1200)
+                        Text("Codec2 700 bps").tag(LXMFVoiceMessageAudio.Mode.codec2_700C)
+                    }
                     HStack {
                         Text("LXST address")
                         Text(store.localVoiceHash).font(.caption.monospaced()).textSelection(.enabled)
@@ -1222,7 +1231,7 @@ private struct NetworkView: View {
                         Button { copyToSystemClipboard(store.localVoiceHash) } label: { Image(systemName: "doc.on.doc") }
                             .help("Copy LXST voice address")
                     }
-                    Text("Calls use the messaging identity and an end-to-end encrypted Reticulum link. The medium-quality Opus profile is compatible with Python Sideband/LXST.")
+                    Text("Calls use the messaging identity and an end-to-end encrypted Reticulum link. Native Opus and Codec2 profiles interoperate with Python Sideband/LXST.")
                         .font(.caption).foregroundStyle(.secondary)
                     if !store.voiceCallHistory.isEmpty {
                         Divider()
@@ -2197,7 +2206,7 @@ private struct ConversationView: View {
                 }
                 if let pendingVoiceAudio {
                     HStack {
-                        Label("Low-bandwidth Opus voice message · \(ByteCountFormatter.string(fromByteCount: Int64(pendingVoiceAudio.encodedAudio.count), countStyle: .file))", systemImage: "waveform")
+                        Label("\(pendingVoiceAudio.mode.isCodec2 ? "Codec2" : "Opus") voice message · \(ByteCountFormatter.string(fromByteCount: Int64(pendingVoiceAudio.encodedAudio.count), countStyle: .file))", systemImage: "waveform")
                         Spacer()
                         Button { self.pendingVoiceAudio = nil } label: { Image(systemName: "xmark.circle.fill") }
                             .buttonStyle(.plain).accessibilityLabel("Remove voice message")
@@ -2712,7 +2721,11 @@ private struct ConversationView: View {
         defer { try? FileManager.default.removeItem(at: url) }
         guard store.validateAttachmentSelection(currentCount: pendingAttachments.count, adding: 1) else { return }
         do {
-            pendingVoiceAudio = try VoiceMessageOpusEncoder.encodeOgg(from: url)
+            if let mode = store.preferredVoiceMessageMode.codec2Mode {
+                pendingVoiceAudio = try VoiceMessageCodec2Transcoder.encode(from: url, mode: mode)
+            } else {
+                pendingVoiceAudio = try VoiceMessageOpusEncoder.encodeOgg(from: url)
+            }
         } catch {
             store.lastError = "Could not encode the voice message: \(error.localizedDescription)"
         }
@@ -3273,7 +3286,7 @@ private struct VoiceCallView: View {
         guard state == .active, !audio.isRunning else { return }
         #if os(macOS)
         audio.onEncodedFrame = { payload in Task { await store.sendVoiceFrame(payload) } }
-        store.setVoiceFrameHandler { payload in audio.play(opus: payload) }
+        store.setVoiceFrameHandler { codec, payload in audio.play(payload, codec: codec) }
         #endif
         timerTask?.cancel()
         timerTask = Task { @MainActor in
@@ -3288,7 +3301,10 @@ private struct VoiceCallView: View {
         }
         #if os(macOS)
         Task {
-            do { try await audio.start() }
+            do {
+                try audio.configure(profile: call?.profile ?? .mediumQuality)
+                try await audio.start()
+            }
             catch { store.lastError = error.localizedDescription; await store.hangUpVoiceCall() }
         }
         #endif
@@ -3467,10 +3483,14 @@ private struct InlineLXMFVoiceMessageView: View {
         }
         .frame(maxWidth: 340)
         .task(id: audio.encodedAudio) {
-            guard audio.mode.isOggOpus else { return }
-            let url = FileManager.default.temporaryDirectory.appending(path: "Sideband-LXMF-\(UUID().uuidString).ogg")
+            let fileExtension = audio.mode.isOggOpus ? "ogg" : "caf"
+            let url = FileManager.default.temporaryDirectory.appending(path: "Sideband-LXMF-\(UUID().uuidString).\(fileExtension)")
             do {
-                try audio.encodedAudio.write(to: url, options: .atomic)
+                if audio.mode.isOggOpus {
+                    try audio.encodedAudio.write(to: url, options: .atomic)
+                } else {
+                    try VoiceMessageCodec2Transcoder.decode(audio, to: url)
+                }
                 temporaryURL = url
                 player.load(url)
             } catch { try? FileManager.default.removeItem(at: url) }
