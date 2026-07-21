@@ -70,3 +70,40 @@ public struct SidebandContactLink: Equatable, Sendable {
         return Data(base64Encoded: base64)
     }
 }
+
+/// Creates a user-initiated abuse report without attaching message content,
+/// attachments, telemetry, contact notes, or cryptographic key material.
+public enum SidebandSafetyReport {
+    public static let supportEmail = "sepus@hotmail.com"
+
+    public static func emailURL(for conversation: Conversation, message: Message? = nil) -> URL? {
+        var lines = [
+            "I want to report objectionable or abusive activity in Lower Sideband.",
+            "",
+            "Reason (please describe):",
+            "",
+            "Contact destination: \(conversation.destinationHash)",
+        ]
+        if let message {
+            lines.append("Message reference: \(message.lxmfID.map(hex) ?? message.id.uuidString.lowercased())")
+            lines.append("Message received/sent: \(message.timestamp.formatted(.iso8601))")
+        }
+        lines += [
+            "",
+            "No message text, attachment, telemetry, private key, or contact note was attached automatically. Add only information you are comfortable sharing.",
+        ]
+
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = supportEmail
+        components.queryItems = [
+            URLQueryItem(name: "subject", value: message == nil ? "Lower Sideband contact report" : "Lower Sideband content report"),
+            URLQueryItem(name: "body", value: lines.joined(separator: "\n")),
+        ]
+        return components.url
+    }
+
+    private static func hex(_ data: Data) -> String {
+        data.map { String(format: "%02x", $0) }.joined()
+    }
+}

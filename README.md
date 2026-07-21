@@ -85,7 +85,7 @@ xcodebuild -exportArchive \
   -allowProvisioningUpdates
 ```
 
-The App Store Connect record is named `MacSideband`. Increment `CURRENT_PROJECT_VERSION` before every subsequent upload.
+The App Store Connect record is named `Lower Sideband`. Increment `CURRENT_PROJECT_VERSION` before every subsequent upload.
 
 ## Native dependency boundary
 

@@ -62,18 +62,24 @@ public protocol CloudSnapshotSyncing: Sendable {
 
 enum CloudPayloadCipherError: Error {
     case invalidCiphertext
+    case keyUnavailable
 }
 
 struct CloudPayloadCipher: Sendable {
-    private let key: SymmetricKey
+    private let key: SymmetricKey?
 
     init() {
-        let material = SecureIdentityStore.loadOrCreate(
+        let result = SecureIdentityStore.loadOrCreate(
             account: "icloud.payload.encryption",
             legacyDefaultsKey: "iCloudPayloadEncryptionKey",
             synchronizable: true
         )
-        self.init(keyMaterial: material)
+        switch result {
+        case .success(let material):
+            let domain = Data("Sideband private CloudKit payload key v1".utf8)
+            key = SymmetricKey(data: SHA256.hash(data: domain + material))
+        case .failure: key = nil
+        }
     }
 
     init(keyMaterial: Data) {
@@ -82,6 +88,7 @@ struct CloudPayloadCipher: Sendable {
     }
 
     func seal<Value: Encodable>(_ value: Value, context: String) throws -> Data {
+        guard let key else { throw CloudPayloadCipherError.keyUnavailable }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
@@ -92,6 +99,7 @@ struct CloudPayloadCipher: Sendable {
     }
 
     func open<Value: Decodable>(_ type: Value.Type, ciphertext: Data, context: String) throws -> Value {
+        guard let key else { throw CloudPayloadCipherError.keyUnavailable }
         let box = try AES.GCM.SealedBox(combined: ciphertext)
         let plaintext = try AES.GCM.open(box, using: key, authenticating: Data(context.utf8))
         let decoder = JSONDecoder()
@@ -99,7 +107,8 @@ struct CloudPayloadCipher: Sendable {
         return try decoder.decode(type, from: plaintext)
     }
 
-    func recordName(for scope: String) -> String {
+    func recordName(for scope: String) throws -> String {
+        guard let key else { throw CloudPayloadCipherError.keyUnavailable }
         let authentication = HMAC<SHA256>.authenticationCode(for: Data(scope.utf8), using: key)
         return Data(authentication).map { String(format: "%02x", $0) }.joined()
     }
@@ -143,7 +152,7 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
 
     public func fetchSnapshot() async throws -> CloudSnapshotPayload? {
         let database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
-        let recordID = snapshotRecordID
+        let recordID = try snapshotRecordID()
         let record: CKRecord
         do { record = try await database.record(for: recordID) }
         catch let error as CKError where error.code == .unknownItem { return nil }
@@ -160,7 +169,7 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
 
     public func saveSnapshot(_ payload: CloudSnapshotPayload) async throws {
         let database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
-        let recordID = snapshotRecordID
+        let recordID = try snapshotRecordID()
         let record: CKRecord
         do { record = try await database.record(for: recordID) }
         catch let error as CKError where error.code == .unknownItem { record = CKRecord(recordType: "SidebandState", recordID: recordID) }
@@ -174,7 +183,7 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
     public func fetchAttachment(id: UUID) async throws -> CloudAttachmentPayload? {
         let database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
         let record: CKRecord
-        do { record = try await database.record(for: attachmentRecordID(id)) }
+        do { record = try await database.record(for: try attachmentRecordID(id)) }
         catch let error as CKError where error.code == .unknownItem { return nil }
         guard let asset = record["payload"] as? CKAsset,
               let fileURL = asset.fileURL else { return nil }
@@ -194,7 +203,7 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
 
     public func saveAttachment(_ payload: CloudAttachmentPayload) async throws {
         let database = CKContainer(identifier: containerIdentifier).privateCloudDatabase
-        let recordID = attachmentRecordID(payload.id)
+        let recordID = try attachmentRecordID(payload.id)
         let record: CKRecord
         do {
             _ = try await database.record(for: recordID)
@@ -217,12 +226,12 @@ public actor CloudKitSnapshotSync: CloudSnapshotSyncing {
         _ = try await database.save(record)
     }
 
-    private func attachmentRecordID(_ id: UUID) -> CKRecord.ID {
-        CKRecord.ID(recordName: cipher.recordName(for: "attachment-v1:\(id.uuidString.lowercased())"))
+    private func attachmentRecordID(_ id: UUID) throws -> CKRecord.ID {
+        CKRecord.ID(recordName: try cipher.recordName(for: "attachment-v1:\(id.uuidString.lowercased())"))
     }
 
-    private var snapshotRecordID: CKRecord.ID {
-        CKRecord.ID(recordName: cipher.recordName(for: "snapshot-v1"))
+    private func snapshotRecordID() throws -> CKRecord.ID {
+        CKRecord.ID(recordName: try cipher.recordName(for: "snapshot-v1"))
     }
 }
 

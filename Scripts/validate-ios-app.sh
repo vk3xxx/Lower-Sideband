@@ -29,6 +29,32 @@ else
     echo "xcodegen not found; using the committed Xcode project."
 fi
 
+BUILD_SETTINGS="$(xcodebuild \
+    -project MacSideband.xcodeproj \
+    -scheme SidebandIOS \
+    -configuration Debug \
+    -destination "$DESTINATION" \
+    -showBuildSettings)"
+
+build_setting() {
+    local key="$1"
+    awk -F ' = ' -v key="$key" '$1 ~ "^[[:space:]]*" key "$" { print $2; exit }' <<<"$BUILD_SETTINGS"
+}
+
+EXPECTED_BUNDLE_IDENTIFIER="$(build_setting PRODUCT_BUNDLE_IDENTIFIER)"
+EXPECTED_MARKETING_VERSION="$(build_setting MARKETING_VERSION)"
+EXPECTED_BUILD_VERSION="$(build_setting CURRENT_PROJECT_VERSION)"
+
+for required_setting in \
+    EXPECTED_BUNDLE_IDENTIFIER \
+    EXPECTED_MARKETING_VERSION \
+    EXPECTED_BUILD_VERSION; do
+    if [[ -z "${!required_setting}" ]]; then
+        echo "Could not resolve $required_setting from Xcode build settings." >&2
+        exit 1
+    fi
+done
+
 rm -rf "$DERIVED_DATA"
 
 xcodebuild \
@@ -79,9 +105,9 @@ assert_plist_value() {
     fi
 }
 
-assert_plist_value CFBundleIdentifier com.supes.MacSideband
-assert_plist_value CFBundleShortVersionString 1.0.0
-assert_plist_value CFBundleVersion 16
+assert_plist_value CFBundleIdentifier "$EXPECTED_BUNDLE_IDENTIFIER"
+assert_plist_value CFBundleShortVersionString "$EXPECTED_MARKETING_VERSION"
+assert_plist_value CFBundleVersion "$EXPECTED_BUILD_VERSION"
 assert_plist_value NSBonjourServices:0 _reticulum._tcp
 assert_plist_value NSBonjourServices:1 _rns._tcp
 assert_plist_value NSBonjourServices:2 _sideband._tcp
@@ -98,8 +124,8 @@ assert_core_plist_value() {
     fi
 }
 
-assert_core_plist_value CFBundleShortVersionString 1.0.0
-assert_core_plist_value CFBundleVersion 16
+assert_core_plist_value CFBundleShortVersionString "$EXPECTED_MARKETING_VERSION"
+assert_core_plist_value CFBundleVersion "$EXPECTED_BUILD_VERSION"
 
 for required_key in \
     NSLocalNetworkUsageDescription \

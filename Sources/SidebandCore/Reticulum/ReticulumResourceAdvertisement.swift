@@ -42,7 +42,8 @@ public struct ReticulumResourceAdvertisement: Equatable, Sendable {
         guard let transferSize = integer("t"), let dataSize = integer("d"), let partCount = integer("n"),
               let resourceHash = binary("h"), let mapRandomHash = binary("r"), let originalHash = binary("o"),
               let segmentIndex = integer("i"), let totalSegments = integer("l"), let flagsValue = integer("f"), let flags = UInt8(exactly: flagsValue), let map = binary("m"),
-              resourceHash.count == 32, mapRandomHash.count == 4, originalHash.count == 32, map.count.isMultiple(of: 4) else { throw ResourceError.invalidManifest }
+              resourceHash.count == 32, mapRandomHash.count == 4, originalHash.count == 32,
+              map.count.isMultiple(of: 4), map.count / 4 <= Self.hashMapMaximumEntries else { throw ResourceError.invalidManifest }
         self.transferSize = transferSize; self.dataSize = dataSize; self.partCount = partCount; self.resourceHash = resourceHash
         self.mapRandomHash = mapRandomHash; self.originalHash = originalHash; self.segmentIndex = segmentIndex; self.totalSegments = totalSegments
         if case let .binary(id)? = value("q") { requestID = id } else { requestID = nil }

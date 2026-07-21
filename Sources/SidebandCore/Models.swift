@@ -2,6 +2,11 @@ import Foundation
 
 public enum SidebandMessageLimits {
     public static let maximumTextCharacters = 4_096
+    public static let maximumTextBytes = 16 * 1_024
+    public static let maximumWireMessageBytes = 64 * 1_024
+    public static let maximumReplyQuoteCharacters = 280
+    public static let maximumReplyQuoteBytes = 1_120
+    public static let maximumRememberedMessageIDs = 10_000
     public static let maximumAttachments = 8
     public static let maximumCombinedAttachmentBytes = 64 * 1024 * 1024
     public static let maximumReactionCharacters = 8
@@ -280,8 +285,8 @@ public enum SnapshotError: LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .unsupportedVersion: "This Sideband backup was created by a newer, unsupported app version."
-        case .invalidData: "The Sideband backup contains invalid or inconsistent data."
+        case .unsupportedVersion: "This Lower Sideband backup was created by a newer, unsupported app version."
+        case .invalidData: "The Lower Sideband backup contains invalid or inconsistent data."
         }
     }
 }

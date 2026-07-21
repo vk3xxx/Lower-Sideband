@@ -6,7 +6,9 @@ public struct ReticulumResourceHashMapUpdate: Equatable, Sendable {
     public let partHashes: [Data]
 
     public init(resourceHash: Data, segment: Int, partHashes: [Data]) throws {
-        guard resourceHash.count == 32, segment >= 0, partHashes.allSatisfy({ $0.count == 4 }) else { throw ResourceError.invalidManifest }
+        guard resourceHash.count == 32, segment >= 0,
+              partHashes.count <= ReticulumResourceAdvertisement.hashMapMaximumEntries,
+              partHashes.allSatisfy({ $0.count == 4 }) else { throw ResourceError.invalidManifest }
         self.resourceHash = resourceHash; self.segment = segment; self.partHashes = partHashes
     }
 
@@ -17,7 +19,8 @@ public struct ReticulumResourceHashMapUpdate: Equatable, Sendable {
     public init(encoded: Data) throws {
         guard encoded.count > 32, case let .array(values) = try MessagePackDecoder.decode(Data(encoded.dropFirst(32))), values.count == 2,
               case let .unsigned(segmentValue) = values[0], let segment = Int(exactly: segmentValue),
-              case let .binary(map) = values[1], map.count.isMultiple(of: 4) else { throw ResourceError.invalidManifest }
+              case let .binary(map) = values[1], map.count.isMultiple(of: 4),
+              map.count / 4 <= ReticulumResourceAdvertisement.hashMapMaximumEntries else { throw ResourceError.invalidManifest }
         resourceHash = Data(encoded.prefix(32)); self.segment = segment
         partHashes = stride(from: 0, to: map.count, by: 4).map { map.subdata(in: $0..<($0 + 4)) }
     }

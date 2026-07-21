@@ -31,7 +31,15 @@ public struct ReticulumResourceManifest: Equatable, Sendable {
     }
 
     public init(advertisement: ReticulumResourceAdvertisement, sdu: Int = Self.defaultSDU) throws {
-        guard advertisement.partCount >= advertisement.partHashes.count, advertisement.transferSize >= 0, advertisement.dataSize >= 0 else { throw ResourceError.invalidManifest }
+        guard sdu == Self.defaultSDU,
+              ReticulumResourceLimits.accepts(
+                  dataSize: advertisement.dataSize,
+                  transferSize: advertisement.transferSize,
+                  partCount: advertisement.partCount,
+                  segments: advertisement.totalSegments,
+                  segmentIndex: advertisement.segmentIndex,
+                  advertisedPartHashCount: advertisement.partHashes.count
+              ) else { throw ResourceError.invalidManifest }
         size = advertisement.transferSize; dataSize = advertisement.dataSize; self.sdu = sdu
         randomHash = advertisement.mapRandomHash; resourceHash = advertisement.resourceHash; partHashes = advertisement.partHashes; partCount = advertisement.partCount
     }
@@ -67,8 +75,16 @@ public struct ReticulumResourceReceiver: Sendable {
     public func expectedHash(at index: Int) -> Data? { knownPartHashes.indices.contains(index) ? knownPartHashes[index] : nil }
 
     public mutating func applyHashMap(segment: Int, hashes: [Data]) throws {
+        guard segment >= 0,
+              segment <= manifest.partCount / ReticulumResourceAdvertisement.hashMapMaximumEntries else {
+            throw ResourceError.invalidManifest
+        }
         let start = segment * ReticulumResourceAdvertisement.hashMapMaximumEntries
-        guard segment >= 0, start < manifest.partCount, hashes.allSatisfy({ $0.count == ReticulumResourceManifest.mapHashLength }), start + hashes.count <= manifest.partCount else { throw ResourceError.invalidManifest }
+        guard start < manifest.partCount,
+              hashes.count <= manifest.partCount - start,
+              hashes.allSatisfy({ $0.count == ReticulumResourceManifest.mapHashLength }) else {
+            throw ResourceError.invalidManifest
+        }
         for (offset, hash) in hashes.enumerated() {
             let index = start + offset
             if let existing = knownPartHashes[index], existing != hash { throw ResourceError.hashMismatch }

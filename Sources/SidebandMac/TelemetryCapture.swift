@@ -31,7 +31,7 @@ final class TelemetryCapture: NSObject, @preconcurrency CLLocationManagerDelegat
             case .authorizedAlways, .authorizedWhenInUse:
                 manager.requestLocation()
             case .denied, .restricted:
-                finish(nil, error: "Location access is disabled for Sideband.")
+                finish(nil, error: "Location access is disabled for Lower Sideband.")
             @unknown default:
                 finish(nil, error: "Location access is unavailable.")
             }

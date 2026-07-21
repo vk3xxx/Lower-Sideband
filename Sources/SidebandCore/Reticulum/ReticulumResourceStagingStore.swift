@@ -9,7 +9,11 @@ public actor ReticulumResourceStagingStore {
     public init(directory: URL) { self.directory = directory }
 
     public func stage(data: Data, originalHash: Data, segmentIndex: Int, totalSegments: Int, totalSize: Int) throws -> Double {
-        guard originalHash.count == 32, (1...totalSegments).contains(segmentIndex), totalSize >= 0 else { throw ResourceError.invalidManifest }
+        guard originalHash.count == 32,
+              (1...ReticulumResourceLimits.maximumSegments).contains(totalSegments),
+              (1...totalSegments).contains(segmentIndex),
+              (0...ReticulumResourceLimits.maximumAttachmentBytes + 65_536).contains(totalSize),
+              data.count <= totalSize else { throw ResourceError.invalidManifest }
         let key = originalHash.hex
         var transfer = transfers[key] ?? Transfer(totalSegments: totalSegments, totalSize: totalSize)
         guard transfer.totalSegments == totalSegments, transfer.totalSize == totalSize else { throw ResourceError.invalidManifest }
@@ -30,11 +34,16 @@ public actor ReticulumResourceStagingStore {
         let key = originalHash.hex
         guard let transfer = transfers[key], transfer.received.count == transfer.totalSegments else { throw ResourceError.incomplete }
         let folder = directory.appending(path: key, directoryHint: .isDirectory)
-        var data = Data()
+        // The manifest has already bounded and authenticated the final size.
+        // Reserve once so multi-segment attachments do not repeatedly copy a
+        // growing buffer during assembly on memory-constrained iOS devices.
+        var data = Data(capacity: transfer.totalSize)
         do {
             for index in 1...transfer.totalSegments {
                 let stored = try Data(contentsOf: folder.appending(path: "\(index).part"))
-                data.append(try localDataCipher.open(stored, context: encryptionContext(hash: key, segmentIndex: index)))
+                let part = try localDataCipher.open(stored, context: encryptionContext(hash: key, segmentIndex: index))
+                guard part.count <= transfer.totalSize - data.count else { throw ResourceError.hashMismatch }
+                data.append(part)
             }
         } catch {
             throw ResourceError.hashMismatch

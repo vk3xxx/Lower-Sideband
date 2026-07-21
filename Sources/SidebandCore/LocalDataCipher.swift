@@ -28,13 +28,13 @@ public final class AppPrivacyLock {
 
     public func setEnabled(_ enabled: Bool) async {
         guard enabled != isEnabled else { return }
-        let success = await authenticate(reason: enabled ? "Enable Sideband app lock" : "Disable Sideband app lock")
+        let success = await authenticate(reason: enabled ? "Enable Lower Sideband app lock" : "Disable Lower Sideband app lock")
         applyAuthenticationResult(success, enabling: enabled)
     }
 
     public func unlock() async {
         guard isEnabled, !isUnlocked, !isAuthenticating else { return }
-        let success = await authenticate(reason: "Unlock Sideband")
+        let success = await authenticate(reason: "Unlock Lower Sideband")
         if success { isUnlocked = true; lastError = nil }
     }
 
@@ -72,18 +72,25 @@ public final class AppPrivacyLock {
 
 enum LocalDataCipherError: Error {
     case invalidCiphertext
+    case keyUnavailable
 }
 
 struct LocalDataCipher: Sendable {
     private static let magic = Data("SBL1".utf8)
-    private let key: SymmetricKey
+    private let key: SymmetricKey?
+
+    var isAvailable: Bool { key != nil }
 
     init() {
-        let material = SecureIdentityStore.loadOrCreate(
+        let result = SecureIdentityStore.loadOrCreate(
             account: "local.data.encryption",
             legacyDefaultsKey: "localDataEncryptionKey"
         )
-        self.init(keyMaterial: material)
+        switch result {
+        case .success(let material):
+            key = SymmetricKey(data: SHA256.hash(data: Data("Sideband local data encryption key v1".utf8) + material))
+        case .failure: key = nil
+        }
     }
 
     init(keyMaterial: Data) {
@@ -93,6 +100,7 @@ struct LocalDataCipher: Sendable {
     }
 
     func seal(_ plaintext: Data, context: String) throws -> Data {
+        guard let key else { throw LocalDataCipherError.keyUnavailable }
         let sealed = try AES.GCM.seal(
             plaintext,
             using: key,
@@ -103,6 +111,7 @@ struct LocalDataCipher: Sendable {
     }
 
     func open(_ storedData: Data, context: String) throws -> Data {
+        guard let key else { throw LocalDataCipherError.keyUnavailable }
         guard isEncrypted(storedData) else { return storedData }
         let ciphertext = storedData.dropFirst(Self.magic.count)
         let box = try AES.GCM.SealedBox(combined: ciphertext)

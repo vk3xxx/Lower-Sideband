@@ -124,7 +124,7 @@ struct ContentView: View {
                     }
                 }
                 .searchable(text: $conversationSearch, prompt: "Search conversations")
-                .navigationTitle("Sideband")
+                .navigationTitle("Lower Sideband")
                 .toolbar {
                     Button(action: { showingNetwork = true }) {
                         Label(networkToolbarLabel, systemImage: networkToolbarIcon)
@@ -165,9 +165,9 @@ struct ContentView: View {
                     }
                     .help("Sort discovered LXMF destinations")
                     Button(action: exportBackup) { Label("Export backup", systemImage: "externaldrive.badge.plus") }
-                        .help("Export Sideband backup")
+                        .help("Export Lower Sideband backup")
                     Button { showingBackupImporter = true } label: { Label("Restore backup", systemImage: "externaldrive.badge.timemachine") }
-                        .help("Restore Sideband backup")
+                        .help("Restore Lower Sideband backup")
                     Menu {
                         Button(action: exportContacts) { Label("Export Contacts", systemImage: "person.2.badge.gearshape") }
                         Button { showingContactCollectionImporter = true } label: { Label("Import Contacts", systemImage: "person.crop.circle.badge.plus") }
@@ -195,14 +195,14 @@ struct ContentView: View {
             get: { store.voiceCall != nil },
             set: { presented in if !presented, store.voiceCall != nil { endVoiceCall() } }
         )) { VoiceCallView(store: store) }
-        .fileExporter(isPresented: $showingBackupExporter, document: backupDocument, contentType: .json, defaultFilename: "Sideband-Backup") { result in
+        .fileExporter(isPresented: $showingBackupExporter, document: backupDocument, contentType: .json, defaultFilename: "Lower-Sideband-Backup") { result in
             if case let .failure(error) = result { store.lastError = "Could not export backup: \(error.localizedDescription)" }
         }
         .fileImporter(isPresented: $showingBackupImporter, allowedContentTypes: [.json]) { result in
             if case let .success(url) = result { prepareRestore(from: url) }
             if case let .failure(error) = result { store.lastError = "Could not open backup: \(error.localizedDescription)" }
         }
-        .fileExporter(isPresented: $showingContactCollectionExporter, document: contactCollectionDocument, contentType: .json, defaultFilename: "Sideband-Contacts") { result in
+        .fileExporter(isPresented: $showingContactCollectionExporter, document: contactCollectionDocument, contentType: .json, defaultFilename: "Lower-Sideband-Contacts") { result in
             if case let .failure(error) = result { store.lastError = "Could not export contacts: \(error.localizedDescription)" }
         }
         .fileImporter(isPresented: $showingContactCollectionImporter, allowedContentTypes: [.json]) { result in
@@ -217,7 +217,7 @@ struct ContentView: View {
             case .failure(let error): store.lastError = "Could not open conversation archive: \(error.localizedDescription)"
             }
         }
-        .alert("Sideband", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.clearError() } })) {
+        .alert("Lower Sideband", isPresented: Binding(get: { store.lastError != nil }, set: { if !$0 { store.clearError() } })) {
             Button("OK") { store.clearError() }
         } message: { Text(store.lastError ?? "") }
         .alert("Rename Conversation", isPresented: Binding(get: { renamingConversation != nil }, set: { if !$0 { renamingConversation = nil } })) {
@@ -238,7 +238,7 @@ struct ContentView: View {
                 notingConversation = nil
             }
         } message: {
-            Text("This note stays in your encrypted Sideband data and is never sent in messages or announces.")
+            Text("This note stays in your encrypted Lower Sideband data and is never sent in messages or announces.")
         }
         .alert("Contact Tags", isPresented: Binding(get: { taggingConversation != nil }, set: { if !$0 { taggingConversation = nil } })) {
             TextField("team, field, priority", text: $tagsDraft)
@@ -247,7 +247,7 @@ struct ContentView: View {
                 if let id = taggingConversation?.id { store.setConversationTags(tagsDraft.split(separator: ",").map(String.init), conversationID: id) }
                 taggingConversation = nil
             }
-        } message: { Text("Enter up to eight comma-separated tags. Tags stay in your encrypted Sideband data.") }
+        } message: { Text("Enter up to eight comma-separated tags. Tags stay in your encrypted Lower Sideband data.") }
         .alert("Delete Conversation?", isPresented: Binding(get: { deletingConversation != nil }, set: { if !$0 { deletingConversation = nil } })) {
             Button("Cancel", role: .cancel) { deletingConversation = nil }
             Button("Delete", role: .destructive) {
@@ -275,7 +275,7 @@ struct ContentView: View {
         } message: {
             Text("This removes stored location and battery readings from this conversation while retaining its messages and attachments.")
         }
-        .alert("Restore Sideband Backup?", isPresented: Binding(get: { pendingRestoreData != nil }, set: { if !$0 { pendingRestoreData = nil } })) {
+        .alert("Restore Lower Sideband Backup?", isPresented: Binding(get: { pendingRestoreData != nil }, set: { if !$0 { pendingRestoreData = nil } })) {
             Button("Cancel", role: .cancel) { pendingRestoreData = nil }
             Button("Restore", role: .destructive) {
                 if let data = pendingRestoreData {
@@ -568,7 +568,7 @@ struct ContentView: View {
             Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
         }
         if let contactCard = store.conversationContactCard(conversation.id) {
-            ShareLink(item: contactCard, subject: Text("Sideband contact: \(conversation.displayName)")) {
+            ShareLink(item: contactCard, subject: Text("Lower Sideband contact: \(conversation.displayName)")) {
                 Label("Share Contact", systemImage: "person.crop.circle.badge.plus")
             }
         }
@@ -634,6 +634,11 @@ struct ContentView: View {
         }
         Button { store.setConversationBlocked(!conversation.isBlocked, conversationID: conversation.id) } label: {
             Label(conversation.isBlocked ? "Unblock Contact" : "Block Contact", systemImage: conversation.isBlocked ? "hand.raised.slash" : "hand.raised")
+        }
+        if let reportURL = SidebandSafetyReport.emailURL(for: conversation) {
+            Link(destination: reportURL) {
+                Label("Report Contact", systemImage: "exclamationmark.bubble")
+            }
         }
         Button { Task { await store.requestPath(to: conversation.destinationHash) } } label: {
             Label(store.isPathPending(to: conversation.destinationHash) ? "Finding Route" : "Request Path", systemImage: "point.3.connected.trianglepath.dotted")
@@ -981,7 +986,7 @@ private struct NetworkView: View {
             }
             GroupBox("Message security") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Require device authentication to open Sideband", isOn: Binding(
+                    Toggle("Require device authentication to open Lower Sideband", isOn: Binding(
                         get: { store.privacyLock.isEnabled },
                         set: { enabled in Task { await store.privacyLock.setEnabled(enabled) } }
                     ))
@@ -1241,7 +1246,7 @@ private struct NetworkView: View {
     private var compactInterfaceSettings: some View {
         VStack(alignment: .leading, spacing: 14) {
             compactSetting("Local name") {
-                TextField("Sideband Swift", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
+                TextField("Lower Sideband", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
             }
             compactSetting("Host") {
                 TextField("Optional configured IPv4 or DNS hostname", text: $store.networkHost)
@@ -1308,7 +1313,7 @@ private struct NetworkView: View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
             GridRow {
                 Text("Local name")
-                TextField("Sideband Swift", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
+                TextField("Lower Sideband", text: Binding(get: { store.localDisplayName }, set: { store.setLocalDisplayName($0) }))
             }
             GridRow { Text("Host"); TextField("Optional configured IPv4 or DNS hostname", text: $store.networkHost) }
             GridRow { Text("IPv6 host"); TextField("Optional configured IPv6 gateway", text: $store.networkIPv6Host) }
@@ -1626,7 +1631,7 @@ private struct ConversationView: View {
                     .accessibilityLabel(showStarredOnly ? "Show all messages" : "Show starred messages")
                 }
                 if let transcript = store.conversationTranscript(conversation.id) {
-                    ShareLink(item: transcript, subject: Text("Sideband conversation with \(conversation.displayName)")) {
+                    ShareLink(item: transcript, subject: Text("Lower Sideband conversation with \(conversation.displayName)")) {
                         Image(systemName: "square.and.arrow.up")
                     }
                     .help("Export conversation transcript")
@@ -1670,6 +1675,12 @@ private struct ConversationView: View {
                             }
                         }
                     }
+                    Divider()
+                    if let reportURL = SidebandSafetyReport.emailURL(for: conversation) {
+                        Link(destination: reportURL) {
+                            Label("Report Contact", systemImage: "exclamationmark.bubble")
+                        }
+                    }
                 } label: { Image(systemName: "ellipsis.circle") }
                 .help("Interoperable LXMF requests")
                 Label(routingStatus, systemImage: routingIcon)
@@ -1690,6 +1701,7 @@ private struct ConversationView: View {
                             .frame(maxWidth: .infinity, minHeight: 260)
                         }
                         ForEach(Array(conversationMessages.enumerated()), id: \.element.id) { index, message in
+                            let reactionSummaries = reactionSummaries(for: message)
                             if index == 0 || !Calendar.current.isDate(message.timestamp, inSameDayAs: conversationMessages[index - 1].timestamp) {
                                 Text(message.timestamp.formatted(date: .long, time: .omitted))
                                     .font(.caption.bold())
@@ -1742,9 +1754,9 @@ private struct ConversationView: View {
                                             AttachmentShareButton(store: store.attachmentStore, attachment: attachment)
                                         }
                                     }
-                                    if !reactionSummaries(for: message).isEmpty {
+                                    if !reactionSummaries.isEmpty {
                                         HStack(spacing: 5) {
-                                            ForEach(reactionSummaries(for: message)) { reaction in
+                                            ForEach(reactionSummaries) { reaction in
                                                 Text(reaction.count > 1 ? "\(reaction.content) \(reaction.count)" : reaction.content)
                                                     .font(.caption)
                                                     .padding(.horizontal, 7)
@@ -1780,7 +1792,7 @@ private struct ConversationView: View {
                                 .padding(10)
                                 .background(message.direction == .outgoing ? Color.accentColor.opacity(0.18) : Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                                 .accessibilityElement(children: .combine)
-                                .accessibilityLabel(messageAccessibilityLabel(message))
+                                .accessibilityLabel(messageAccessibilityLabel(message, summaries: reactionSummaries))
                                 .contextMenu {
                                     Button { store.setMessageStarred(!message.isStarred, messageID: message.id) } label: {
                                         Label(message.isStarred ? "Remove Star" : "Star Message", systemImage: message.isStarred ? "star.slash" : "star")
@@ -1802,6 +1814,12 @@ private struct ConversationView: View {
                                     }
                                     Button { inspectedMessage = message } label: {
                                         Label("Show Message Details", systemImage: "info.circle")
+                                    }
+                                    if message.direction == .incoming,
+                                       let reportURL = SidebandSafetyReport.emailURL(for: conversation, message: message) {
+                                        Link(destination: reportURL) {
+                                            Label("Report Message", systemImage: "exclamationmark.bubble")
+                                        }
                                     }
                                     if !message.attachments.isEmpty {
                                         Menu("Copy Attachment Details", systemImage: "paperclip") {
@@ -1955,7 +1973,7 @@ private struct ConversationView: View {
             isPresented: $showingConversationExporter,
             document: conversationExportDocument,
             contentType: .json,
-            defaultFilename: "Sideband-\(conversation.displayName.replacingOccurrences(of: "/", with: "-"))"
+            defaultFilename: "Lower-Sideband-\(conversation.displayName.replacingOccurrences(of: "/", with: "-"))"
         ) { result in
             if case let .failure(error) = result { store.lastError = "Could not export conversation: \(error.localizedDescription)" }
             conversationExportDocument = nil
@@ -2029,7 +2047,7 @@ private struct ConversationView: View {
             }
             Button("Cancel", role: .cancel) { messagePendingDeletion = nil }
         } message: {
-            Text("This removes the message and its attachments from your synced Sideband history. It cannot recall copies already delivered to another device.")
+            Text("This removes the message and its attachments from your synced Lower Sideband history. It cannot recall copies already delivered to another device.")
         }
         .sheet(item: $inspectedMessage) { message in
             MessageDetailsView(
@@ -2151,7 +2169,7 @@ private struct ConversationView: View {
                 }
             }
             if let transcript = store.conversationTranscript(conversation.id) {
-                ShareLink(item: transcript, subject: Text("Sideband conversation with \(conversation.displayName)")) {
+                ShareLink(item: transcript, subject: Text("Lower Sideband conversation with \(conversation.displayName)")) {
                     Label("Share transcript", systemImage: "square.and.arrow.up")
                 }
             }
@@ -2181,6 +2199,12 @@ private struct ConversationView: View {
                     }
                 }
             }
+            Divider()
+            if let reportURL = SidebandSafetyReport.emailURL(for: conversation) {
+                Link(destination: reportURL) {
+                    Label("Report Contact", systemImage: "exclamationmark.bubble")
+                }
+            }
         } label: {
             Image(systemName: "ellipsis.circle")
         }
@@ -2201,7 +2225,9 @@ private struct ConversationView: View {
             let telemetryMatch = message.telemetry.map { telemetry in
                 String(describing: telemetry).localizedCaseInsensitiveContains(query)
             } ?? false
-            let reactionMatch = reactions(for: message).contains { $0.reactionContent?.localizedCaseInsensitiveContains(query) == true }
+            let reactionMatch = store.reactionCounts(for: message.lxmfID, in: conversation.id).keys.contains {
+                $0.localizedCaseInsensitiveContains(query)
+            }
             switch messageSearchScope {
             case .all: return textMatch || attachmentMatch || telemetryMatch || reactionMatch
             case .text: return textMatch
@@ -2212,16 +2238,9 @@ private struct ConversationView: View {
         }
     }
 
-    private func reactions(for message: Message) -> [Message] {
-        guard let messageID = message.lxmfID else { return [] }
-        return store.messages(for: conversation.id).filter {
-            $0.reactionTo == messageID && $0.reactionContent?.isEmpty == false
-        }
-    }
-
     private func reactionSummaries(for message: Message) -> [ReactionSummary] {
-        let grouped = Dictionary(grouping: reactions(for: message), by: { $0.reactionContent ?? "" })
-        return grouped.keys.sorted().map { ReactionSummary(content: $0, count: grouped[$0]?.count ?? 0) }
+        let counts = store.reactionCounts(for: message.lxmfID, in: conversation.id)
+        return counts.keys.sorted().map { ReactionSummary(content: $0, count: counts[$0] ?? 0) }
     }
 
     private var telemetryMessages: [Message] {
@@ -2358,7 +2377,7 @@ private struct ConversationView: View {
         (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingAttachments.isEmpty)
     }
 
-    private func messageAccessibilityLabel(_ message: Message) -> String {
+    private func messageAccessibilityLabel(_ message: Message, summaries precomputedSummaries: [ReactionSummary]? = nil) -> String {
         var parts = [
             message.direction == .outgoing ? "You" : conversation.displayName,
             message.body.isEmpty ? "Message" : message.body
@@ -2369,7 +2388,7 @@ private struct ConversationView: View {
             parts.append("Attachments: \(message.attachments.map(\.filename).joined(separator: ", "))")
         }
         if message.telemetry != nil { parts.append("Includes telemetry") }
-        let summaries = reactionSummaries(for: message)
+        let summaries = precomputedSummaries ?? reactionSummaries(for: message)
         if !summaries.isEmpty {
             parts.append("Reactions: " + summaries.map { "\($0.content) \($0.count)" }.joined(separator: ", "))
         }
@@ -2547,7 +2566,7 @@ private struct ContactIdentityVerificationView: View {
                     ContentUnavailableView(
                         "Public Identity Unknown",
                         systemImage: "person.crop.circle.badge.questionmark",
-                        description: Text("Scan the contact's keyed Sideband QR code or receive a validated announce before verifying them.")
+                        description: Text("Scan the contact's keyed Lower Sideband QR code or receive a validated announce before verifying them.")
                     )
                 }
                 Spacer()
@@ -3271,7 +3290,7 @@ private struct NewConversationView: View {
                     return
                 }
                 guard let contact = SidebandContactLink(string: scannedValue) else {
-                    store.lastError = "That QR code is not a valid Sideband contact or LXM paper message."
+                    store.lastError = "That QR code is not a valid Lower Sideband contact or LXM paper message."
                     showingContactScanner = false
                     return
                 }
@@ -3317,7 +3336,7 @@ private struct ContactQRScannerSheet: View {
                     .shadow(color: .black.opacity(0.5), radius: 4)
                 VStack {
                     Spacer()
-                    Text("Place a Sideband contact or LXM paper-message QR code inside the frame")
+                    Text("Place a Lower Sideband contact or LXM paper-message QR code inside the frame")
                         .font(.callout.weight(.semibold))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.white)
@@ -3387,11 +3406,11 @@ private final class ContactQRScannerController: UIViewController, @preconcurrenc
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
                     if granted { self?.configureCapture() }
-                    else { self?.onError("Camera access is required to scan Sideband contact QR codes.") }
+                    else { self?.onError("Camera access is required to scan Lower Sideband contact QR codes.") }
                 }
             }
         case .denied, .restricted:
-            onError("Camera access is disabled. Enable it for Sideband in Settings, or paste the contact link instead.")
+            onError("Camera access is disabled. Enable it for Lower Sideband in Settings, or paste the contact link instead.")
         @unknown default:
             onError("The camera authorization state is unavailable.")
         }

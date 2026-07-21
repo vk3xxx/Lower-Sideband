@@ -21,7 +21,7 @@ enum VoiceMessageAudioError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .microphoneDenied:
-            "Microphone access is required to record a voice message. Enable it for Sideband in System Settings."
+            "Microphone access is required to record a voice message. Enable it for Lower Sideband in System Settings."
         case .recordingUnavailable:
             "Voice recording could not be started on this device."
         }

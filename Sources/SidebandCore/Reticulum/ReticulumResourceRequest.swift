@@ -1,13 +1,14 @@
 import Foundation
 
 public struct ReticulumResourceRequest: Equatable, Sendable {
+    public static let maximumRequestedParts = 128
     public let resourceHash: Data
     public let requestedPartHashes: [Data]
     public let wantsMoreHashMap: Bool
     public let lastKnownMapHash: Data?
 
     public init(resourceHash: Data, requestedPartHashes: [Data], wantsMoreHashMap: Bool = false, lastKnownMapHash: Data? = nil) throws {
-        guard resourceHash.count == 32,
+        guard resourceHash.count == 32, requestedPartHashes.count <= Self.maximumRequestedParts,
               requestedPartHashes.allSatisfy({ $0.count == ReticulumResourceManifest.mapHashLength }),
               (!wantsMoreHashMap || lastKnownMapHash?.count == ReticulumResourceManifest.mapHashLength) else { throw ResourceError.invalidManifest }
         self.resourceHash = resourceHash; self.requestedPartHashes = requestedPartHashes
@@ -36,6 +37,8 @@ public struct ReticulumResourceRequest: Equatable, Sendable {
         guard encoded.count >= padding + 32, (encoded.count - padding - 32).isMultiple(of: 4) else { throw ResourceError.invalidManifest }
         lastKnownMapHash = wantsMoreHashMap ? encoded.subdata(in: 1..<5) : nil
         resourceHash = encoded.subdata(in: padding..<(padding + 32))
+        let requestedCount = (encoded.count - padding - 32) / 4
+        guard requestedCount <= Self.maximumRequestedParts else { throw ResourceError.invalidManifest }
         requestedPartHashes = stride(from: padding + 32, to: encoded.count, by: 4).map { encoded.subdata(in: $0..<($0 + 4)) }
     }
 }

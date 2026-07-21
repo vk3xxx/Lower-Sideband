@@ -16,11 +16,13 @@ public final class LocalNotificationManager {
     public private(set) var authorizationDescription = "Not requested"
     public private(set) var scheduledCount = 0
     public private(set) var lastError: String?
+    private let defaults: UserDefaults
 
-    public init() {
-        isEnabled = UserDefaults.standard.bool(forKey: "sidebandNotificationsEnabled")
-        showPreviews = UserDefaults.standard.object(forKey: "sidebandNotificationPreviews") as? Bool ?? true
-        playSounds = UserDefaults.standard.object(forKey: "sidebandNotificationSounds") as? Bool ?? true
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        isEnabled = defaults.bool(forKey: "sidebandNotificationsEnabled")
+        showPreviews = defaults.object(forKey: "sidebandNotificationPreviews") as? Bool ?? false
+        playSounds = defaults.object(forKey: "sidebandNotificationSounds") as? Bool ?? true
         authorizationDescription = isEnabled ? "Enabled" : "Not requested"
     }
 
@@ -28,12 +30,12 @@ public final class LocalNotificationManager {
         let markRead = UNNotificationAction(
             identifier: Self.markReadActionIdentifier,
             title: "Mark as Read",
-            options: []
+            options: [.authenticationRequired]
         )
         let reply = UNTextInputNotificationAction(
             identifier: Self.replyActionIdentifier,
             title: "Reply",
-            options: [],
+            options: [.authenticationRequired],
             textInputButtonTitle: "Send",
             textInputPlaceholder: "Message"
         )
@@ -58,18 +60,18 @@ public final class LocalNotificationManager {
                 lastError = error.localizedDescription
             }
         } else { isEnabled = false }
-        UserDefaults.standard.set(isEnabled, forKey: "sidebandNotificationsEnabled")
+        defaults.set(isEnabled, forKey: "sidebandNotificationsEnabled")
         await refreshAuthorization()
     }
 
     public func setShowPreviews(_ enabled: Bool) {
         showPreviews = enabled
-        UserDefaults.standard.set(enabled, forKey: "sidebandNotificationPreviews")
+        defaults.set(enabled, forKey: "sidebandNotificationPreviews")
     }
 
     public func setPlaySounds(_ enabled: Bool) {
         playSounds = enabled
-        UserDefaults.standard.set(enabled, forKey: "sidebandNotificationSounds")
+        defaults.set(enabled, forKey: "sidebandNotificationSounds")
     }
 
     public func notifyIncoming(
@@ -86,8 +88,8 @@ public final class LocalNotificationManager {
             content.title = title
             content.body = body.isEmpty && isAttachment ? "Sent an attachment" : body
         } else {
-            content.title = "New Sideband message"
-            content.body = "Open Sideband to view it."
+            content.title = "New Lower Sideband message"
+            content.body = "Open Lower Sideband to view it."
         }
         content.sound = playSounds ? .default : nil
         content.categoryIdentifier = Self.messageCategoryIdentifier
@@ -110,8 +112,8 @@ public final class LocalNotificationManager {
     public func notifyIncomingCall(conversationID: UUID, callerName: String) async {
         guard isEnabled else { return }
         let content = UNMutableNotificationContent()
-        content.title = showPreviews ? callerName : "Incoming Sideband call"
-        content.body = showPreviews ? "Incoming encrypted voice call" : "Open Sideband to answer."
+        content.title = showPreviews ? callerName : "Incoming Lower Sideband call"
+        content.body = showPreviews ? "Incoming encrypted voice call" : "Open Lower Sideband to answer."
         content.sound = playSounds ? .default : nil
         content.categoryIdentifier = Self.messageCategoryIdentifier
         content.threadIdentifier = conversationID.uuidString
@@ -162,7 +164,7 @@ public final class LocalNotificationManager {
         }
         if status == .denied {
             isEnabled = false
-            UserDefaults.standard.set(false, forKey: "sidebandNotificationsEnabled")
+            defaults.set(false, forKey: "sidebandNotificationsEnabled")
         }
     }
 }

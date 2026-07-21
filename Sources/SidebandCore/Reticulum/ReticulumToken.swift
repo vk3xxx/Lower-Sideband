@@ -28,8 +28,7 @@ public struct ReticulumToken: Sendable {
         guard token.count > Self.overhead, token.count.isMultiple(of: kCCBlockSizeAES128) else { throw TokenError.invalidToken }
         let signed = token.dropLast(32)
         let receivedMAC = token.suffix(32)
-        let expectedMAC = Data(HMAC<SHA256>.authenticationCode(for: signed, using: SymmetricKey(data: signingKey)))
-        guard Data(receivedMAC) == expectedMAC else { throw TokenError.invalidMAC }
+        guard HMAC<SHA256>.isValidAuthenticationCode(receivedMAC, authenticating: signed, using: SymmetricKey(data: signingKey)) else { throw TokenError.invalidMAC }
         return try crypt(operation: CCOperation(kCCDecrypt), input: Data(signed.dropFirst(16)), iv: Data(signed.prefix(16)))
     }
 

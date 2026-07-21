@@ -3,26 +3,26 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>en</string>
-    <key>CFBundleDisplayName</key><string>Sideband</string>
+    <key>CFBundleDisplayName</key><string>Lower Sideband</string>
     <key>CFBundleExecutable</key><string>SidebandMac</string>
     <key>CFBundleIdentifier</key><string>io.unsigned.sideband.swift</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-    <key>CFBundleName</key><string>Sideband</string>
+    <key>CFBundleName</key><string>Lower Sideband</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.2.0</string>
     <key>CFBundleVersion</key><string>11</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
-            <key>CFBundleURLName</key><string>Sideband Contact</string>
+            <key>CFBundleURLName</key><string>Lower Sideband Contact</string>
             <key>CFBundleURLSchemes</key><array><string>sideband</string></array>
         </dict>
     </array>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSLocalNetworkUsageDescription</key><string>Sideband discovers and connects to Reticulum gateways and peers on your local network.</string>
-    <key>NSLocationWhenInUseUsageDescription</key><string>Sideband uses your location only when you choose to share telemetry with a contact.</string>
-    <key>NSMicrophoneUsageDescription</key><string>Sideband uses the microphone only when you choose to record a voice message.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>Lower Sideband discovers and connects to Reticulum gateways and peers on your local network.</string>
+    <key>NSLocationWhenInUseUsageDescription</key><string>Lower Sideband uses your location only when you choose to share telemetry with a contact.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Lower Sideband uses the microphone only when you choose to record a voice message.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_reticulum._tcp</string>

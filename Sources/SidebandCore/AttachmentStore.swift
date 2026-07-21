@@ -9,8 +9,16 @@ public actor AttachmentStore {
 
     public init(directory: URL) {
         self.directory = directory
-        materializedDirectory = FileManager.default.temporaryDirectory
+        let namespace = SHA256.hash(data: Data(directory.standardizedFileURL.path.utf8))
+            .prefix(8).map { String(format: "%02x", $0) }.joined()
+        let previewRoot = FileManager.default.temporaryDirectory
             .appending(path: "SidebandAttachmentPreviews", directoryHint: .isDirectory)
+            .appending(path: namespace, directoryHint: .isDirectory)
+        // Preview files are necessarily plaintext for Quick Look/media frameworks.
+        // Remove leftovers from interrupted prior runs before creating this run's
+        // private, randomly named preview directory.
+        try? FileManager.default.removeItem(at: previewRoot)
+        materializedDirectory = previewRoot
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)
     }
 
@@ -76,7 +84,11 @@ public actor AttachmentStore {
 
     public func materializedURL(for attachment: Attachment) throws -> URL {
         let data = try read(attachment)
-        try FileManager.default.createDirectory(at: materializedDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: materializedDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         let result = materializedDirectory.appending(path: materializedName(for: attachment))
 #if os(iOS)
         try data.write(to: result, options: [.atomic, .completeFileProtection])

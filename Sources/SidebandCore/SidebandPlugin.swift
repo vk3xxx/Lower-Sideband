@@ -172,7 +172,7 @@ public struct SidebandPluginExecution: Sendable, Equatable {
 public struct SidebandInfoPlugin: SidebandCommandPlugin {
     public let manifest = SidebandPluginManifest(
         identifier: "app.sideband.info",
-        name: "Sideband Information",
+        name: "Lower Sideband Information",
         version: "1.0",
         commands: ["sideband-info", "route-status"],
         permissions: [.networkStatus]
@@ -187,7 +187,7 @@ public struct SidebandInfoPlugin: SidebandCommandPlugin {
             let route = context.routeAvailable.map { $0 ? "available" : "unknown" } ?? "not permitted"
             return SidebandPluginResponse(text: "Route status: network \(network), route \(route).")
         default:
-            return SidebandPluginResponse(text: "Sideband Swift native plugin service is available.")
+            return SidebandPluginResponse(text: "Lower Sideband native plugin service is available.")
         }
     }
 }

@@ -22,7 +22,7 @@ struct SidebandApp: App {
     @SceneBuilder
     var body: some Scene {
         #if os(macOS)
-        WindowGroup("Sideband") {
+        WindowGroup("Lower Sideband") {
             protectedContent
                 .frame(minWidth: 850, minHeight: 560)
                 .task {
@@ -32,7 +32,7 @@ struct SidebandApp: App {
         }
         .defaultSize(width: 1080, height: 720)
         #else
-        WindowGroup("Sideband") {
+        WindowGroup("Lower Sideband") {
             protectedContent
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
@@ -50,7 +50,7 @@ struct SidebandApp: App {
             else { PrivacyLockView(lock: store.privacyLock) }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { store.privacyLock.lock() }
+            if phase != .active { store.privacyLock.lock() }
         }
     }
 }
@@ -61,14 +61,14 @@ private struct PrivacyLockView: View {
     var body: some View {
         VStack(spacing: 18) {
             Image(systemName: "lock.shield.fill").font(.system(size: 52)).foregroundStyle(.tint)
-            Text("Sideband Locked").font(.title.bold())
+            Text("Lower Sideband Locked").font(.title.bold())
             Text("Authenticate with your device passcode or biometrics to view encrypted conversations.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary).frame(maxWidth: 420)
             Button {
                 Task { await lock.unlock() }
             } label: {
                 if lock.isAuthenticating { ProgressView().controlSize(.small) }
-                else { Label("Unlock Sideband", systemImage: "lock.open") }
+                else { Label("Unlock Lower Sideband", systemImage: "lock.open") }
             }
             .buttonStyle(.borderedProminent)
             .disabled(lock.isAuthenticating)
@@ -163,7 +163,8 @@ final class CallKitCoordinator: NSObject, CXProviderDelegate {
         configuration.supportsVideo = false
         configuration.maximumCallGroups = 1
         configuration.maximumCallsPerCallGroup = 1
-        configuration.includesCallsInRecents = true
+        // Keep encrypted-call metadata out of the system-wide Recents database.
+        configuration.includesCallsInRecents = false
         configuration.supportedHandleTypes = [.generic]
         provider = CXProvider(configuration: configuration)
         super.init()
@@ -199,7 +200,7 @@ final class CallKitCoordinator: NSObject, CXProviderDelegate {
             }
             reportedCallID = call.id
             reportedState = call.state
-            let handle = CXHandle(type: .generic, value: displayName ?? "Sideband contact")
+            let handle = CXHandle(type: .generic, value: displayName ?? "Lower Sideband contact")
             let update = CXCallUpdate()
             update.remoteHandle = handle
             update.localizedCallerName = displayName

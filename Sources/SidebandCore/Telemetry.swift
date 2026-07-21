@@ -241,7 +241,7 @@ public enum SidebandTelemetryHistory {
                 "<trkpt lat=\"\(location.latitude)\" lon=\"\(location.longitude)\"><ele>\(location.altitude)</ele><time>\(iso8601(location.updatedAt))</time><hdop>\(location.accuracy)</hdop></trkpt>"
             }.joined()
             let name = xmlEscaped(String(contactName.prefix(80)))
-            return Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"Sideband Swift\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(name)</name><trkseg>\(trackPoints)</trkseg></trk></gpx>".utf8)
+            return Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"Lower Sideband\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(name)</name><trkseg>\(trackPoints)</trkseg></trk></gpx>".utf8)
         }
     }
 

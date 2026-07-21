@@ -120,7 +120,7 @@ struct ConversationTelemetryMapView: View {
             }
         }
         .platformTelemetryMapSize()
-        .fileExporter(isPresented: $showingExporter, document: exportDocument, contentType: exportType, defaultFilename: "Sideband-\(safeFilename).\(exportExtension)") { _ in
+        .fileExporter(isPresented: $showingExporter, document: exportDocument, contentType: exportType, defaultFilename: "Lower-Sideband-\(safeFilename).\(exportExtension)") { _ in
             exportDocument = nil
         }
     }

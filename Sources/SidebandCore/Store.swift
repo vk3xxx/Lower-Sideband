@@ -82,6 +82,7 @@ public final class SidebandStore {
     public private(set) var voiceCallHistory: [VoiceCall] = []
     public private(set) var pluginConfigurationRevision = 0
     public private(set) var pluginAuditEvents: [SidebandPluginAuditEvent] = []
+    public private(set) var secureStorageAvailable = true
     public private(set) var voiceTrustedOnly: Bool
     public private(set) var richTextTrustedOnly: Bool
     public private(set) var preferredVoiceProfile: LXSTVoice.Profile
@@ -133,6 +134,8 @@ public final class SidebandStore {
     @ObservationIgnored private var latestMessageByConversation: [UUID: Message] = [:]
     @ObservationIgnored private var failedMessageCountByConversation: [UUID: Int] = [:]
     @ObservationIgnored private var latestMessageDateByConversation: [UUID: Date] = [:]
+    @ObservationIgnored private var reactionCountsByConversationAndTarget: [UUID: [Data: [String: Int]]] = [:]
+    @ObservationIgnored private var messageStatistics = MessageStatistics()
     @ObservationIgnored private var transcriptCache: [UUID: String] = [:]
     @ObservationIgnored private var cloudUploadedAttachmentHashes: [UUID: Data] = [:]
     private var iCloudSyncInProgress = false
@@ -196,6 +199,17 @@ public final class SidebandStore {
     private let tcpInterfaceHash: Data
     private let messagingIdentity: ReticulumIdentity
 
+    private struct MessageStatistics {
+        var incoming = 0
+        var outgoing = 0
+        var queued = 0
+        var sent = 0
+        var delivered = 0
+        var failed = 0
+        var reactions = 0
+        var starred = 0
+    }
+
     public init(transport: any MessageTransport = QueuedTransport(), persistenceURL: URL? = nil, cloudSync: (any CloudSnapshotSyncing)? = nil, plugins: [any SidebandCommandPlugin] = [SidebandInfoPlugin()]) {
         self.transport = transport
         pluginRegistry = SidebandPluginRegistry(plugins: plugins)
@@ -211,13 +225,20 @@ public final class SidebandStore {
         lastICloudSync = UserDefaults.standard.object(forKey: "iCloudLastSuccessfulSync") as? Date
         attachmentStore = AttachmentStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "Attachments", directoryHint: .isDirectory))
         resourceStagingStore = ReticulumResourceStagingStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "ResourceStaging", directoryHint: .isDirectory))
-        let identityMaterial = SecureIdentityStore.loadOrCreate(account: "reticulum.transport", legacyDefaultsKey: "reticulumTransportIdentity")
-        transportIdentity = (try? ReticulumIdentity(privateKey: identityMaterial)) ?? ReticulumIdentity()
+        let transportMaterial = SecureIdentityStore.loadOrCreate(account: "reticulum.transport", legacyDefaultsKey: "reticulumTransportIdentity")
+        switch transportMaterial {
+        case .success(let material): transportIdentity = (try? ReticulumIdentity(privateKey: material)) ?? ReticulumIdentity()
+        case .failure: transportIdentity = ReticulumIdentity(); secureStorageAvailable = false
+        }
         let interfaceMaterial = UserDefaults.standard.data(forKey: "reticulumTCPInterfaceHash") ?? ReticulumIdentity.fullHash(Data(UUID().uuidString.utf8))
         tcpInterfaceHash = interfaceMaterial
         UserDefaults.standard.set(interfaceMaterial, forKey: "reticulumTCPInterfaceHash")
         let messagingMaterial = SecureIdentityStore.loadOrCreate(account: "lxmf.messaging", legacyDefaultsKey: "lxmfMessagingIdentity", synchronizable: true)
-        messagingIdentity = (try? ReticulumIdentity(privateKey: messagingMaterial)) ?? ReticulumIdentity()
+        switch messagingMaterial {
+        case .success(let material): messagingIdentity = (try? ReticulumIdentity(privateKey: material)) ?? ReticulumIdentity()
+        case .failure: messagingIdentity = ReticulumIdentity(); secureStorageAvailable = false
+        }
+        if !localDataCipher.isAvailable { secureStorageAvailable = false }
         networkHost = UserDefaults.standard.string(forKey: "reticulumHost") ?? ""
         networkIPv6Host = UserDefaults.standard.string(forKey: "reticulumIPv6Host") ?? ""
         networkInternetHost = UserDefaults.standard.string(forKey: "reticulumInternetHost") ?? ""
@@ -232,7 +253,7 @@ public final class SidebandStore {
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         propagationNodeHash = UserDefaults.standard.string(forKey: "lxmfPropagationNode") ?? ""
         propagationNodeIsAutomatic = UserDefaults.standard.object(forKey: "lxmfPropagationNodeAutomatic") as? Bool ?? true
-        localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Sideband Swift"
+        localDisplayName = UserDefaults.standard.string(forKey: "lxmfLocalDisplayName") ?? "Lower Sideband"
         voiceTrustedOnly = UserDefaults.standard.bool(forKey: "lxstVoiceTrustedOnly")
         richTextTrustedOnly = UserDefaults.standard.object(forKey: "lxmfRichTextTrustedOnly") as? Bool ?? true
         preferredVoiceProfile = LXSTVoice.Profile(rawValue: UInt64(UserDefaults.standard.integer(forKey: "lxstVoiceProfile"))) ?? .mediumQuality
@@ -245,8 +266,12 @@ public final class SidebandStore {
            let decoded = try? JSONDecoder.sideband.decode([String: GatewayHealthRecord].self, from: healthData) {
             gatewayHealth = decoded
         }
-        receivedLXMFIDs = Set(UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? [])
-        load()
+        receivedLXMFIDs = Set((UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? []).suffix(SidebandMessageLimits.maximumRememberedMessageIDs))
+        if secureStorageAvailable {
+            load()
+        } else {
+            lastError = "Secure Keychain data is temporarily unavailable. Lower Sideband will remain offline and will not read or overwrite encrypted data. Unlock the device and reopen the app."
+        }
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receive(packet) }
         lanDiscovery.setUpdateHandler { [weak self] gateways in self?.gatewayResultsChanged(gateways) }
         reachability.setStatusHandler { [weak self] status in self?.reachabilityChanged(status) }
@@ -307,11 +332,12 @@ public final class SidebandStore {
         if !hasPath(to: voiceDestination.hex) {
             await requestPath(to: voiceDestination.hex)
             let deadline = ContinuousClock.now + .seconds(10)
-            while !hasPath(to: voiceDestination.hex), ContinuousClock.now < deadline, voiceCall?.id == call.id {
+            while !hasPath(to: voiceDestination.hex), ContinuousClock.now < deadline,
+                  voiceCall?.id == call.id, !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(200))
             }
         }
-        guard voiceCall?.id == call.id else { return }
+        guard voiceCall?.id == call.id, !Task.isCancelled else { return }
         guard hasPath(to: voiceDestination.hex), networkState == .ready else {
             finishVoiceCall(failure: "No route to the contact's LXST voice service.")
             return
@@ -370,14 +396,14 @@ public final class SidebandStore {
     }
 
     public var totalUnreadCount: Int { conversations.reduce(0) { $0 + $1.unreadCount } }
-    public var incomingMessageCount: Int { messages.count(where: { $0.direction == .incoming }) }
-    public var outgoingMessageCount: Int { messages.count(where: { $0.direction == .outgoing }) }
-    public var queuedMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .queued }) }
-    public var sentMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .sent }) }
-    public var deliveredMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .delivered }) }
-    public var failedMessageCount: Int { messages.count(where: { $0.direction == .outgoing && $0.state == .failed }) }
-    public var reactionCount: Int { messages.count(where: { $0.reactionTo != nil }) }
-    public var starredMessageCount: Int { messages.count(where: \.isStarred) }
+    public var incomingMessageCount: Int { rebuildMessageIndexesIfNeeded(); return messageStatistics.incoming }
+    public var outgoingMessageCount: Int { rebuildMessageIndexesIfNeeded(); return messageStatistics.outgoing }
+    public var queuedMessageCount: Int { rebuildMessageIndexesIfNeeded(); return messageStatistics.queued }
+    public var sentMessageCount: Int { rebuildMessageIndexesIfNeeded(); return messageStatistics.sent }
+    public var deliveredMessageCount: Int { rebuildMessageIndexesIfNeeded(); return messageStatistics.delivered }
+    public var failedMessageCount: Int { rebuildMessageIndexesIfNeeded(); return messageStatistics.failed }
+    public var reactionCount: Int { rebuildMessageIndexesIfNeeded(); return messageStatistics.reactions }
+    public var starredMessageCount: Int { rebuildMessageIndexesIfNeeded(); return messageStatistics.starred }
     public var nextScheduledMessageDate: Date? { messages.compactMap(\.scheduledFor).filter { $0 > .now }.min() }
     public func dueQueuedMessageCount(at date: Date = .now) -> Int {
         messages.count { $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= date }
@@ -448,6 +474,14 @@ public final class SidebandStore {
         return failedMessageCountByConversation[conversationID] ?? 0
     }
 
+    /// Returns pre-indexed reaction counts without rescanning an entire
+    /// conversation for every visible message row.
+    public func reactionCounts(for messageID: Data?, in conversationID: UUID) -> [String: Int] {
+        guard let messageID else { return [:] }
+        rebuildMessageIndexesIfNeeded()
+        return reactionCountsByConversationAndTarget[conversationID]?[messageID] ?? [:]
+    }
+
     public func starredMessages(for conversationID: UUID) -> [Message] {
         messages(for: conversationID).filter(\.isStarred)
     }
@@ -490,7 +524,7 @@ public final class SidebandStore {
         let delivered = conversationMessages.count(where: { $0.direction == .outgoing && $0.state == .delivered })
         let failed = conversationMessages.count(where: { $0.direction == .outgoing && $0.state == .failed })
         return [
-            "Sideband Conversation Delivery Diagnostics",
+            "Lower Sideband Conversation Delivery Diagnostics",
             "Generated: \(ISO8601DateFormatter().string(from: .now))",
             "Contact: \(conversation.displayName)",
             "Destination: \(conversation.destinationHash)",
@@ -674,7 +708,7 @@ public final class SidebandStore {
     public func conversationContactCard(_ conversationID: UUID) -> String? {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return nil }
         var lines = [
-            "Sideband Contact",
+            "Lower Sideband Contact",
             "Name: \(conversation.displayName)",
             "LXMF Destination: \(conversation.destinationHash)",
             "Trusted: \(conversation.isTrusted ? "yes" : "no")"
@@ -791,7 +825,7 @@ public final class SidebandStore {
     @discardableResult
     public func openContactLink(_ url: URL) -> Bool {
         guard let contact = SidebandContactLink(url: url) else {
-            lastError = "This is not a valid Sideband contact link."
+            lastError = "This is not a valid Lower Sideband contact link."
             return false
         }
         if let publicKey = contact.publicKey {
@@ -1100,7 +1134,8 @@ public final class SidebandStore {
             lastError = "Telemetry sharing is disabled for this contact."
             return false
         }
-        guard body.count <= SidebandMessageLimits.maximumTextCharacters else {
+        guard body.count <= SidebandMessageLimits.maximumTextCharacters,
+              body.utf8.count <= SidebandMessageLimits.maximumTextBytes else {
             lastError = "Messages are limited to \(SidebandMessageLimits.maximumTextCharacters.formatted()) characters."
             return false
         }
@@ -1410,6 +1445,10 @@ public final class SidebandStore {
     #endif
 
     public func connectNetwork(forceIPv4: Bool = false, explicitHost: String? = nil, explicitPort: UInt16? = nil, internetGatewayID: String? = nil) async {
+        guard secureStorageAvailable else {
+            lastError = "Secure Keychain data is unavailable. Reopen Lower Sideband after unlocking the device."
+            return
+        }
         guard networkState != .connecting, networkState != .ready else { return }
         let useIPv6 = !forceIPv4 && preferIPv6 && reachability.supportsIPv6 && !networkIPv6Host.isEmpty
         let selectedHost = explicitHost ?? (useIPv6 ? networkIPv6Host : networkHost)
@@ -1499,6 +1538,7 @@ public final class SidebandStore {
 
     public func applicationDidBecomeInactive() {
         isApplicationActive = false
+        Task { await attachmentStore.removeAllMaterializedFiles() }
     }
 
     public func applicationDidEnterBackground() {
@@ -1544,15 +1584,16 @@ public final class SidebandStore {
     public func performRemoteWakeSync() async -> Bool {
         if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
         let networkDeadline = ContinuousClock.now + .seconds(12)
-        while networkState != .ready, ContinuousClock.now < networkDeadline {
+        while networkState != .ready, ContinuousClock.now < networkDeadline, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(250))
         }
-        guard networkState == .ready else {
+        guard networkState == .ready, !Task.isCancelled else {
             backgroundRefresh.schedule()
             return false
         }
 
         await announceLocalDeliveryDestination()
+        guard !Task.isCancelled else { return false }
         if DestinationHash.isValid(propagationNodeHash) {
             if !propagationNodeHasPath { await requestPropagationNodePath() }
             if propagationNodeHasPath,
@@ -1562,7 +1603,9 @@ public final class SidebandStore {
             }
         }
         await syncPropagationNow()
+        guard !Task.isCancelled else { return false }
         for conversation in conversations {
+            guard !Task.isCancelled else { return false }
             await attemptDelivery(for: conversation.id)
             await propagateQueued(for: conversation.id)
         }
@@ -1598,7 +1641,8 @@ public final class SidebandStore {
             let local = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory)
             let localData = try JSONEncoder.sideband.encode(local)
             var merged: AppSnapshot
-            if let payload = try await cloudSync.fetchSnapshot() {
+            let remotePayload = try await cloudSync.fetchSnapshot()
+            if let payload = remotePayload {
                 let remote = try validatedSnapshot(from: payload.data)
                 merged = local.mergingCloudSnapshot(remote)
             } else {
@@ -1614,7 +1658,11 @@ public final class SidebandStore {
                 syncUnreadBadge()
             }
             let now = Date()
-            try await cloudSync.saveSnapshot(CloudSnapshotPayload(data: mergedData, modifiedAt: now, deviceID: syncDeviceID))
+            // Avoid creating a new CloudKit record version on every app
+            // activation when the canonical snapshot bytes are unchanged.
+            if remotePayload?.data != mergedData {
+                try await cloudSync.saveSnapshot(CloudSnapshotPayload(data: mergedData, modifiedAt: now, deviceID: syncDeviceID))
+            }
             lastICloudSync = now
             UserDefaults.standard.set(now, forKey: "iCloudLastSuccessfulSync")
             iCloudSyncStatus = .synced(now)
@@ -1626,8 +1674,10 @@ public final class SidebandStore {
 
     private func synchronizeCloudAttachments(in snapshot: AppSnapshot, local: AppSnapshot) async -> AppSnapshot {
         var uploaded = Set<UUID>()
+        var validatedLocally = Set<UUID>()
         for attachment in local.messages.flatMap(\.attachments) where uploaded.insert(attachment.id).inserted {
             guard let data = try? await attachmentStore.read(attachment) else { continue }
+            validatedLocally.insert(attachment.id)
             let hash = attachment.contentHash ?? Data(SHA256.hash(data: data))
             if cloudUploadedAttachmentHashes[attachment.id] == hash { continue }
             let payload = CloudAttachmentPayload(
@@ -1644,6 +1694,9 @@ public final class SidebandStore {
         for messageIndex in result.messages.indices {
             for attachmentIndex in result.messages[messageIndex].attachments.indices {
                 let attachment = result.messages[messageIndex].attachments[attachmentIndex]
+                // Upload processing already performed the authenticated local
+                // read; do not decrypt and hash the same large file twice.
+                if validatedLocally.contains(attachment.id) { continue }
                 if (try? await attachmentStore.read(attachment)) != nil { continue }
                 guard let payload = try? await cloudSync.fetchAttachment(id: attachment.id),
                       let restored = try? await attachmentStore.restoreCloudAttachment(payload) else {
@@ -1746,7 +1799,7 @@ public final class SidebandStore {
 
     public func setLocalDisplayName(_ displayName: String) {
         let normalized = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        localDisplayName = normalized.isEmpty ? "Sideband Swift" : String(normalized.prefix(64))
+        localDisplayName = normalized.isEmpty ? "Lower Sideband" : String(normalized.prefix(64))
         UserDefaults.standard.set(localDisplayName, forKey: "lxmfLocalDisplayName")
     }
 
@@ -1777,7 +1830,7 @@ public final class SidebandStore {
         case .failed(let reason): state = "failed: \(reason)"
         }
         return [
-            "Sideband Network Diagnostics",
+            "Lower Sideband Network Diagnostics",
             "Generated: \(ISO8601DateFormatter().string(from: .now))",
             "Local name: \(localDisplayName)",
             "Local destination: \(localDeliveryHash)",
@@ -1849,7 +1902,7 @@ public final class SidebandStore {
               snapshot.messages.allSatisfy({ conversationIDs.contains($0.conversationID) }),
               snapshot.messages.compactMap(\.telemetry).allSatisfy({ $0.validationError == nil }),
               snapshot.messages.allSatisfy({ message in
-                  message.body.count <= SidebandMessageLimits.maximumTextCharacters &&
+                  isAcceptableMessageBody(message.body) && isSupportedPersistedMessage(message) &&
                   message.attachments.count <= SidebandMessageLimits.maximumAttachments &&
                   message.attachments.allSatisfy { (0...ReticulumResourceLimits.maximumAttachmentBytes).contains($0.byteCount) } &&
                   message.attachments.reduce(0) { $0 + $1.byteCount } <= SidebandMessageLimits.maximumCombinedAttachmentBytes &&
@@ -1881,6 +1934,38 @@ public final class SidebandStore {
         return snapshot
     }
 
+    private var supportedMessageDates: ClosedRange<Date> {
+        Date(timeIntervalSince1970: 0)...Date(timeIntervalSince1970: 4_102_444_800)
+    }
+
+    private func isAcceptableMessageBody(_ body: String) -> Bool {
+        body.count <= SidebandMessageLimits.maximumTextCharacters && body.utf8.count <= SidebandMessageLimits.maximumTextBytes
+    }
+
+    private func isAcceptableReplyQuote(_ quote: String?) -> Bool {
+        guard let quote else { return true }
+        return quote.count <= SidebandMessageLimits.maximumReplyQuoteCharacters && quote.utf8.count <= SidebandMessageLimits.maximumReplyQuoteBytes
+    }
+
+    private func isSupportedPersistedMessage(_ message: Message) -> Bool {
+        message.timestamp.timeIntervalSinceReferenceDate.isFinite && supportedMessageDates.contains(message.timestamp) &&
+            (message.lxmfID == nil || message.lxmfID?.count == 32) &&
+            (message.replyTo == nil || message.replyTo?.count == 32) && isAcceptableReplyQuote(message.replyQuote) &&
+            (message.reactionTo == nil || message.reactionTo?.count == 32) &&
+            (message.reactionContent == nil || (message.reactionTo.map { Message.isValidReaction(content: message.reactionContent ?? "", target: $0) } ?? false)) &&
+            (message.commentTo == nil || message.commentTo?.count == 32) &&
+            (message.continuationOf == nil || message.continuationOf?.count == 32) &&
+            message.commands.count <= LXMFCommand.maximumCommandsPerMessage
+    }
+
+    private func rememberReceivedLXMFID(_ id: String) {
+        guard !id.isEmpty else { return }
+        if receivedLXMFIDs.count >= SidebandMessageLimits.maximumRememberedMessageIDs,
+           let evicted = receivedLXMFIDs.first { receivedLXMFIDs.remove(evicted) }
+        receivedLXMFIDs.insert(id)
+        UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
+    }
+
     public func restoreSnapshotData(_ data: Data) throws {
         let snapshot = try validatedSnapshot(from: data)
         conversations = snapshot.conversations
@@ -1899,6 +1984,10 @@ public final class SidebandStore {
     public func startGatewayDiscovery() { lanDiscovery.start() }
     public func stopGatewayDiscovery() { lanDiscovery.stop() }
     public func startAutoInterfaceDiscovery() {
+        guard secureStorageAvailable else {
+            lastError = "Secure Keychain data is unavailable. Reopen Lower Sideband after unlocking the device."
+            return
+        }
         autoInterfaceEnabled = true
         UserDefaults.standard.set(true, forKey: "reticulumAutoInterface")
         autoInterfaceDiscovery.start()
@@ -1910,6 +1999,10 @@ public final class SidebandStore {
     }
 
     public func connect(to gateway: LANGateway) async {
+        guard secureStorageAvailable else {
+            lastError = "Secure Keychain data is unavailable. Reopen Lower Sideband after unlocking the device."
+            return
+        }
         guard networkState != .connecting else { return }
         networkState = .connecting
         let generation = UUID()
@@ -2213,6 +2306,10 @@ public final class SidebandStore {
     }
 
     public func startAutomaticConnection() async {
+        guard secureStorageAvailable else {
+            automaticConnectionDescription = "Secure Keychain data unavailable"
+            return
+        }
         guard autoConnectEnabled, !intentionallyDisconnected || networkState == .stopped else { return }
         intentionallyDisconnected = false
         if internetOnlyEnabled { lanDiscovery.stop() }
@@ -2931,25 +3028,36 @@ public final class SidebandStore {
     private func importReceivedMessage(_ message: LXMFReceivedMessage, sourceIdentity: ReticulumIdentity) -> Bool {
         let expectedNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         guard message.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + sourceIdentity.hash),
-              !receivedLXMFIDs.contains(message.messageID.hex) else { return false }
+              !receivedLXMFIDs.contains(message.messageID.hex),
+              message.payload.count <= SidebandMessageLimits.maximumWireMessageBytes,
+              message.timestamp.isFinite,
+              supportedMessageDates.contains(Date(timeIntervalSince1970: message.timestamp)),
+              message.title.count <= 1_024,
+              messages.count < 250_000 else { return false }
         let source = message.sourceHash.hex
         if isSourceBlocked(source) {
-            receivedLXMFIDs.insert(message.messageID.hex)
-            UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
+            rememberReceivedLXMFID(message.messageID.hex)
             return true
         }
         if !conversations.contains(where: { $0.destinationHash == source }) {
             let name = discoveries.first(where: { $0.destinationHash == source })?.announcedDisplayName ?? "Received \(source.prefix(8))"
             _ = addConversation(destinationHash: source, displayName: name, select: false)
         }
-        guard let conversation = conversations.first(where: { $0.destinationHash == source }), let body = String(data: message.content, encoding: .utf8) else { return false }
+        guard let conversation = conversations.first(where: { $0.destinationHash == source }),
+              let body = String(data: message.content, encoding: .utf8),
+              isAcceptableMessageBody(body) else { return false }
         let telemetry = message.binaryField(0x02).flatMap { try? SidebandTelemetry(packed: $0) }
+        let replyTo = message.binaryField(0x30)
         let replyQuote = message.binaryField(0x31).flatMap { String(data: $0, encoding: .utf8) }
         let reactionTarget = message.binaryMapField(0x40, key: 0x00)
         let reactionContent = message.binaryMapField(0x40, key: 0x01).flatMap { String(data: $0, encoding: .utf8) }
         let commentTo = message.binaryMapField(0x41, key: 0x00)
         let continuationOf = message.binaryMapField(0x42, key: 0x00)
         let commands = LXMFCommand.decode(message.fields[0x09])
+        guard replyTo == nil || replyTo?.count == 32,
+              isAcceptableReplyQuote(replyQuote),
+              commentTo == nil || commentTo?.count == 32,
+              continuationOf == nil || continuationOf?.count == 32 else { return false }
         if message.fields[0x40] != nil {
             guard let reactionTarget, let reactionContent,
                   Message.isValidReaction(content: reactionContent, target: reactionTarget) else { return false }
@@ -2957,8 +3065,7 @@ public final class SidebandStore {
                 $0.conversationID == conversation.id && $0.direction == .incoming &&
                 $0.reactionTo == reactionTarget && $0.reactionContent == reactionContent
             }) {
-                receivedLXMFIDs.insert(message.messageID.hex)
-                UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
+                rememberReceivedLXMFID(message.messageID.hex)
                 return true
             }
         }
@@ -2972,7 +3079,7 @@ public final class SidebandStore {
             telemetry: telemetry,
             renderer: renderer,
             lxmfID: message.messageID,
-            replyTo: message.binaryField(0x30),
+            replyTo: replyTo,
             replyQuote: replyQuote,
             reactionTo: reactionTarget,
             reactionContent: reactionContent,
@@ -2982,8 +3089,7 @@ public final class SidebandStore {
         )
         messages.append(incomingMessage)
         if message.fields[0x09] != nil {
-            receivedLXMFIDs.insert(message.messageID.hex)
-            UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
+            rememberReceivedLXMFID(message.messageID.hex)
             save()
             if conversation.isTrusted, isConversationIdentityVerified(conversation.id), !commands.isEmpty {
                 Task { await handleIncomingCommands(commands, conversationID: conversation.id) }
@@ -2991,8 +3097,7 @@ public final class SidebandStore {
             return true
         }
         noteIncomingActivity(in: conversation.id)
-        receivedLXMFIDs.insert(message.messageID.hex)
-        UserDefaults.standard.set(Array(receivedLXMFIDs), forKey: "receivedLXMFMessageIDs")
+        rememberReceivedLXMFID(message.messageID.hex)
         save()
         if shouldNotifyIncoming(for: conversation.id) {
             Task {
@@ -3206,7 +3311,14 @@ public final class SidebandStore {
         guard let advertisement = try? ReticulumResourceAdvertisement(encoded: plaintext),
               advertisement.flags & 0x01 == 0x01, advertisement.flags & 0x20 == 0x20,
               incomingResources.count < ReticulumResourceLimits.maximumConcurrentIncoming,
-              ReticulumResourceLimits.accepts(dataSize: advertisement.dataSize, transferSize: advertisement.transferSize, segments: advertisement.totalSegments),
+              ReticulumResourceLimits.accepts(
+                  dataSize: advertisement.dataSize,
+                  transferSize: advertisement.transferSize,
+                  partCount: advertisement.partCount,
+                  segments: advertisement.totalSegments,
+                  segmentIndex: advertisement.segmentIndex,
+                  advertisedPartHashCount: advertisement.partHashes.count
+              ),
               !receivedResourceHashes.contains(advertisement.resourceHash.hex),
               let manifest = try? ReticulumResourceManifest(advertisement: advertisement) else { return }
         incomingResources[manifest.resourceHash.hex] = IncomingResource(session: session, advertisement: advertisement, receiver: ReticulumResourceReceiver(manifest: manifest))
@@ -3256,6 +3368,8 @@ public final class SidebandStore {
               let data = try? incoming.session.decryptResourcePayload(encrypted),
               incoming.receiver.manifest.validate(data: data) else { return }
         receivedResourceHashes.insert(resourceHash)
+        if receivedResourceHashes.count > SidebandMessageLimits.maximumRememberedMessageIDs,
+           let evicted = receivedResourceHashes.first { receivedResourceHashes.remove(evicted) }
         let proof = incoming.receiver.manifest.resourceHash + ReticulumIdentity.fullHash(data + incoming.receiver.manifest.resourceHash)
         try? await transmitRawPacket(Data([0x0f, 0x00]) + incoming.session.linkID + Data([0x05]) + proof)
 
@@ -3268,17 +3382,37 @@ public final class SidebandStore {
         } else { completeData = data }
 
         guard let envelope = try? LXMFResourceEnvelope(encoded: completeData),
+              !envelope.filename.isEmpty, envelope.filename.count <= 180,
+              envelope.filename.utf8.count <= 720,
+              envelope.mimeType.map({ $0.count <= 127 && $0.utf8.count <= 508 }) ?? true,
+              isAcceptableMessageBody(envelope.messageBody),
+              isAcceptableReplyQuote(envelope.replyQuote),
+              envelope.replyTo == nil || envelope.replyTo?.count == 32,
+              envelope.fileData.count <= ReticulumResourceLimits.maximumAttachmentBytes,
               let identity = identityForIncomingResource(envelope: envelope, session: incoming.session) else { return }
         let expectedNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
-        guard envelope.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + identity.hash), envelope.validate(with: identity),
-              let attachment = try? await attachmentStore.save(data: envelope.fileData, filename: envelope.filename, mimeType: envelope.mimeType) else { return }
+        guard envelope.sourceHash == ReticulumIdentity.truncatedHash(expectedNameHash + identity.hash), envelope.validate(with: identity) else { return }
         let source = envelope.sourceHash.hex
         if !conversations.contains(where: { $0.destinationHash == source }) {
             let name = discoveries.first(where: { $0.destinationHash == source })?.announcedDisplayName ?? "Received \(source.prefix(8))"
             _ = addConversation(destinationHash: source, displayName: name, select: false)
         }
         guard let conversation = conversations.first(where: { $0.destinationHash == source }) else { return }
-        if let index = messages.firstIndex(where: { $0.id == envelope.groupID && $0.conversationID == conversation.id }) {
+        let existingIndex = messages.firstIndex(where: { $0.id == envelope.groupID && $0.conversationID == conversation.id })
+        if let index = existingIndex {
+            let existing = messages[index]
+            guard existing.direction == .incoming,
+                  existing.body == envelope.messageBody,
+                  existing.renderer == envelope.renderer,
+                  existing.replyTo == envelope.replyTo,
+                  existing.replyQuote == envelope.replyQuote,
+                  existing.attachments.count < SidebandMessageLimits.maximumAttachments,
+                  existing.attachments.reduce(0, { $0 + $1.byteCount }) <= SidebandMessageLimits.maximumCombinedAttachmentBytes - envelope.fileData.count else { return }
+        } else {
+            guard messages.count < 250_000 else { return }
+        }
+        guard let attachment = try? await attachmentStore.save(data: envelope.fileData, filename: envelope.filename, mimeType: envelope.mimeType) else { return }
+        if let index = existingIndex {
             messages[index].attachments.append(attachment)
         } else {
             messages.append(Message(id: envelope.groupID, conversationID: conversation.id, body: envelope.messageBody, direction: .incoming, state: .delivered, attachments: [attachment], renderer: envelope.renderer, replyTo: envelope.replyTo, replyQuote: envelope.replyQuote))
@@ -3612,6 +3746,7 @@ public final class SidebandStore {
     private func abbreviated(_ hash: String) -> String { "\(hash.prefix(8))…\(hash.suffix(4))" }
 
     private func load() {
+        guard localDataCipher.isAvailable else { return }
         guard FileManager.default.fileExists(atPath: persistenceURL.path) else { return }
         guard let data = try? Data(contentsOf: persistenceURL),
               let plaintext = try? localDataCipher.open(data, context: "application-snapshot-v1"),
@@ -3727,6 +3862,8 @@ public final class SidebandStore {
         var latest: [UUID: Message] = [:]
         var failed: [UUID: Int] = [:]
         var latestDates: [UUID: Date] = [:]
+        var reactions: [UUID: [Data: [String: Int]]] = [:]
+        var statistics = MessageStatistics()
         for message in messages {
             grouped[message.conversationID, default: []].append(message)
             if latestDates[message.conversationID, default: .distantPast] < message.timestamp {
@@ -3736,6 +3873,24 @@ public final class SidebandStore {
             if message.direction == .outgoing, message.state == .failed {
                 failed[message.conversationID, default: 0] += 1
             }
+            switch message.direction {
+            case .incoming:
+                statistics.incoming += 1
+            case .outgoing:
+                statistics.outgoing += 1
+                switch message.state {
+                case .queued: statistics.queued += 1
+                case .sent: statistics.sent += 1
+                case .delivered: statistics.delivered += 1
+                case .failed: statistics.failed += 1
+                }
+            }
+            if message.reactionTo != nil { statistics.reactions += 1 }
+            if let target = message.reactionTo,
+               let content = message.reactionContent, !content.isEmpty {
+                reactions[message.conversationID, default: [:]][target, default: [:]][content, default: 0] += 1
+            }
+            if message.isStarred { statistics.starred += 1 }
         }
         for conversationID in grouped.keys {
             grouped[conversationID]?.sort { $0.timestamp < $1.timestamp }
@@ -3744,6 +3899,8 @@ public final class SidebandStore {
         latestMessageByConversation = latest
         failedMessageCountByConversation = failed
         latestMessageDateByConversation = latestDates
+        reactionCountsByConversationAndTarget = reactions
+        messageStatistics = statistics
         messageIndexesAreDirty = false
     }
 

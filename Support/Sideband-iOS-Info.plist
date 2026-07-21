@@ -5,7 +5,8 @@
     <key>BGTaskSchedulerPermittedIdentifiers</key>
     <array><string>com.supes.MacSideband.refresh</string></array>
     <key>CFBundleDevelopmentRegion</key><string>$(DEVELOPMENT_LANGUAGE)</string>
-    <key>CFBundleDisplayName</key><string>Sideband</string>
+    <key>CFBundleDisplayName</key><string>Lower Sideband</string>
+    <key>CFBundleName</key><string>Lower Sideband</string>
     <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
@@ -17,7 +18,7 @@
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
-            <key>CFBundleURLName</key><string>Sideband Contact</string>
+            <key>CFBundleURLName</key><string>Lower Sideband Contact</string>
             <key>CFBundleURLSchemes</key><array><string>sideband</string><string>lxm</string></array>
         </dict>
     </array>
@@ -28,10 +29,10 @@
         <string>_rns._tcp</string>
         <string>_sideband._tcp</string>
     </array>
-    <key>NSCameraUsageDescription</key><string>Sideband uses the camera only when you choose to scan a contact or encrypted paper-message QR code.</string>
-    <key>NSLocalNetworkUsageDescription</key><string>Sideband discovers and connects to Reticulum gateways and peers on your local network.</string>
-    <key>NSLocationWhenInUseUsageDescription</key><string>Sideband uses your location only when you choose to share telemetry with a contact.</string>
-    <key>NSMicrophoneUsageDescription</key><string>Sideband uses the microphone when you choose to record a voice message or make an encrypted voice call.</string>
+    <key>NSCameraUsageDescription</key><string>Lower Sideband uses the camera only when you choose to scan a contact or encrypted paper-message QR code.</string>
+    <key>NSLocalNetworkUsageDescription</key><string>Lower Sideband discovers and connects to Reticulum gateways and peers on your local network.</string>
+    <key>NSLocationWhenInUseUsageDescription</key><string>Lower Sideband uses your location only when you choose to share telemetry with a contact.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Lower Sideband uses the microphone when you choose to record a voice message or make an encrypted voice call.</string>
     <key>UIApplicationSupportsIndirectInputEvents</key><true/>
     <key>UIBackgroundModes</key><array><string>fetch</string><string>remote-notification</string></array>
     <key>UILaunchScreen</key><dict/>

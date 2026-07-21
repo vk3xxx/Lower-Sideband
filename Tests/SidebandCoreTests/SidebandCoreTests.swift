@@ -28,6 +28,99 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     }
 }
 
+private actor CountingCloudSync: CloudSnapshotSyncing {
+    private var snapshot: CloudSnapshotPayload?
+    private var snapshotSaves = 0
+
+    func accountAvailable() async -> Bool { true }
+    func fetchSnapshot() async throws -> CloudSnapshotPayload? { snapshot }
+    func saveSnapshot(_ payload: CloudSnapshotPayload) async throws {
+        snapshot = payload
+        snapshotSaves += 1
+    }
+    func fetchAttachment(id: UUID) async throws -> CloudAttachmentPayload? { nil }
+    func saveAttachment(_ payload: CloudAttachmentPayload) async throws { }
+    func saveCount() -> Int { snapshotSaves }
+}
+
+@MainActor @Test func messageIndexesAggregateReactionsAndDeliveryStatistics() throws {
+    let conversation = Conversation(
+        destinationHash: "0123456789abcdef0123456789abcdef",
+        displayName: "Indexed Conversation"
+    )
+    let target = Data(repeating: 0x42, count: 32)
+    let messages = [
+        Message(conversationID: conversation.id, body: "Original", direction: .incoming, state: .delivered, lxmfID: target),
+        Message(conversationID: conversation.id, body: "", direction: .incoming, state: .delivered, reactionTo: target, reactionContent: "👍"),
+        Message(conversationID: conversation.id, body: "", direction: .outgoing, state: .sent, reactionTo: target, reactionContent: "👍", isStarred: true),
+        Message(conversationID: conversation.id, body: "Queued", direction: .outgoing, state: .queued)
+    ]
+    let snapshot = AppSnapshot(conversations: [conversation], messages: messages)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let store = SidebandStore(
+        persistenceURL: FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString).appending(path: "store.json")
+    )
+
+    try store.restoreSnapshotData(encoder.encode(snapshot))
+
+    #expect(store.reactionCounts(for: target, in: conversation.id) == ["👍": 2])
+    #expect(store.reactionCount == 2)
+    #expect(store.incomingMessageCount == 2)
+    #expect(store.outgoingMessageCount == 2)
+    #expect(store.sentMessageCount == 1)
+    #expect(store.queuedMessageCount == 1)
+    #expect(store.starredMessageCount == 1)
+}
+
+@MainActor @Test func reactionIndexDoesNotCrossConversationBoundaries() throws {
+    let first = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "First")
+    let second = Conversation(destinationHash: "abcdef0123456789abcdef0123456789", displayName: "Second")
+    let target = Data(repeating: 0x24, count: 32)
+    let snapshot = AppSnapshot(conversations: [first, second], messages: [
+        Message(conversationID: first.id, body: "Original", direction: .incoming, state: .delivered, lxmfID: target),
+        Message(conversationID: second.id, body: "", direction: .incoming, state: .delivered, reactionTo: target, reactionContent: "👍")
+    ])
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let store = SidebandStore(persistenceURL: FileManager.default.temporaryDirectory
+        .appending(path: UUID().uuidString).appending(path: "store.json"))
+    try store.restoreSnapshotData(encoder.encode(snapshot))
+
+    #expect(store.reactionCounts(for: target, in: first.id).isEmpty)
+    #expect(store.reactionCounts(for: target, in: second.id) == ["👍": 1])
+}
+
+@MainActor @Test func unchangedICloudSnapshotDoesNotCreateAnotherRecordVersion() async {
+    let cloud = CountingCloudSync()
+    let store = SidebandStore(
+        persistenceURL: FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString).appending(path: "store.json"),
+        cloudSync: cloud
+    )
+
+    await store.setICloudSyncEnabled(true)
+    await store.syncICloudNow()
+
+    #expect(await cloud.saveCount() == 1)
+}
+
+@MainActor @Test func cancelledRemoteWakeReturnsWithoutSpinningToDeadline() async {
+    let store = SidebandStore(
+        persistenceURL: FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString).appending(path: "store.json")
+    )
+    store.setAutoConnect(false)
+    let clock = ContinuousClock()
+    let started = clock.now
+    let wake = Task { await store.performRemoteWakeSync() }
+    wake.cancel()
+
+    #expect(await wake.value == false)
+    #expect(started.duration(to: clock.now) < .seconds(1))
+}
+
 @Test func explicitSingleDestinationProofUsesPacketHashForRoutingAndSignature() throws {
     let identity = ReticulumIdentity()
     let destination = Data(repeating: 0x22, count: 16)
@@ -77,6 +170,48 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
         (.unsigned(2), .bool(true)),
         (.unsigned(3), .null)
     ]))
+}
+
+@Test func messagePackDecoderRejectsHostileAllocationAndRecursionClaims() {
+    let hugeArrayClaim = Data([0xdd, 0xff, 0xff, 0xff, 0xff])
+    let oversizedScalarClaim = Data([0xc6, 0x00, 0x20, 0x00, 0x00])
+    let deeplyNested = Data([UInt8](repeating: 0x91, count: 40) + [0xc0])
+
+    #expect(throws: MessagePackDecoder.DecodeError.self) { try MessagePackDecoder.decode(hugeArrayClaim) }
+    #expect(throws: MessagePackDecoder.DecodeError.self) { try MessagePackDecoder.decode(oversizedScalarClaim) }
+    #expect(throws: MessagePackDecoder.DecodeError.self) { try MessagePackDecoder.decode(deeplyNested) }
+}
+
+@Test func messagePackDecoderHonorsCallerBudgetsBeforeReservingCollections() {
+    let encoded = MessagePack.array([MessagePack.unsigned(1), MessagePack.unsigned(2), MessagePack.unsigned(3)])
+    let limits = MessagePackDecoder.Limits(maximumDepth: 4, maximumCollectionCount: 2, maximumNodeCount: 8, maximumScalarBytes: 64)
+    #expect(throws: MessagePackDecoder.DecodeError.self) { try MessagePackDecoder.decode(encoded, limits: limits) }
+}
+
+@Test func keychainReadFailuresNeverFallBackToNewOrUserDefaultsMaterial() {
+    var fallbackInvoked = false
+    let result = SecureIdentityStore.resolveKeychainRead(.failure(.readFailed(-25308))) {
+        fallbackInvoked = true
+        return .success(Data(repeating: 7, count: 64))
+    }
+    #expect(!fallbackInvoked)
+    guard case .failure(.readFailed(-25308)) = result else {
+        Issue.record("A transient Keychain read error was not propagated")
+        return
+    }
+}
+
+@Test func keychainResolutionRejectsCorruptStoredMaterialWithoutOverwritingIt() {
+    var fallbackInvoked = false
+    let result = SecureIdentityStore.resolveKeychainRead(.success(Data(repeating: 1, count: 32))) {
+        fallbackInvoked = true
+        return .success(Data(repeating: 2, count: 64))
+    }
+    #expect(!fallbackInvoked)
+    guard case .failure(.invalidStoredMaterial) = result else {
+        Issue.record("Invalid stored key material was not rejected")
+        return
+    }
 }
 
 @Test func telemetryMatchesPythonSidebandFixture() throws {
@@ -494,6 +629,17 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     restored.applyAuthenticationResult(true, enabling: false)
     #expect(!restored.isEnabled)
     #expect(restored.isUnlocked)
+}
+
+@MainActor @Test func notificationPreviewsDefaultOffAndRemainExplicitlyOptIn() throws {
+    let suite = "SidebandNotificationPrivacyTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let notifications = LocalNotificationManager(defaults: defaults)
+    #expect(!notifications.showPreviews)
+    notifications.setShowPreviews(true)
+    #expect(LocalNotificationManager(defaults: defaults).showPreviews)
 }
 
 @MainActor @Test func contactCollectionsRoundTripWithoutGrantingVerification() throws {
@@ -1983,9 +2129,64 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
 }
 
 @Test func resourceSafetyLimitsRejectOversizedTransfers() {
-    #expect(ReticulumResourceLimits.accepts(dataSize: 1024, transferSize: 1100, segments: 1))
-    #expect(!ReticulumResourceLimits.accepts(dataSize: ReticulumResourceLimits.maximumAttachmentBytes + 100_000, transferSize: 1, segments: 1))
-    #expect(!ReticulumResourceLimits.accepts(dataSize: 1, transferSize: 1, segments: 66))
+    #expect(ReticulumResourceLimits.accepts(dataSize: 1024, transferSize: 1100, partCount: 3, segments: 1, segmentIndex: 1, advertisedPartHashCount: 3))
+    #expect(!ReticulumResourceLimits.accepts(dataSize: ReticulumResourceLimits.maximumAttachmentBytes + 100_000, transferSize: 1, partCount: 1, segments: 1, segmentIndex: 1, advertisedPartHashCount: 1))
+    #expect(!ReticulumResourceLimits.accepts(dataSize: 1, transferSize: 1, partCount: 1, segments: 66, segmentIndex: 1, advertisedPartHashCount: 1))
+    #expect(!ReticulumResourceLimits.accepts(dataSize: 1, transferSize: 1, partCount: 1_000_000_000, segments: 1, segmentIndex: 1, advertisedPartHashCount: 0))
+    #expect(!ReticulumResourceLimits.accepts(dataSize: 1, transferSize: .max, partCount: 1, segments: 1, segmentIndex: 1, advertisedPartHashCount: 1))
+}
+
+@Test func resourceHashMapRejectsOverflowingSegmentsAndOversizedUpdates() throws {
+    let manifest = try ReticulumResourceManifest(
+        data: Data([0x11]),
+        randomHash: Data(repeating: 0x22, count: ReticulumResourceManifest.randomHashLength)
+    )
+    var receiver = ReticulumResourceReceiver(manifest: manifest)
+    #expect(throws: ResourceError.self) {
+        try receiver.applyHashMap(segment: .max, hashes: [Data(repeating: 0x33, count: 4)])
+    }
+
+    let oversizedMap = Data(repeating: 0x44, count: (ReticulumResourceAdvertisement.hashMapMaximumEntries + 1) * 4)
+    let encoded = manifest.resourceHash + MessagePack.array([
+        MessagePack.unsigned(0), MessagePack.binary(oversizedMap)
+    ])
+    #expect(throws: ResourceError.self) { try ReticulumResourceHashMapUpdate(encoded: encoded) }
+
+    let oversizedAdvertisement = MessagePack.map([
+        ("t", MessagePack.unsigned(1)), ("d", MessagePack.unsigned(1)),
+        ("n", MessagePack.unsigned(1)), ("h", MessagePack.binary(manifest.resourceHash)),
+        ("r", MessagePack.binary(Data(repeating: 1, count: 4))),
+        ("o", MessagePack.binary(manifest.resourceHash)), ("i", MessagePack.unsigned(1)),
+        ("l", MessagePack.unsigned(1)), ("q", MessagePack.null),
+        ("f", MessagePack.unsigned(0x21)), ("m", MessagePack.binary(oversizedMap))
+    ])
+    #expect(throws: ResourceError.self) { try ReticulumResourceAdvertisement(encoded: oversizedAdvertisement) }
+}
+
+@Test func resourceStagingRejectsUnboundedPreallocationClaims() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ReticulumResourceStagingStore(directory: root)
+    let hash = Data(repeating: 0x55, count: 32)
+
+    await #expect(throws: ResourceError.self) {
+        try await store.stage(data: Data(), originalHash: hash, segmentIndex: 1, totalSegments: 1, totalSize: .max)
+    }
+    await #expect(throws: ResourceError.self) {
+        try await store.stage(data: Data(), originalHash: hash, segmentIndex: 1, totalSegments: ReticulumResourceLimits.maximumSegments + 1, totalSize: 0)
+    }
+}
+
+@Test func resourceManifestRejectsForgedPartCountBeforeReceiverAllocation() throws {
+    let forged = MessagePack.map([
+        ("t", MessagePack.unsigned(1)), ("d", MessagePack.unsigned(1)),
+        ("n", MessagePack.unsigned(1_000_000_000)), ("h", MessagePack.binary(Data(repeating: 1, count: 32))),
+        ("r", MessagePack.binary(Data(repeating: 2, count: 4))), ("o", MessagePack.binary(Data(repeating: 3, count: 32))),
+        ("i", MessagePack.unsigned(1)), ("l", MessagePack.unsigned(1)),
+        ("q", MessagePack.null), ("f", MessagePack.unsigned(0x21)), ("m", MessagePack.binary(Data()))
+    ])
+    let advertisement = try ReticulumResourceAdvertisement(encoded: forged)
+    #expect(throws: ResourceError.self) { try ReticulumResourceManifest(advertisement: advertisement) }
 }
 
 @Test func staleResourceStagingIsRemoved() async throws {
@@ -2542,14 +2743,16 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
     #expect(wrongContextRejected)
 }
 
-@Test func cloudRecordNamesAreOpaqueAndDomainSeparated() {
+@Test func cloudRecordNamesAreOpaqueAndDomainSeparated() throws {
     let cipher = CloudPayloadCipher(keyMaterial: Data(repeating: 0x5a, count: 64))
     let attachmentID = UUID(uuidString: "00112233-4455-6677-8899-aabbccddeeff")!
     let attachmentScope = "attachment-v1:\(attachmentID.uuidString.lowercased())"
-    let first = cipher.recordName(for: attachmentScope)
+    let first = try cipher.recordName(for: attachmentScope)
+    let same = try cipher.recordName(for: attachmentScope)
+    let snapshot = try cipher.recordName(for: "snapshot-v1")
 
-    #expect(first == cipher.recordName(for: attachmentScope))
-    #expect(first != cipher.recordName(for: "snapshot-v1"))
+    #expect(first == same)
+    #expect(first != snapshot)
     #expect(!first.contains(attachmentID.uuidString.lowercased()))
     #expect(first.count == 64)
 }
@@ -2725,6 +2928,34 @@ private struct SlowNativePlugin: SidebandCommandPlugin {
 
     let merged = local.mergingCloudSnapshot(remote)
     #expect(Set(merged.voiceCallHistory.map(\.id)) == Set([localCall.id, remoteCall.id]))
+}
+
+@Test func safetyReportRequiresUserSendAndOmitsPrivateContent() throws {
+    let conversation = Conversation(
+        destinationHash: "0123456789abcdef0123456789abcdef",
+        displayName: "Private display name",
+        contactNote: "private contact note"
+    )
+    let message = Message(
+        conversationID: conversation.id,
+        body: "private message body",
+        timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+        direction: .incoming,
+        state: .delivered,
+        attachments: [Attachment(filename: "secret.jpg", byteCount: 1, relativePath: "secret.jpg", state: .available)],
+        lxmfID: Data([0x01, 0x02, 0x03])
+    )
+
+    let url = try #require(SidebandSafetyReport.emailURL(for: conversation, message: message))
+    let decoded = url.absoluteString.removingPercentEncoding ?? url.absoluteString
+    #expect(url.scheme == "mailto")
+    #expect(decoded.contains(SidebandSafetyReport.supportEmail))
+    #expect(decoded.contains(conversation.destinationHash))
+    #expect(decoded.contains("010203"))
+    #expect(!decoded.contains(message.body))
+    #expect(!decoded.contains("secret.jpg"))
+    #expect(!decoded.contains(conversation.displayName))
+    #expect(!decoded.contains(conversation.contactNote))
 }
 
 private extension Data {
