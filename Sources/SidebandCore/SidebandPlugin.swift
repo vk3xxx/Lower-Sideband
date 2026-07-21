@@ -138,6 +138,30 @@ public struct SidebandPluginExecution: Sendable, Equatable {
         persistEnabledIdentifiers()
     }
 
+    @discardableResult public func registerDeclarative(_ definition: SidebandDeclarativePluginDefinition, enabled: Bool = false) -> Bool {
+        do {
+            let plugin = try SidebandDeclarativePlugin(definition: definition)
+            let manifest = plugin.manifest
+            guard Self.isValid(manifest), plugins[manifest.identifier] == nil,
+                  Set(plugins.values.flatMap(\.manifest.commands)).isDisjoint(with: manifest.commands) else {
+                rejectedPluginDescriptions.append("\(manifest.name): duplicate identifier or command")
+                return false
+            }
+            plugins[manifest.identifier] = plugin
+            if enabled { enabledIdentifiers.insert(manifest.identifier) }
+            persistEnabledIdentifiers()
+            return true
+        } catch {
+            rejectedPluginDescriptions.append("\(definition.name): invalid declarative plugin")
+            return false
+        }
+    }
+
+    @discardableResult public func unregisterDeclarative(_ identifier: String) -> Bool {
+        guard plugins[identifier] is SidebandDeclarativePlugin else { return false }
+        plugins.removeValue(forKey: identifier); enabledIdentifiers.remove(identifier); persistEnabledIdentifiers(); return true
+    }
+
     public func startEnabledServices() async {
         for (identifier, service) in services where enabledIdentifiers.contains(identifier) { try? await service.start() }
     }
@@ -287,7 +311,7 @@ public enum SidebandPluginCommandLine {
         return (command, Array(tokens.dropFirst()))
     }
 
-    fileprivate static func isValidCommand(_ command: String) -> Bool {
+    public static func isValidCommand(_ command: String) -> Bool {
         !command.isEmpty && command.count <= 64 && command.allSatisfy { $0.isLetter || $0.isNumber || ".-_".contains($0) }
     }
 

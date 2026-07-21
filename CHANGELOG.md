@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.8 (36) - 2026-07-21
+
+- Added an importable, declarative plugin format that cannot execute downloaded code.
+- Added strict schema, size, permission, command and template validation.
+- Added permission-redacted response templates and runtime plugin registration.
+- Preserved per-contact authorization, timeouts, enable controls and audit records.
+
 ## 1.2.7 (35) - 2026-07-21
 
 - Added native UDP and macOS TCP Server Reticulum interfaces with HDLC and IFAC support.

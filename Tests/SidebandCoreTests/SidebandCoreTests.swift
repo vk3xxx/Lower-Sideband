@@ -106,6 +106,26 @@ import Testing
     #expect(ReticulumSharedInstanceConfiguration().isValid)
 }
 
+@MainActor @Test func declarativePluginsAreBoundedPermissionScopedAndExecutable() async throws {
+    let definition = SidebandDeclarativePluginDefinition(
+        identifier: "org.example.field-status", name: "Field Status", version: "1.0",
+        permissions: [.networkStatus],
+        responses: ["field-status": "Network {{network.state}}, route {{route.state}}, sender {{sender.short}}, note {{argument.0}}"]
+    )
+    let data = try JSONEncoder().encode(definition)
+    let decoded = try SidebandDeclarativePluginDefinition.decode(data)
+    let registry = SidebandPluginRegistry(plugins: [], telemetry: [], enabledIdentifiers: [], persistsConfiguration: false)
+    #expect(registry.registerDeclarative(decoded, enabled: true))
+    let result = await registry.execute(command: "field-status", arguments: ["ok"], context: .init(
+        command: "field-status", arguments: ["ok"], senderDestinationHash: String(repeating: "a", count: 32), networkReady: true, routeAvailable: false
+    ))
+    #expect(result.outcome == .succeeded)
+    #expect(result.response?.text == "Network ready, route unavailable, sender redacted, note ok")
+
+    let unsafe = SidebandDeclarativePluginDefinition(identifier: "org.example.unsafe", name: "Unsafe", version: "1", responses: ["unsafe": "{{file.read}}"])
+    #expect(throws: SidebandDeclarativePluginDefinition.Error.self) { try unsafe.validate() }
+}
+
 private struct TestNativePlugin: SidebandCommandPlugin {
     let manifest = SidebandPluginManifest(identifier: "test.native", name: "Test Plugin", version: "1", commands: ["test-echo"])
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {
