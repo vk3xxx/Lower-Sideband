@@ -1,10 +1,10 @@
-# MacSideband Support
+# Lower Sideband support
 
-MacSideband is a native Reticulum and LXMF messaging client for iPhone and iPad. It requires iOS or iPadOS 17 or later.
+Lower Sideband is a native Reticulum and LXMF messaging client for macOS, iPhone, and iPad. It requires macOS 14 or iOS/iPadOS 17 or later.
 
 ## Getting connected
 
-MacSideband uses automatic connection discovery by default:
+Lower Sideband uses automatic connection discovery by default:
 
 1. It tries a specifically configured gateway when the user has selected one.
 2. It discovers compatible gateways on the local network.
@@ -25,13 +25,13 @@ Reticulum is delay tolerant. Delivery can take longer when a destination is offl
 
 ## Identity and safety
 
-The LXMF ID shown at the top of the main screen is the address to share with contacts. Compare identity fingerprints over a separate trusted channel before marking a contact as verified.
+The LXMF ID shown at the top of the main screen is the address to share with contacts. Compare identity fingerprints over a separate trusted channel before marking a contact as verified. Never share the underlying private identity key.
 
 MacSideband is not an emergency service and should not be relied on for urgent, life-safety, medical, or emergency communications.
 
 ## Privacy and permissions
 
-Camera, microphone, location, local-network, notification, iCloud, and device-authentication features are optional and controlled by the user. See the [MacSideband Privacy Policy](PRIVACY.md) for details.
+Camera, microphone, location, local-network, notification, iCloud, Bluetooth, and device-authentication features are optional and controlled by the user. See the [Lower Sideband privacy policy](PRIVACY.md) for details.
 
 ## Contact support
 

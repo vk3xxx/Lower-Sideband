@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: mailto:sepus@hotmail.com
+    about: Report vulnerabilities privately; never post keys or confidential data in an issue.
+  - name: Usage and support
+    url: https://github.com/vk3xxx/Lower-Sideband/blob/main/SUPPORT.md
+    about: Read connection, messaging, identity, and support guidance.

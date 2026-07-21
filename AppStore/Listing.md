@@ -2,9 +2,9 @@
 
 ## Release
 
-- Version: 1.1.3
-- Build: 21
-- App Store Connect: Build 21 adds a complete native macOS application icon set; it is a development build for the internal TestFlight group only
+- Version: 1.2.3
+- Build: 31
+- Repository state: Version 1.2.3 build 31 is a development/TestFlight change set and has not been uploaded by this documentation update
 - Price: Free
 - Availability: All storefronts, including future storefronts
 - Release: Automatically release after App Review approval
@@ -19,7 +19,7 @@
 - Content rights: Necessary third-party content rights confirmed by the developer
 - User safety: Contacts can be blocked; contacts and individual incoming messages can be reported through a user-reviewed support email that excludes private content and keys by default
 - Add for Review: Complete
-- TestFlight: Build 21 uploaded and processed on 21 July 2026; assigned to `MacSideband Internal` with macOS icon verification notes saved
+- TestFlight: Build 21 was previously uploaded and processed on 21 July 2026; later repository builds require a separate explicit TestFlight upload
 - Submit for Review: 1.1.0 build 18 remains Waiting for Review; build 21 is not a release candidate and must not be submitted for App Review
 - App Review submission ID: `21163873-76cc-404f-a5b7-0cc74e0f050b`
 - Apple Developer Support case ID: `102946262465`

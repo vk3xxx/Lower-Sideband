@@ -1,71 +1,79 @@
-# Porting map
+# Native porting status
 
-| Upstream area | Swift destination | Status |
+Lower Sideband is a clean native Swift adaptation. The distributed macOS, iOS, and iPadOS targets do not load the Python Sideband, Reticulum, or LXMF codebases at runtime.
+
+Status labels:
+
+- **Native:** implemented in Swift and covered by automated tests.
+- **Partial:** useful native coverage exists, but upstream breadth or live interoperability work remains.
+- **External:** requires infrastructure, entitlement, hardware tooling, or an operator service outside the app.
+- **Planned:** not yet implemented.
+
+## Application and data
+
+| Upstream capability | Native implementation | Status |
 | --- | --- | --- |
-| `sideband/core.py` conversation/message state | `SidebandCore` models and store | Implemented for current messaging scope |
-| Kivy conversation/message screens | `SidebandMac` SwiftUI split view | Implemented for current messaging scope |
-| SQLite state | Versioned Codable atomic application-support snapshot | Implemented with validated export/restore, rolling backup and corrupt-file recovery; SQLite import remains future work |
-| Reticulum TCP/HDLC and packet parsing | `ReticulumTCPInterface`, `HDLC`, `ReticulumPacket` | Implemented, unit tested |
-| Reticulum identity keys, hashes and signatures | `ReticulumIdentity` using CryptoKit | Implemented, Python-vector tested |
-| TCP configuration, packet counters and announce capture | Network panel and `SidebandStore` | Implemented |
-| Announce parsing, signatures and destination derivation | `ReticulumAnnounce` | Implemented, Python-vector tested |
-| Path-request packet generation | `ReticulumPathRequest` | Implemented, Python-layout tested |
-| Validated route selection, pending requests and expiry | `ReticulumPathTable` | Implemented per interface for concurrent reticules |
-| Automatic LAN and internet gateway selection | `LANGatewayDiscovery`, `ReticulumTCPInterfacePool`, `SidebandStore` | Implemented local-first with Bonjour, dual-stack configuration, three concurrent public community bootstraps and automatic fallback |
-| Authenticated Reticulum interface discovery | `ReticulumInterfaceDiscovery`, `ReticulumTCPInterfacePool`, `SidebandStore` | Implemented signed announce parsing, LXMF stamp validation, safe dynamic TCP paths and bootstrap shedding |
-| AutoInterface group, authenticated beacons, multicast listener and peer expiry | `AutoInterfaceDiscovery` | Implemented |
-| AutoInterface UDP packet receive/send | `AutoInterfaceDiscovery` data listener | Implemented on port 42671 |
-| Link request, link ID and X25519/HKDF key derivation | `ReticulumLinkRequest` | Implemented, Python-vector tested |
-| Link proof signature validation and session activation | `ReticulumLinkSession` | Implemented, Python-vector tested |
-| Link AES-256-CBC tokens and HMAC authentication | `ReticulumToken` | Implemented, Python-vector tested |
-| TCP client tunnel synthesis | `ReticulumTunnelSynthesis` | Implemented, Python-vector tested |
-| Encrypted link packets and keepalives | `ReticulumLinkSession` | Implemented, Python-vector tested |
-| LXMF MessagePack payload, message ID and signature | `LXMFMessage` | Implemented, Python-vector tested |
-| LXMF extensible field dictionary | `LXMFMessage`, `LXMFReceivedMessage`, `MessagePack` | Implemented for binary integer-keyed fields |
-| Sideband Telemeter timestamp, location and battery sensors | `SidebandTelemetry` | Implemented, byte-for-byte Python fixture tested |
-| Explicit native location and battery capture | `TelemetryCapture` | Implemented with when-in-use permission and on-demand sharing |
-| Inline telemetry details and location history map | `TelemetryMessageCard`, `ConversationTelemetryMapView` | Implemented with MapKit |
-| LXMF link identification and propagation list request | `LXMFPropagation` | Implemented, Python-vector tested |
-| MessagePack response decoding | `MessagePackDecoder` | Implemented for LXMF response types |
-| Recipient identity encryption for propagated LXMF | `ReticulumIdentity.encrypt` | Implemented, Python-vector tested |
-| Propagation upload envelope, automatic node discovery and queued fallback | `LXMFMessage.propagatedEnvelope`, `LXMFPropagation`, `SidebandStore` | Implemented |
-| Propagation download, decrypt, validate, import and acknowledge | `SidebandStore` sync pipeline | Implemented |
-| Signed `lxmf.delivery` announce | `ReticulumAnnounceBuilder` | Implemented |
-| Incoming link request acceptance and proof | `ReticulumIncomingLink` | Implemented, Python-vector tested |
-| Direct and opportunistic inbound LXMF with delivery proofs | `SidebandStore`, `ReticulumProof` | Implemented, live Python interoperability tested |
-| Periodic propagation synchronization and lifecycle pause/resume | `SidebandStore` | Implemented |
-| iOS private identity persistence | `SecureIdentityStore` | Keychain-backed with legacy migration |
-| Receipt timeout and delivery escalation | `SidebandStore` | Implemented |
-| TCP reconnect, reachability-triggered recovery and dual-stack fallback | `SidebandStore`, `NetworkReachability` | Implemented with silent automatic selection |
-| Relaunch-safe outbound recovery | Codable snapshot recovery | Implemented, tested |
-| LXMF announce display names | `LXMFAnnounceInfo` | Implemented, tested |
-| Verified incoming local notifications | `LocalNotificationManager` | Implemented, opt-in |
-| iOS background propagation refresh and silent APNs wake handling | `BackgroundRefreshCoordinator`, `SidebandAppDelegate` | Client implemented; production APNs provider deployment required |
-| Installable iPhone/iPad application target | `MacSideband.xcodeproj`, `SidebandIOS` | Implemented and simulator launched |
-| App Store privacy required-reason declarations | `Support/PrivacyInfo.xcprivacy` | Implemented for the app and embedded framework |
-| TestFlight archive and upload configuration | `Support/ExportOptions-TestFlight.plist` | Implemented for the Individual team |
-| Attachment metadata and durable local storage | `Attachment`, `AttachmentStore` | Implemented |
-| Orphaned attachment cleanup | `AttachmentStore.removeOrphans` | Implemented conservatively for unreferenced regular files |
-| Reticulum Resource advertisements, requests, parts, proofs and cancellation | `ReticulumResource*` | Implemented, Python-fixture tested |
-| Resource hash-map updates and multi-segment transfer | `ReticulumResourceHashMapUpdate`, segment planner/staging | Implemented |
-| Attachment sending, receiving, progress and inline images | `SidebandStore`, SwiftUI attachment views | Implemented for native Swift peers |
-| Portable contact links, system URL opening and QR display | `SidebandContactLink`, app URL handler, CoreImage, SwiftUI contact actions | Implemented; camera scanning remains future work |
-| Local display identity and announce metadata | `SidebandStore.localDisplayName`, Network Status identity card | Implemented |
-| Safe copyable network diagnostics | `SidebandStore.networkDiagnosticsReport`, Network Status controls | Implemented |
-| Reproducible macOS application bundle | `Scripts/package-macos-app.sh`, `Support/Sideband-Info.plist` | Implemented |
-| Conversation archive, block, cleanup and retry controls | `Conversation`, `SidebandStore`, SwiftUI context menus | Implemented |
-| Reticulum routing/announces/link | Native Swift transport engine | Implemented for current TCP and AutoInterface scope |
-| `LXMF.LXMRouter` | Native Swift LXMF router | Direct, opportunistic, propagation and attachment Resource delivery implemented |
-| Identity and cryptography | CryptoKit-backed identity primitives | Implemented for current transport scope |
-| Additional telemetry sensors and collectors | Native sensor adapters and telemetry policy | Planned |
-| Audio, voice, LXST streams | Platform services behind shared protocols | Planned |
+| Conversations, messages, drafts, replies, reactions, search | Models, `SidebandStore`, SwiftUI views | Native |
+| Local SQLite state | Versioned encrypted snapshots with atomic writes and rolling recovery | Native replacement |
+| Legacy Sideband SQLite import | — | Planned |
+| Contacts, names, notes, tags, appearance, trust | Encrypted models, fingerprints, contact links/QR | Native |
+| Attachments and inline images | Encrypted storage and Reticulum Resources | Native; ongoing live matrix |
+| Backups and structured conversation archives | Validated versioned import/export | Native |
+| Multi-device sync | App-encrypted private CloudKit records/assets | Native |
+| Notifications and background refresh | UserNotifications, BGTaskScheduler, silent-wake client | Native/External |
 
-## Next priorities
+## Reticulum
 
-1. Complete live attachment, telemetry and large-Resource interoperability testing against upstream Sideband and Reticulum.
-2. Add per-contact telemetry policies, requests, collectors, and additional Sideband sensor types.
-3. Add migration/import support for existing Sideband SQLite data.
-4. Deploy redundant public gateway/propagation infrastructure and an APNs wake provider, then harden background delivery, power use, and network-transition behavior through TestFlight testing on physical devices.
-5. Add camera QR scanning, audio/voice, LXST, hardware interfaces, and plugin replacements incrementally.
+| Capability | Native implementation | Status |
+| --- | --- | --- |
+| HDLC/KISS framing and packet parsing | `HDLC`, `KISSModem`, `ReticulumPacket` | Native |
+| Identity, signatures, encryption, hashes | CryptoKit/Security plus Ed25519 package | Native |
+| Announces and destination derivation | `ReticulumAnnounce`, builder and validation | Native |
+| Paths, requests, expiry, interface affinity | `ReticulumPathTable`, interface pool | Native |
+| Links, proofs, tokens, keepalive, tunnels | Native Reticulum link/session types | Native |
+| Resources and segmented transfer | Native advertisement/request/part/hash-map/proof pipeline | Native |
+| TCP client and automatic gateway selection | Network.framework pool and health ranking | Native |
+| Bonjour and signed interface discovery | Local discovery and validated dynamic interfaces | Native |
+| AutoInterface | Authenticated beacon and UDP data plane | Native; iOS entitlement-limited |
+| IFAC and interface modes | Native KISS/interface configuration and forwarding policy | Native |
+| macOS Transport Instance | Validated routes, forwarding, reverse/link routes, loop suppression | Native |
+| Every specialised Python Reticulum interface | — | Partial |
 
-Avoid embedding Python in the product target: it would make the macOS prototype quick but would create a dead end for iOS sandboxing and distribution.
+## LXMF and Sideband workflows
+
+| Capability | Native implementation | Status |
+| --- | --- | --- |
+| LXMF MessagePack, IDs, signatures, fields | Native encode/decode and reference vectors | Native |
+| Direct and opportunistic delivery | Native router with proofs and retry state | Native |
+| Propagation-node upload/download | Discovery, selection, sync, acknowledgement | Native |
+| Commands and telemetry requests | Typed LXMF command fields | Native |
+| Telemetry sensors and relay | Canonical sensor maps with lossless unknown sensor preservation | Native |
+| Telemetry history/map/CSV/GPX | Native collectors, MapKit, export | Native |
+| Low-bandwidth voice messages | Python-compatible LXMF voice payloads | Native |
+| LXST real-time calls | Link-authenticated audio, jitter buffer, CallKit | Native; background wake external |
+| Paper/offline messages | Encrypted contact and message links/QR | Native |
+| Python plugin system | Permission-scoped compiled native plugin APIs | Native replacement |
+| Downloaded executable plugins | — | Explicit non-goal |
+
+## Interfaces and hardware
+
+| Capability | Native implementation | Status |
+| --- | --- | --- |
+| RNode BLE | CoreBluetooth transport and restoration | Native |
+| RNode Wi-Fi/TCP | Network.framework transport | Native |
+| RNode USB serial | macOS serial transport | Native |
+| Generic serial/KISS modem | macOS transport | Native |
+| RNode radio config and metrics | KISS commands and Network Status UI | Native |
+| Beacon/callsign and framebuffer/display | Native scheduler and binary protocol | Native |
+| ROM and firmware inspection | Native reads and metadata validation | Native |
+| Firmware flashing | Validated package and update-mode handoff | External |
+
+## Platform and infrastructure gaps
+
+- A production APNs provider is required to wake eligible suspended iOS clients; Apple still controls delivery timing.
+- Physical iOS AutoInterface multicast requires Apple's restricted entitlement.
+- Public gateways and propagation nodes are independently operated and cannot be treated as guaranteed service.
+- Live cross-version tests must continue as upstream protocols evolve.
+- Platform-specific RNode bootloader tools are required after the app enters firmware update mode.
+
+See [Architecture](docs/ARCHITECTURE.md), [Networking](docs/NETWORKING.md), and the [Roadmap](docs/ROADMAP.md) for design details and remaining priorities.

@@ -1,5 +1,13 @@
-Sideband Swift is an adaptation of Sideband by Mark Qvist.
+Lower Sideband is an adaptation of Sideband by Mark Qvist.
 Upstream source: https://github.com/markqvist/Sideband
 Source snapshot: tag 1.9.8, commit 8601d84580341f2c499041615d772610edb9eaab
 
 The new Swift implementation is not affiliated with or endorsed by the upstream author.
+
+Pinned Reticulum and LXMF reference snapshots remain in their respective Git
+submodules and retain their upstream licences. They are not linked into the
+distributed Apple application targets.
+
+The distributed application uses AndrewBarba/ed25519, including CEd25519 work
+copyright (c) 2017 Zsolt Váradi, under the MIT License. The complete dependency
+licence is available from https://github.com/AndrewBarba/ed25519.

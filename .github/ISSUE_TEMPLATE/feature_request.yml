@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a focused improvement
+title: "[Feature]: "
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Explain the user need or interoperability gap.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: Describe the outcome rather than only a particular implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Primary area
+      options:
+        - Messaging and LXMF
+        - Reticulum networking
+        - RNode or radio
+        - Voice or media
+        - Telemetry or maps
+        - Privacy or security
+        - Accessibility or interface
+        - Developer tooling or documentation
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility considerations
+      description: Note relevant Python Sideband behaviour, hardware, platform limits, or wire formats.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

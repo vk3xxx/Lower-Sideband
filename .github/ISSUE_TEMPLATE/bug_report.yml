@@ -1,0 +1,72 @@
+name: Bug report
+description: Report a reproducible Lower Sideband problem
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Lower Sideband. Do not include private keys, credentials, personal messages, or precise location data. Security vulnerabilities must be reported privately as described in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version and build
+      description: Shown in the app or TestFlight.
+      placeholder: 1.2.3 (31)
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - iPhone
+        - iPad
+        - Multiple Apple platforms
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and device
+      placeholder: macOS 15.5 on MacBook Pro; iOS 18.5 on iPhone 16
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behaviour and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open …
+        2. Select …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: network
+    attributes:
+      label: Network or radio context
+      description: Describe automatic/manual mode, interface type, and visible state without disclosing credentials.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Privacy-safe diagnostics
+      description: Paste only diagnostics produced by the app and review them before submission.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed private keys, credentials, personal messages, and precise location data.
+          required: true
+        - label: This is not a confidential security vulnerability.
+          required: true

@@ -7,3 +7,7 @@ TestConfig/*-storage/
 *.xcuserstate
 .DS_Store
 AppStore/Screenshots/Raw/
+
+# Xcode may create numbered project copies during conflict resolution. The
+# generated project at MacSideband.xcodeproj is the only canonical project.
+MacSideband [0-9]*.xcodeproj/
