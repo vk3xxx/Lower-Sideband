@@ -2,9 +2,9 @@
 
 ## Release
 
-- Version: 1.1.2
-- Build: 20
-- App Store Connect: Build 20 improves the adaptive macOS layout and makes encrypted, synced conversation naming directly available on iPhone, iPad and Mac; it is a development build for the internal TestFlight group only
+- Version: 1.1.3
+- Build: 21
+- App Store Connect: Build 21 adds a complete native macOS application icon set; it is a development build for the internal TestFlight group only
 - Price: Free
 - Availability: All storefronts, including future storefronts
 - Release: Automatically release after App Review approval
@@ -19,8 +19,8 @@
 - Content rights: Necessary third-party content rights confirmed by the developer
 - User safety: Contacts can be blocked; contacts and individual incoming messages can be reported through a user-reviewed support email that excludes private content and keys by default
 - Add for Review: Complete
-- TestFlight: Build 20 uploaded and processed on 21 July 2026; assigned to `MacSideband Internal` with test notes saved
-- Submit for Review: 1.1.0 build 18 remains Waiting for Review; build 20 is not a release candidate and must not be submitted for App Review
+- TestFlight: Build 21 is the next internal TestFlight-only development build
+- Submit for Review: 1.1.0 build 18 remains Waiting for Review; build 21 is not a release candidate and must not be submitted for App Review
 - App Review submission ID: `21163873-76cc-404f-a5b7-0cc74e0f050b`
 - Apple Developer Support case ID: `102946262465`
 
