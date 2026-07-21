@@ -93,6 +93,66 @@ private actor RNodeTestCounter {
     func record(_ packet: Data) { count += 1; lastPacket = packet }
 }
 
+@Test func rnodeFramebufferMatchesReferenceGeometryAndEscapesEveryLine() throws {
+    var framebuffer = try RNodeFramebuffer()
+    framebuffer[0, 0] = true
+    framebuffer[63, 63] = true
+    framebuffer[16, 20] = true
+    #expect(framebuffer[0, 0])
+    #expect(framebuffer[63, 63])
+    #expect(framebuffer[16, 20])
+    #expect(!framebuffer[1, 0])
+    let commands = try RNodeProtocolEngine().framebufferWriteCommands(framebuffer.bytes)
+    var decoder = RNodeKISSDecoder()
+    let frames = decoder.consume(commands)
+    #expect(frames.count == 64)
+    #expect(frames.allSatisfy { $0.command == .framebufferWrite && $0.payload.count == 9 })
+    #expect(frames.first?.payload == Data([0]) + framebuffer.bytes.prefix(8))
+    #expect(frames.last?.payload == Data([63]) + framebuffer.bytes.suffix(8))
+}
+
+@Test func simulatedRNodeRoundTripsFramebufferDisplayAndROM() async throws {
+    let transport = SimulatedRNodeTransport(responseChunkSize: 3)
+    let interface = RNodeInterface(
+        configuration: RNodeConfiguration(name: "Display", transport: .simulated, target: "simulation"),
+        transportFactory: { _ in transport }, packetHandler: { _ in }
+    )
+    await interface.start()
+    let deadline = ContinuousClock.now + .seconds(2)
+    while await interface.snapshot().state != .ready, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    let pattern = RNodeFramebuffer.testPattern().bytes
+    try await interface.writeFramebuffer(pattern)
+    try await interface.requestFramebuffer()
+    try await interface.requestDisplaySnapshot()
+    try await interface.requestROMSnapshot()
+    let snapshot = await interface.snapshot()
+    #expect(snapshot.framebuffer == pattern)
+    #expect(snapshot.displaySnapshot?.prefix(512) == pattern)
+    #expect(snapshot.displaySnapshot?.count == 1_024)
+    #expect(snapshot.romSnapshot?.count == 256)
+    await interface.stop()
+}
+
+@Test func rnodeFirmwarePreflightRejectsTamperingAndHardwareMismatch() throws {
+    let image = Data("verified firmware".utf8)
+    let package = RNodeFirmwarePackage(version: "1.81", platform: 0x80, board: 0x33, trustedImage: image)
+    var metrics = RNodeMetrics()
+    metrics.platform = 0x80
+    metrics.board = 0x33
+    metrics.firmwareMajor = 1
+    metrics.firmwareMinor = 80
+    let plan = try RNodeFirmwareUpdatePlan(package: package, metrics: metrics)
+    #expect(plan.currentVersion == "1.80")
+    #expect(plan.imageBytes == image.count)
+    #expect(plan.requiresExternalBootloader)
+
+    let tampered = RNodeFirmwarePackage(version: "1.81", platform: 0x80, board: 0x33,
+                                        image: image + Data([0]), sha256: package.sha256)
+    #expect(throws: RNodeFirmwareValidationError.digestMismatch) { try tampered.validate(against: metrics) }
+    let wrongBoard = RNodeFirmwarePackage(version: "1.81", platform: 0x80, board: 0x34, trustedImage: image)
+    #expect(throws: RNodeFirmwareValidationError.boardMismatch) { try wrongBoard.validate(against: metrics) }
+}
+
 private struct PermissionProbePlugin: SidebandCommandPlugin {
     let manifest: SidebandPluginManifest
     init(permissions: Set<SidebandPluginPermission>) {

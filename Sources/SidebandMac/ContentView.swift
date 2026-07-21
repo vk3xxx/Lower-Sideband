@@ -1257,10 +1257,20 @@ private struct NetworkView: View {
                                 .font(.caption.monospaced()).foregroundStyle(.secondary)
                             if let metrics = snapshot?.metrics {
                                 HStack(spacing: 14) {
+                                    if let major = metrics.firmwareMajor, let minor = metrics.firmwareMinor { Text("Firmware \(major).\(minor)") }
+                                    if let board = metrics.board { Text("Board 0x\(String(board, radix: 16))") }
                                     if let rssi = metrics.rssi { Text("RSSI \(rssi) dBm") }
                                     if let snr = metrics.snr { Text("SNR \(snr.formatted(.number.precision(.fractionLength(1)))) dB") }
                                     if let battery = metrics.batteryPercent { Text("Battery \(battery)%") }
                                     if let airtime = metrics.airtimeLong { Text("Airtime \(airtime.formatted(.number.precision(.fractionLength(1))))%") }
+                                }.font(.caption2).foregroundStyle(.secondary)
+                            }
+                            if let snapshot {
+                                HStack(spacing: 14) {
+                                    if let framebuffer = snapshot.framebuffer { Text("Framebuffer \(framebuffer.count) B") }
+                                    if let display = snapshot.displaySnapshot { Text("Display \(display.count) B") }
+                                    if let rom = snapshot.romSnapshot { Text("ROM \(rom.count) B") }
+                                    if let beacon = snapshot.lastBeaconAt { Text("Station ID sent \(beacon, style: .relative)") }
                                 }.font(.caption2).foregroundStyle(.secondary)
                             }
                             if let error = snapshot?.lastError {
@@ -1272,6 +1282,16 @@ private struct NetworkView: View {
                                 Button("Blink") { Task { await store.rnodeManager.blink(configuration.id) } }
                                     .disabled(snapshot?.state != .ready)
                                     .help(snapshot?.state == .ready ? "Blink \(configuration.name) to identify the physical radio" : "Blink is unavailable because \(configuration.name) is not connected")
+                                Menu("Hardware") {
+                                    Button("Write display test pattern") {
+                                        Task { try? await store.rnodeManager.writeFramebuffer(RNodeFramebuffer.testPattern().bytes, on: configuration.id) }
+                                    }
+                                    Button("Read framebuffer") { Task { try? await store.rnodeManager.requestFramebuffer(on: configuration.id) } }
+                                    Button("Read complete display") { Task { try? await store.rnodeManager.requestDisplaySnapshot(on: configuration.id) } }
+                                    Button("Inspect ROM") { Task { try? await store.rnodeManager.requestROMSnapshot(on: configuration.id) } }
+                                }
+                                .disabled(snapshot?.state != .ready)
+                                .help(snapshot?.state == .ready ? "Test and inspect the RNode framebuffer, display and EEPROM without changing radio settings" : "Hardware tools require a ready RNode connection")
                                 Button(configuration.enabled ? "Disable" : "Enable") {
                                     var changed = configuration; changed.enabled.toggle()
                                     Task { try? await store.rnodeManager.upsert(changed) }

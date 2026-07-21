@@ -19,6 +19,7 @@ struct RNodeEditorView: View {
                 connectionSection
                 radioSection
                 airtimeSection
+                stationSection
             }
             .formStyle(.grouped)
             .navigationTitle("RNode Configuration")
@@ -86,6 +87,28 @@ struct RNodeEditorView: View {
                 .help("Long-term channel airtime ceiling: \(draft.longTermAirtimeLimit ?? 0)%")
             Text("Always choose frequencies, power and airtime limits permitted for your location and licence. Lower Sideband does not override RNode firmware safety limits.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var stationSection: some View {
+        Section("Station identification and display") {
+            TextField("Station ID / callsign", text: Binding(
+                get: { draft.beaconCallsign ?? "" },
+                set: { draft.beaconCallsign = $0.isEmpty ? nil : $0 }
+            ))
+            .help("Optional plain-text RNode station ID. It is transmitted over the radio and is therefore public; maximum 32 UTF-8 bytes.")
+            if draft.beaconCallsign?.isEmpty == false {
+                TextField("Station ID interval (seconds)", value: Binding(
+                    get: { draft.beaconInterval ?? 600 },
+                    set: { draft.beaconInterval = max(30, $0) }
+                ), format: .number.grouping(.never))
+                .help("Transmit the station ID after radio traffic at this interval; the minimum is 30 seconds.")
+            }
+            Toggle("Use external framebuffer", isOn: Binding(
+                get: { draft.externalFramebufferEnabled ?? false },
+                set: { draft.externalFramebufferEnabled = $0 }
+            ))
+            .help("Let Lower Sideband control the RNode's 64×64 monochrome framebuffer when supported by its display firmware.")
         }
     }
 

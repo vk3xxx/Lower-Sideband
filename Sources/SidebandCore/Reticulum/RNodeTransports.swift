@@ -367,6 +367,8 @@ public actor SimulatedRNodeTransport: RNodeByteTransport {
     private var stateHandler: (@Sendable (RNodeByteTransportState) async -> Void)?
     private var started = false
     private var firmware: (UInt8, UInt8)
+    private var framebuffer = Data(repeating: 0, count: 512)
+    private var rom = Data((0..<256).map { UInt8($0) })
     public private(set) var transmittedPackets: [Data] = []
 
     public init(loopbackPackets: Bool = true, responseChunkSize: Int = 7, firmware: (UInt8, UInt8) = (1, 80)) {
@@ -392,6 +394,9 @@ public actor SimulatedRNodeTransport: RNodeByteTransport {
             case .firmwareVersion: await respond(.firmwareVersion, Data([firmware.0, firmware.1]))
             case .platform: await respond(.platform, Data([0x80]))
             case .mcu: await respond(.mcu, Data([0x01]))
+            case .board: await respond(.board, Data([0x33]))
+            case .deviceHash: await respond(.deviceHash, Data(repeating: 0xA5, count: 32))
+            case .hashes: await respond(.firmwareHash, Data(repeating: 0x5A, count: 32))
             case .frequency, .bandwidth, .txPower, .spreadingFactor, .codingRate,
                  .shortTermAirtimeLock, .longTermAirtimeLock, .radioState:
                 await respond(frame.command, frame.payload)
@@ -399,6 +404,15 @@ public actor SimulatedRNodeTransport: RNodeByteTransport {
                 transmittedPackets.append(frame.payload)
                 if loopbackPackets { await respond(.data, frame.payload) }
             case .blink: await respond(.ready, Data([0x01]))
+            case .externalFramebuffer: await respond(.externalFramebuffer, frame.payload)
+            case .framebufferWrite where frame.payload.count == 9:
+                let line = min(63, Int(frame.payload[0]))
+                framebuffer.replaceSubrange(line * 8..<(line + 1) * 8, with: frame.payload.dropFirst())
+            case .framebufferRead: await respond(.framebufferRead, framebuffer)
+            case .displayRead: await respond(.displayRead, framebuffer + Data(repeating: 0, count: 512))
+            case .romRead: await respond(.romRead, rom)
+            case .firmwareUpdate: await respond(.ready, Data([0x01]))
+            case .reset: await respond(.reset, Data([0xF8]))
             default: break
             }
         }

@@ -36,13 +36,32 @@ public enum RNodeKISS {
         case externalFramebuffer = 0x41
         case framebufferRead = 0x42
         case framebufferWrite = 0x43
+        case framebufferReadLine = 0x44
+        case displayIntensity = 0x45
         case bluetoothControl = 0x46
+        case board = 0x47
         case platform = 0x48
         case mcu = 0x49
         case firmwareVersion = 0x50
         case romRead = 0x51
+        case romWrite = 0x52
+        case configurationSave = 0x53
+        case configurationDelete = 0x54
         case reset = 0x55
+        case deviceHash = 0x56
+        case deviceSignature = 0x57
+        case firmwareHash = 0x58
+        case romUnlock = 0x59
+        case hashes = 0x60
+        case firmwareUpdate = 0x61
+        case bluetoothPIN = 0x62
+        case displayAddress = 0x63
+        case displayBlank = 0x64
+        case neopixelIntensity = 0x65
         case displayRead = 0x66
+        case displayRotation = 0x67
+        case displayRecondition = 0x68
+        case bluetoothUnpair = 0x70
         case error = 0x90
     }
 
@@ -155,6 +174,12 @@ public struct RNodeConfiguration: Codable, Equatable, Identifiable, Sendable {
     public var longTermAirtimeLimit: Double?
     public var enabled: Bool
     public var automaticallyReconnects: Bool
+    /// Optional plain-text station identification, transmitted exactly like the
+    /// reference RNode interface after normal traffic begins.
+    public var beaconCallsign: String?
+    public var beaconInterval: TimeInterval?
+    /// Nil preserves settings written by older app versions.
+    public var externalFramebufferEnabled: Bool?
 
     public init(
         id: UUID = UUID(), name: String = "RNode", transport: RNodeTransportKind = .bluetoothLE,
@@ -162,7 +187,8 @@ public struct RNodeConfiguration: Codable, Equatable, Identifiable, Sendable {
         bandwidth: UInt32 = 125_000, txPower: UInt8 = 7, spreadingFactor: UInt8 = 8,
         codingRate: UInt8 = 5, shortTermAirtimeLimit: Double? = 33,
         longTermAirtimeLimit: Double? = 1.5, enabled: Bool = true,
-        automaticallyReconnects: Bool = true
+        automaticallyReconnects: Bool = true, beaconCallsign: String? = nil,
+        beaconInterval: TimeInterval? = nil, externalFramebufferEnabled: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -178,6 +204,9 @@ public struct RNodeConfiguration: Codable, Equatable, Identifiable, Sendable {
         self.longTermAirtimeLimit = longTermAirtimeLimit
         self.enabled = enabled
         self.automaticallyReconnects = automaticallyReconnects
+        self.beaconCallsign = beaconCallsign
+        self.beaconInterval = beaconInterval
+        self.externalFramebufferEnabled = externalFramebufferEnabled
     }
 
     public func validated() throws -> Self {
@@ -188,6 +217,10 @@ public struct RNodeConfiguration: Codable, Equatable, Identifiable, Sendable {
         guard (5...8).contains(codingRate) else { throw RNodeError.invalidCodingRate }
         for limit in [shortTermAirtimeLimit, longTermAirtimeLimit].compactMap({ $0 }) {
             guard (0...100).contains(limit) else { throw RNodeError.invalidAirtimeLimit }
+        }
+        if let callsign = beaconCallsign, !callsign.isEmpty {
+            guard callsign.lengthOfBytes(using: .utf8) <= 32 else { throw RNodeError.invalidBeacon }
+            guard let interval = beaconInterval, interval >= 30 else { throw RNodeError.invalidBeacon }
         }
         if transport != .bluetoothLE && transport != .simulated && target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw RNodeError.missingTarget
@@ -211,6 +244,10 @@ public struct RNodeMetrics: Codable, Equatable, Sendable {
     public var firmwareMinor: UInt8?
     public var platform: UInt8?
     public var mcu: UInt8?
+    public var board: UInt8?
+    public var externalFramebufferEnabled: Bool?
+    public var deviceHash: Data?
+    public var firmwareHash: Data?
     public var receivedBytes: UInt32?
     public var transmittedBytes: UInt32?
     public var rssi: Int?
@@ -235,12 +272,16 @@ public enum RNodeEvent: Equatable, Sendable {
     case detected
     case ready
     case metrics(RNodeMetrics)
+    case framebuffer(Data)
+    case display(Data)
+    case rom(Data)
     case hardwareError(UInt8, String)
 }
 
 public enum RNodeError: LocalizedError, Equatable, Sendable {
     case invalidFrequency, invalidBandwidth, invalidTransmitPower, invalidSpreadingFactor
     case invalidCodingRate, invalidAirtimeLimit, missingTarget, notConnected
+    case invalidBeacon, invalidFramebuffer
     case detectionTimedOut, incompatibleFirmware(UInt8, UInt8), configurationMismatch
     case transport(String), hardware(UInt8, String)
 
@@ -252,6 +293,8 @@ public enum RNodeError: LocalizedError, Equatable, Sendable {
         case .invalidSpreadingFactor: "RNode spreading factor must be between 5 and 12."
         case .invalidCodingRate: "RNode coding rate must be between 5 and 8."
         case .invalidAirtimeLimit: "RNode airtime limits must be between 0 and 100 percent."
+        case .invalidBeacon: "RNode station ID must be at most 32 UTF-8 bytes and use an interval of at least 30 seconds."
+        case .invalidFramebuffer: "RNode framebuffer data must contain 512 bytes (64×64 monochrome pixels)."
         case .missingTarget: "Choose an RNode device, host, or serial port."
         case .notConnected: "The RNode is not connected."
         case .detectionTimedOut: "The connected device did not identify itself as an RNode."
@@ -283,6 +326,9 @@ public struct RNodeProtocolEngine: Sendable {
         + RNodeKISS.frame(command: .firmwareVersion, payload: Data([0]))
         + RNodeKISS.frame(command: .platform, payload: Data([0]))
         + RNodeKISS.frame(command: .mcu, payload: Data([0]))
+        + RNodeKISS.frame(command: .board, payload: Data([0]))
+        + RNodeKISS.frame(command: .deviceHash, payload: Data([1]))
+        + RNodeKISS.frame(command: .hashes, payload: Data([2]))
     }
 
     public func configurationCommands(_ configuration: RNodeConfiguration) -> Data {
@@ -295,6 +341,9 @@ public struct RNodeProtocolEngine: Sendable {
         if let limit = configuration.shortTermAirtimeLimit { result += airtimeCommand(.shortTermAirtimeLock, limit) }
         if let limit = configuration.longTermAirtimeLimit { result += airtimeCommand(.longTermAirtimeLock, limit) }
         result += RNodeKISS.frame(command: .radioState, payload: Data([1]))
+        if let enabled = configuration.externalFramebufferEnabled {
+            result += externalFramebufferCommand(enabled: enabled)
+        }
         return result
     }
 
@@ -305,6 +354,22 @@ public struct RNodeProtocolEngine: Sendable {
 
     public func leaveCommand() -> Data { RNodeKISS.frame(command: .leave, payload: Data([0xFF])) }
     public func blinkCommand() -> Data { RNodeKISS.frame(command: .blink, payload: Data([0x01])) }
+    public func resetCommand() -> Data { RNodeKISS.frame(command: .reset, payload: Data([0xF8])) }
+    public func firmwareUpdateCommand() -> Data { RNodeKISS.frame(command: .firmwareUpdate, payload: Data([0x01])) }
+    public func framebufferReadCommand() -> Data { RNodeKISS.frame(command: .framebufferRead, payload: Data([0x01])) }
+    public func displayReadCommand() -> Data { RNodeKISS.frame(command: .displayRead, payload: Data([0x01])) }
+    public func romReadCommand() -> Data { RNodeKISS.frame(command: .romRead, payload: Data([0x01])) }
+    public func externalFramebufferCommand(enabled: Bool) -> Data {
+        RNodeKISS.frame(command: .externalFramebuffer, payload: Data([enabled ? 1 : 0]))
+    }
+    public func framebufferWriteCommands(_ framebuffer: Data) throws -> Data {
+        guard framebuffer.count == 512 else { throw RNodeError.invalidFramebuffer }
+        var commands = Data()
+        for line in 0..<64 {
+            commands += RNodeKISS.frame(command: .framebufferWrite, payload: Data([UInt8(line)]) + framebuffer.subdata(in: line * 8..<(line + 1) * 8))
+        }
+        return commands
+    }
 
     public func configurationMatches(_ configuration: RNodeConfiguration) -> Bool {
         guard let frequency = metrics.frequency, abs(Int64(frequency) - Int64(configuration.frequency)) <= 100,
@@ -332,6 +397,10 @@ public struct RNodeProtocolEngine: Sendable {
             metrics.firmwareMajor = p[0]; metrics.firmwareMinor = p[1]
         case .platform: metrics.platform = p.first
         case .mcu: metrics.mcu = p.first
+        case .board: metrics.board = p.first
+        case .externalFramebuffer: metrics.externalFramebufferEnabled = p.first.map { $0 != 0 }
+        case .deviceHash: metrics.deviceHash = p
+        case .firmwareHash: metrics.firmwareHash = p
         case .receivedBytes: metrics.receivedBytes = uint32(p)
         case .transmittedBytes: metrics.transmittedBytes = uint32(p)
         case .rssi where !p.isEmpty: metrics.rssi = Int(p[0]) - Self.rssiOffset
@@ -355,12 +424,15 @@ public struct RNodeProtocolEngine: Sendable {
         case .temperature where !p.isEmpty:
             let value = Int(p[0]) - 120
             metrics.temperature = (-30...90).contains(value) ? value : nil
+        case .framebufferRead where p.count == 512: events.append(.framebuffer(p))
+        case .displayRead where p.count == 1024: events.append(.display(p))
+        case .romRead where !p.isEmpty: events.append(.rom(p))
         case .ready: events.append(.ready)
         case .error where !p.isEmpty:
             events.append(.hardwareError(p[0], hardwareErrorDescription(p[0])))
         default: break
         }
-        if frame.command != .data && frame.command != .detect && frame.command != .ready && frame.command != .error {
+        if frame.command != .data && frame.command != .detect && frame.command != .ready && frame.command != .error && frame.command != .framebufferRead && frame.command != .displayRead && frame.command != .romRead {
             metrics.lastUpdatedAt = .now
             events.append(.metrics(metrics))
         }

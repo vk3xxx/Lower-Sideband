@@ -17,6 +17,10 @@ public actor RNodeInterface {
         public let lastPacketAt: Date?
         public let lastError: String?
         public let queuedPackets: Int
+        public let framebuffer: Data?
+        public let displaySnapshot: Data?
+        public let romSnapshot: Data?
+        public let lastBeaconAt: Date?
     }
 
     public typealias TransportFactory = @Sendable (RNodeConfiguration) throws -> any RNodeByteTransport
@@ -31,7 +35,12 @@ public actor RNodeInterface {
     private var pendingPackets: [Data] = []
     private var detectionTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
+    private var beaconTask: Task<Void, Never>?
     private var generation = UUID()
+    private var framebuffer: Data?
+    private var displaySnapshot: Data?
+    private var romSnapshot: Data?
+    private var lastBeaconAt: Date?
     private let packetHandler: @Sendable (Data) async -> Void
     private let snapshotHandler: @Sendable (Snapshot) async -> Void
 
@@ -71,6 +80,7 @@ public actor RNodeInterface {
     public func stop() async {
         reconnectTask?.cancel(); reconnectTask = nil
         detectionTask?.cancel(); detectionTask = nil
+        beaconTask?.cancel(); beaconTask = nil
         generation = UUID()
         if state == .ready { try? await transport?.write(engine.leaveCommand()) }
         await transport?.stop()
@@ -97,6 +107,41 @@ public actor RNodeInterface {
     public func blink() async throws {
         guard state == .ready, let transport else { throw RNodeError.notConnected }
         try await transport.write(engine.blinkCommand())
+    }
+
+    public func setExternalFramebuffer(_ enabled: Bool) async throws {
+        guard state == .ready, let transport else { throw RNodeError.notConnected }
+        try await transport.write(engine.externalFramebufferCommand(enabled: enabled))
+    }
+
+    public func writeFramebuffer(_ data: Data) async throws {
+        guard state == .ready, let transport else { throw RNodeError.notConnected }
+        try await transport.write(try engine.framebufferWriteCommands(data))
+    }
+
+    public func requestFramebuffer() async throws {
+        guard state == .ready, let transport else { throw RNodeError.notConnected }
+        try await transport.write(engine.framebufferReadCommand())
+    }
+
+    public func requestDisplaySnapshot() async throws {
+        guard state == .ready, let transport else { throw RNodeError.notConnected }
+        try await transport.write(engine.displayReadCommand())
+    }
+
+    public func requestROMSnapshot() async throws {
+        guard state == .ready, let transport else { throw RNodeError.notConnected }
+        try await transport.write(engine.romReadCommand())
+    }
+
+    public func enterFirmwareUpdateMode() async throws {
+        guard state == .ready, let transport else { throw RNodeError.notConnected }
+        try await transport.write(engine.firmwareUpdateCommand())
+    }
+
+    public func resetHardware() async throws {
+        guard state == .ready, let transport else { throw RNodeError.notConnected }
+        try await transport.write(engine.resetCommand())
     }
 
     public func snapshot() -> Snapshot { makeSnapshot() }
@@ -157,8 +202,12 @@ public actor RNodeInterface {
                     detectionTask?.cancel(); detectionTask = nil
                     state = .ready
                     await flushQueue()
+                    startBeaconSchedule()
                 }
                 await publish()
+            case .framebuffer(let data): framebuffer = data; await publish()
+            case .display(let data): displaySnapshot = data; await publish()
+            case .rom(let data): romSnapshot = data; await publish()
             case .hardwareError(let code, let reason):
                 await fail(RNodeError.hardware(code, reason).localizedDescription)
             }
@@ -173,6 +222,7 @@ public actor RNodeInterface {
 
     private func fail(_ reason: String) async {
         detectionTask?.cancel(); detectionTask = nil
+        beaconTask?.cancel(); beaconTask = nil
         state = .failed(reason)
         lastError = reason
         await publish()
@@ -193,12 +243,35 @@ public actor RNodeInterface {
     }
 
     private func publish() async { await snapshotHandler(makeSnapshot()) }
+    private func startBeaconSchedule() {
+        beaconTask?.cancel(); beaconTask = nil
+        guard let callsign = configuration.beaconCallsign, !callsign.isEmpty,
+              let interval = configuration.beaconInterval, interval >= 30 else { return }
+        beaconTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled else { return }
+                await self?.transmitBeacon(Data(callsign.utf8))
+            }
+        }
+    }
+
+    private func transmitBeacon(_ payload: Data) async {
+        guard state == .ready, let transport else { return }
+        do {
+            try await transport.write(try engine.packetFrame(payload))
+            lastBeaconAt = .now
+            await publish()
+        } catch { lastError = error.localizedDescription; await publish() }
+    }
     private func makeSnapshot() -> Snapshot {
         Snapshot(
             id: configuration.id, name: configuration.name, transport: configuration.transport,
             target: configuration.target, state: state, metrics: engine.metrics,
             connectedAt: connectedAt, lastPacketAt: lastPacketAt, lastError: lastError,
-            queuedPackets: pendingPackets.count
+            queuedPackets: pendingPackets.count, framebuffer: framebuffer,
+            displaySnapshot: displaySnapshot, romSnapshot: romSnapshot,
+            lastBeaconAt: lastBeaconAt
         )
     }
 
@@ -317,6 +390,13 @@ public final class RNodeManager {
     }
 
     public func blink(_ id: UUID) async { try? await interfaces[id]?.blink() }
+    public func setExternalFramebuffer(_ enabled: Bool, on id: UUID) async throws { try await interfaces[id]?.setExternalFramebuffer(enabled) }
+    public func writeFramebuffer(_ data: Data, on id: UUID) async throws { try await interfaces[id]?.writeFramebuffer(data) }
+    public func requestFramebuffer(on id: UUID) async throws { try await interfaces[id]?.requestFramebuffer() }
+    public func requestDisplaySnapshot(on id: UUID) async throws { try await interfaces[id]?.requestDisplaySnapshot() }
+    public func requestROMSnapshot(on id: UUID) async throws { try await interfaces[id]?.requestROMSnapshot() }
+    public func enterFirmwareUpdateMode(on id: UUID) async throws { try await interfaces[id]?.enterFirmwareUpdateMode() }
+    public func resetHardware(_ id: UUID) async throws { try await interfaces[id]?.resetHardware() }
 
     /// Runs framing, chunk-boundary, detection, configuration and packet-loopback checks without radio hardware.
     public func runSelfTest() async {
