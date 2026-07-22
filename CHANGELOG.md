@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.12 (50) - 2026-07-22
+
+- Made transient TCP tunnel-synthesis failures non-modal during automatic gateway recovery.
+- Coalesced duplicate tunnel maintenance sends and exposed deferred attempts in Network Status diagnostics.
+
 ## 1.3.11 (49) - 2026-07-22
 
 - Added an absolute UTC release gate so independent macOS and Linux soak runners begin the same run simultaneously.

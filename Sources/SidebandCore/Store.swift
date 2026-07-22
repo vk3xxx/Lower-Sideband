@@ -57,6 +57,8 @@ public final class SidebandStore {
     public private(set) var keepalivesReceived = 0
     public private(set) var keepalivesSent = 0
     public private(set) var deferredKeepalives = 0
+    public private(set) var deferredTunnelSyntheses = 0
+    public private(set) var lastDeferredTunnelSynthesisAt: Date?
     public private(set) var linkIdentificationsSent = 0
     public private(set) var propagationRequestsSent = 0
     public private(set) var propagationResponsesReceived = 0
@@ -156,6 +158,7 @@ public final class SidebandStore {
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
     private var networkInterfacePool: ReticulumTCPInterfacePool?
+    private var tcpTunnelSynthesisInProgress = false
     private var knownTCPInterfaceIDs: Set<String> = []
     private var tcpNetworkState: ReticulumTCPInterface.State = .stopped
     private var autoConnectedDiscoveredInterfaceIDs: Set<String> = []
@@ -320,6 +323,8 @@ public final class SidebandStore {
         telemetryCollectorLatestOnly = UserDefaults.standard.object(forKey: "telemetryCollectorLatestOnly") as? Bool ?? true
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         deferredKeepalives = UserDefaults.standard.integer(forKey: "reticulumDeferredKeepalives")
+        deferredTunnelSyntheses = UserDefaults.standard.integer(forKey: "reticulumDeferredTunnelSyntheses")
+        lastDeferredTunnelSynthesisAt = UserDefaults.standard.object(forKey: "reticulumLastDeferredTunnelSynthesisAt") as? Date
         lastBackgroundRefreshAt = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshAt") as? Date
         lastBackgroundRefreshSucceeded = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshSucceeded") as? Bool
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
@@ -2031,6 +2036,7 @@ public final class SidebandStore {
             "Known paths: \(knownPathCount)",
             "Discoveries: \(discoveries.count) (\(validatedDiscoveryCount) validated)",
             "Links: \(activeLinkCount) active, \(pendingLinkCount) pending",
+            "Deferred maintenance: \(deferredKeepalives) keepalives, \(deferredTunnelSyntheses) tunnel syntheses",
             "Messages: \(messages.count) total, \(messages.count(where: { $0.state == .queued })) queued, \(messages.count(where: { $0.state == .failed })) failed",
             "Plugins: \(pluginRegistry.manifests.count) loaded, \(pluginRegistry.rejectedPluginDescriptions.count) rejected, \(pluginAuditEvents.count) audit events",
             "Propagation node: \(propagationNodeHash.isEmpty ? "not discovered" : propagationNodeHash) (\(propagationNodeIsAutomatic ? "automatic" : "manual"))",
@@ -2801,9 +2807,28 @@ public final class SidebandStore {
     }
 
     private func synthesizeTCPTunnel() async {
-        guard let networkInterfacePool else { return }
-        do { try await networkInterfacePool.send(rawPacket: ReticulumTunnelSynthesis.packet(identity: transportIdentity, interfaceHash: tcpInterfaceHash)) }
-        catch { lastError = "TCP tunnel synthesis failed: \(error.localizedDescription)" }
+        // The ready transition can arrive through both the TCP pool and the
+        // aggregate network state. Coalesce those callbacks so maintenance
+        // traffic is emitted once per transition instead of racing itself.
+        guard !tcpTunnelSynthesisInProgress, let networkInterfacePool else { return }
+        tcpTunnelSynthesisInProgress = true
+        defer { tcpTunnelSynthesisInProgress = false }
+        do {
+            try await networkInterfacePool.send(
+                rawPacket: ReticulumTunnelSynthesis.packet(identity: transportIdentity, interfaceHash: tcpInterfaceHash)
+            )
+        } catch {
+            // A ready interface can disappear between the state callback and
+            // this send. Tunnel synthesis is advisory maintenance traffic; the
+            // pool's reconnect controller will retry it on the next ready
+            // transition. Record the event without interrupting the user or
+            // disturbing queued messages.
+            deferredTunnelSyntheses += 1
+            lastDeferredTunnelSynthesisAt = .now
+            UserDefaults.standard.set(deferredTunnelSyntheses, forKey: "reticulumDeferredTunnelSyntheses")
+            UserDefaults.standard.set(lastDeferredTunnelSynthesisAt, forKey: "reticulumLastDeferredTunnelSynthesisAt")
+            deliveryDebugTrace("TCP tunnel synthesis deferred during reconnect: \(error.localizedDescription)")
+        }
     }
 
     /// Immediately broadcasts this profile's LXMF delivery and voice

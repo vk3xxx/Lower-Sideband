@@ -1310,6 +1310,7 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(report.contains("Sideband Network Diagnostics"))
     #expect(report.contains("Local destination: \(store.localDeliveryHash)"))
     #expect(report.contains("TCP endpoint:"))
+    #expect(report.contains("Deferred maintenance:"))
     #expect(!report.localizedCaseInsensitiveContains("private key"))
 }
 
