@@ -66,6 +66,25 @@ public final class SidebandStore {
     public private(set) var propagationUploadsAccepted = 0
     public private(set) var deliveryAnnouncesSent = 0
     public private(set) var lastDeliveryAnnounceAt: Date?
+    public private(set) var lastAnnouncedDeliveryHash: String?
+    public private(set) var lastInboundDeliveryPacketAt: Date?
+    public private(set) var lastInboundDeliveryDestination: String?
+    public private(set) var lastInboundDeliveryInterface: String?
+    public private(set) var lastInboundDeliveryMatched: Bool?
+    public private(set) var lastInboundMessageAt: Date?
+    public private(set) var lastInboundMessageSource: String?
+    public private(set) var lastInboundMessageID: String?
+    public private(set) var lastInboundMessageResult: String?
+    public private(set) var lastDeliveryProofSentAt: Date?
+    public private(set) var lastDeliveryProofInterface: String?
+    public private(set) var lastDeliveryProofKind: String?
+    public private(set) var lastDeliveryProofFailureAt: Date?
+    public private(set) var lastDeliveryProofFailure: String?
+    public private(set) var inboundMessagesAccepted = 0
+    public private(set) var inboundMessagesRejected = 0
+    public private(set) var deliveryProofsSent = 0
+    public private(set) var deliveryProofsDeferred = 0
+    public private(set) var deliveryDiagnosticEvents: [String] = []
     public private(set) var inboundLinksAccepted = 0
     public private(set) var opportunisticDeliveriesReceived = 0
     public private(set) var lastPropagationSync: Date?
@@ -325,6 +344,28 @@ public final class SidebandStore {
         deferredKeepalives = UserDefaults.standard.integer(forKey: "reticulumDeferredKeepalives")
         deferredTunnelSyntheses = UserDefaults.standard.integer(forKey: "reticulumDeferredTunnelSyntheses")
         lastDeferredTunnelSynthesisAt = UserDefaults.standard.object(forKey: "reticulumLastDeferredTunnelSynthesisAt") as? Date
+        lastAnnouncedDeliveryHash = UserDefaults.standard.string(forKey: "lxmfLastAnnouncedDeliveryHash")
+        lastDeliveryAnnounceAt = UserDefaults.standard.object(forKey: "lxmfLastDeliveryAnnounceAt") as? Date
+        lastInboundDeliveryPacketAt = UserDefaults.standard.object(forKey: "lxmfLastInboundDeliveryPacketAt") as? Date
+        lastInboundDeliveryDestination = UserDefaults.standard.string(forKey: "lxmfLastInboundDeliveryDestination")
+        lastInboundDeliveryInterface = UserDefaults.standard.string(forKey: "lxmfLastInboundDeliveryInterface")
+        if UserDefaults.standard.object(forKey: "lxmfLastInboundDeliveryMatched") != nil {
+            lastInboundDeliveryMatched = UserDefaults.standard.bool(forKey: "lxmfLastInboundDeliveryMatched")
+        }
+        lastInboundMessageAt = UserDefaults.standard.object(forKey: "lxmfLastInboundMessageAt") as? Date
+        lastInboundMessageSource = UserDefaults.standard.string(forKey: "lxmfLastInboundMessageSource")
+        lastInboundMessageID = UserDefaults.standard.string(forKey: "lxmfLastInboundMessageID")
+        lastInboundMessageResult = UserDefaults.standard.string(forKey: "lxmfLastInboundMessageResult")
+        lastDeliveryProofSentAt = UserDefaults.standard.object(forKey: "lxmfLastDeliveryProofSentAt") as? Date
+        lastDeliveryProofInterface = UserDefaults.standard.string(forKey: "lxmfLastDeliveryProofInterface")
+        lastDeliveryProofKind = UserDefaults.standard.string(forKey: "lxmfLastDeliveryProofKind")
+        lastDeliveryProofFailureAt = UserDefaults.standard.object(forKey: "lxmfLastDeliveryProofFailureAt") as? Date
+        lastDeliveryProofFailure = UserDefaults.standard.string(forKey: "lxmfLastDeliveryProofFailure")
+        inboundMessagesAccepted = UserDefaults.standard.integer(forKey: "lxmfInboundMessagesAccepted")
+        inboundMessagesRejected = UserDefaults.standard.integer(forKey: "lxmfInboundMessagesRejected")
+        deliveryProofsSent = UserDefaults.standard.integer(forKey: "lxmfDeliveryProofsSent")
+        deliveryProofsDeferred = UserDefaults.standard.integer(forKey: "lxmfDeliveryProofsDeferred")
+        deliveryDiagnosticEvents = Array((UserDefaults.standard.stringArray(forKey: "lxmfDeliveryDiagnosticEvents") ?? []).prefix(24))
         lastBackgroundRefreshAt = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshAt") as? Date
         lastBackgroundRefreshSucceeded = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshSucceeded") as? Bool
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
@@ -1990,6 +2031,7 @@ public final class SidebandStore {
 
     public var propagationNodeHasPath: Bool { hasPath(to: propagationNodeHash) }
     public var propagationNodePathPending: Bool { isPathPending(to: propagationNodeHash) }
+    public var messagingIdentityHash: String { messagingIdentity.hash.hex }
     public var localDeliveryHash: String {
         let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         return ReticulumIdentity.truncatedHash(nameHash + messagingIdentity.hash).hex
@@ -2024,7 +2066,10 @@ public final class SidebandStore {
             "Lower Sideband Network Diagnostics",
             "Generated: \(ISO8601DateFormatter().string(from: .now))",
             "Local name: \(localDisplayName)",
+            "Messaging identity: \(messagingIdentityHash)",
             "Local destination: \(localDeliveryHash)",
+            "Last announced destination: \(lastAnnouncedDeliveryHash ?? "never")",
+            "Last announce: \(lastDeliveryAnnounceAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")",
             "Network state: \(state)",
             "TCP endpoint: \(networkInterfaces.map { "\($0.name)\($0.isBootstrap ? "[bootstrap]" : "[discovered]")=\($0.state)" }.joined(separator: ", "))",
             "RNode interfaces: \(rnodeDetails.isEmpty ? "none" : rnodeDetails)",
@@ -2036,6 +2081,11 @@ public final class SidebandStore {
             "Known paths: \(knownPathCount)",
             "Discoveries: \(discoveries.count) (\(validatedDiscoveryCount) validated)",
             "Links: \(activeLinkCount) active, \(pendingLinkCount) pending",
+            "Inbound packet: \(lastInboundDeliveryPacketAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never"), destination \(lastInboundDeliveryDestination ?? "none"), interface \(lastInboundDeliveryInterface ?? "unknown"), matched \(lastInboundDeliveryMatched.map(String.init) ?? "unknown")",
+            "Inbound message: \(lastInboundMessageAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never"), source \(lastInboundMessageSource ?? "unknown"), ID \(lastInboundMessageID ?? "none"), result \(lastInboundMessageResult ?? "none")",
+            "Inbound validation: \(inboundMessagesAccepted) accepted, \(inboundMessagesRejected) rejected",
+            "Delivery proofs: \(deliveryProofsSent) sent, \(deliveryProofsDeferred) deferred, last \(lastDeliveryProofSentAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never") via \(lastDeliveryProofInterface ?? "unknown") (\(lastDeliveryProofKind ?? "none"))",
+            "Last proof failure: \(lastDeliveryProofFailureAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never") · \(lastDeliveryProofFailure ?? "none")",
             "Deferred maintenance: \(deferredKeepalives) keepalives, \(deferredTunnelSyntheses) tunnel syntheses",
             "Messages: \(messages.count) total, \(messages.count(where: { $0.state == .queued })) queued, \(messages.count(where: { $0.state == .failed })) failed",
             "Plugins: \(pluginRegistry.manifests.count) loaded, \(pluginRegistry.rejectedPluginDescriptions.count) rejected, \(pluginAuditEvents.count) audit events",
@@ -2043,7 +2093,8 @@ public final class SidebandStore {
             "Remote wake token: \(UserDefaults.standard.string(forKey: "sidebandAPNsDeviceToken") == nil ? "not registered" : "registered")",
             "Runtime: low power \(runtimeHealth.isLowPowerModeEnabled ? "on" : "off"), thermal \(runtimeHealth.thermalState.rawValue), memory warnings \(runtimeHealth.memoryPressureEvents)",
             "Last connected: \(lastNetworkReadyAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never")",
-            "Background refresh: \(lastBackgroundRefreshAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never") · \(lastBackgroundRefreshSucceeded.map { $0 ? "succeeded" : "incomplete" } ?? "not run")"
+            "Background refresh: \(lastBackgroundRefreshAt.map { ISO8601DateFormatter().string(from: $0) } ?? "never") · \(lastBackgroundRefreshSucceeded.map { $0 ? "succeeded" : "incomplete" } ?? "not run")",
+            "Recent delivery events:\n\(deliveryDiagnosticEvents.isEmpty ? "none" : deliveryDiagnosticEvents.joined(separator: "\n"))"
         ].joined(separator: "\n")
     }
 
@@ -2849,10 +2900,15 @@ public final class SidebandStore {
             try await transmitRawPacket(voicePacket)
             deliveryAnnouncesSent += 1
             lastDeliveryAnnounceAt = .now
+            lastAnnouncedDeliveryHash = localDeliveryHash
+            UserDefaults.standard.set(lastAnnouncedDeliveryHash, forKey: "lxmfLastAnnouncedDeliveryHash")
+            UserDefaults.standard.set(lastDeliveryAnnounceAt, forKey: "lxmfLastDeliveryAnnounceAt")
+            recordDeliveryDiagnosticEvent("Announced delivery destination \(localDeliveryHash)")
             return true
         } catch {
             // Connection transitions are retried by the engine. An announce is
             // maintenance traffic and must never interrupt the user with a modal.
+            recordDeliveryDiagnosticEvent("Delivery announce deferred: \(error.localizedDescription)")
             return false
         }
     }
@@ -2891,6 +2947,14 @@ public final class SidebandStore {
 
     private func receive(_ packet: ReticulumPacket, interfaceID: String? = nil) {
         receivedPacketCount += 1
+        if packet.packetType == .linkRequest,
+           packet.destinationHash.hex == localDeliveryHash || packet.destinationHash.hex == localVoiceHash {
+            recordInboundDeliveryPacket(destination: packet.destinationHash.hex, interfaceID: interfaceID, matched: true)
+        } else if packet.packetType == .data,
+                  packet.destinationType == .single,
+                  packet.destinationHash.hex == localDeliveryHash {
+            recordInboundDeliveryPacket(destination: packet.destinationHash.hex, interfaceID: interfaceID, matched: true)
+        }
         if packet.destinationHash.hex == localDeliveryHash || packet.packetType == .proof {
             deliveryDebugTrace("RX \(packet.packetType) for \(packet.destinationHash.hex) on \(interfaceID ?? "unknown"), header \(packet.headerType), hops \(packet.hops)")
         }
@@ -2912,7 +2976,7 @@ public final class SidebandStore {
             return
         }
         if packet.destinationType == .link {
-            receiveLinkPacket(packet)
+            receiveLinkPacket(packet, interfaceID: interfaceID)
             return
         }
         if packet.packetType == .data, packet.destinationType == .single, packet.destinationHash.hex == localDeliveryHash {
@@ -3095,12 +3159,17 @@ public final class SidebandStore {
         }
     }
 
-    private func receiveLinkPacket(_ packet: ReticulumPacket) {
+    private func receiveLinkPacket(_ packet: ReticulumPacket, interfaceID: String?) {
         let linkID = packet.destinationHash.hex
         guard let session = activeLinks[linkID] else {
             deliveryDebugTrace("RX link packet for unknown session \(linkID), context \(packet.context), bytes \(packet.data.count)")
             return
         }
+        // Reticulum paths can move between public gateways during a live link.
+        // Always return application proofs over the interface that most
+        // recently carried this link, rather than its original or an arbitrary
+        // ready interface.
+        if let interfaceID { linkInterfaceIDs[linkID] = interfaceID }
         if packet.context == 0xfa {
             keepalivesReceived += 1
             return
@@ -3187,24 +3256,51 @@ public final class SidebandStore {
             bind(session: session, to: identity)
             return
         }
-        guard packet.context == 0x00, let message = try? LXMFReceivedMessage(packed: plaintext), message.destinationHash.hex == localDeliveryHash else { return }
+        guard packet.context == 0x00 else { return }
+        guard let message = try? LXMFReceivedMessage(packed: plaintext) else {
+            recordInboundMessage(source: nil, messageID: nil, result: "rejected: LXMF decode failed")
+            return
+        }
+        guard message.destinationHash.hex == localDeliveryHash else {
+            recordInboundDeliveryPacket(destination: message.destinationHash.hex, interfaceID: linkInterfaceIDs[session.linkID.hex], matched: false)
+            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: destination mismatch")
+            return
+        }
         let remoteIdentity = inboundRemoteIdentities[session.linkID.hex] ?? discoveries.first(where: { $0.destinationHash == message.sourceHash.hex }).flatMap { $0.publicKey }.flatMap { try? ReticulumIdentity(publicKey: $0) }
-        guard let remoteIdentity, message.validate(with: remoteIdentity) else { return }
+        guard let remoteIdentity else {
+            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: sender identity unavailable")
+            return
+        }
+        guard message.validate(with: remoteIdentity) else {
+            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: signature invalid")
+            return
+        }
         bind(session: session, to: remoteIdentity)
         Task {
             let wasPreviouslyReceived = receivedLXMFIDs.contains(message.messageID.hex)
             let accepted = wasPreviouslyReceived ? true : await importReceivedResourceMessage(message, sourceIdentity: remoteIdentity)
-            guard accepted else { return }
+            guard accepted else {
+                recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: payload validation failed")
+                return
+            }
+            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: wasPreviouslyReceived ? "accepted duplicate" : "accepted")
+            let proofInterface = Self.inboundProofInterface(
+                for: session.linkID.hex,
+                registeredInterfaces: linkInterfaceIDs
+            )
             do {
                 let hash = packet.packetHash
                 let proofData = hash + (try messagingIdentity.sign(hash))
                 let proof = Data([0x0f, 0x00]) + session.linkID + Data([0x00]) + proofData
-                try await transmitRawPacket(proof)
+                if let proofInterface { try await transmitRawPacket(proof, on: proofInterface) }
+                else { try await transmitRawPacket(proof) }
+                recordDeliveryProofSent(kind: "direct", interfaceID: proofInterface)
             } catch {
                 // The sender retains the message until it receives this proof
                 // and will retry idempotently. Interface transitions are
                 // therefore recoverable background state, not a user-facing
                 // modal error on the receiving device.
+                recordDeliveryProofFailure(kind: "direct", interfaceID: proofInterface, error: error)
                 deliveryDebugTrace("RX direct proof send deferred after interface loss: \(error.localizedDescription)")
             }
         }
@@ -3375,36 +3471,114 @@ public final class SidebandStore {
 
     private func receiveOpportunisticPacket(_ packet: ReticulumPacket, interfaceID: String?) {
         guard let decrypted = try? messagingIdentity.decrypt(packet.data) else {
+            recordInboundMessage(source: nil, messageID: nil, result: "rejected: opportunistic decrypt failed")
             deliveryDebugTrace("RX opportunistic decrypt failed")
             return
         }
         guard let message = try? LXMFReceivedMessage(packed: packet.destinationHash + decrypted),
               message.destinationHash.hex == localDeliveryHash else {
+            recordInboundMessage(source: nil, messageID: nil, result: "rejected: opportunistic LXMF decode failed")
             deliveryDebugTrace("RX opportunistic LXMF decode failed")
             return
         }
         guard let discovery = discoveries.first(where: { $0.destinationHash == message.sourceHash.hex }),
               let publicKey = discovery.publicKey,
               let sourceIdentity = try? ReticulumIdentity(publicKey: publicKey) else {
+            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: sender identity unavailable")
             deliveryDebugTrace("RX opportunistic sender identity unavailable: \(message.sourceHash.hex)")
             return
         }
         guard message.validate(with: sourceIdentity) else {
+            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: signature invalid")
             deliveryDebugTrace("RX opportunistic signature invalid: \(message.sourceHash.hex)")
             return
         }
         deliveryDebugTrace("RX opportunistic LXMF accepted from \(message.sourceHash.hex)")
         let wasPreviouslyReceived = receivedLXMFIDs.contains(message.messageID.hex)
-        guard wasPreviouslyReceived || importReceivedMessage(message, sourceIdentity: sourceIdentity) else { return }
+        guard wasPreviouslyReceived || importReceivedMessage(message, sourceIdentity: sourceIdentity) else {
+            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: payload validation failed")
+            return
+        }
+        recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: wasPreviouslyReceived ? "accepted duplicate" : "accepted")
         if !wasPreviouslyReceived { opportunisticDeliveriesReceived += 1 }
         Task {
             do {
                 let proof = try ReticulumProof.packet(for: packet, identity: messagingIdentity)
                 if let interfaceID { try await transmitRawPacket(proof, on: interfaceID) }
                 else { try await transmitRawPacket(proof) }
+                recordDeliveryProofSent(kind: "opportunistic", interfaceID: interfaceID)
             }
-            catch { deliveryDebugTrace("RX proof send deferred after interface loss: \(error.localizedDescription)") }
+            catch {
+                recordDeliveryProofFailure(kind: "opportunistic", interfaceID: interfaceID, error: error)
+                deliveryDebugTrace("RX proof send deferred after interface loss: \(error.localizedDescription)")
+            }
         }
+    }
+
+    private func recordInboundDeliveryPacket(destination: String, interfaceID: String?, matched: Bool) {
+        lastInboundDeliveryPacketAt = .now
+        lastInboundDeliveryDestination = destination
+        lastInboundDeliveryInterface = interfaceID
+        lastInboundDeliveryMatched = matched
+        UserDefaults.standard.set(lastInboundDeliveryPacketAt, forKey: "lxmfLastInboundDeliveryPacketAt")
+        UserDefaults.standard.set(destination, forKey: "lxmfLastInboundDeliveryDestination")
+        if let interfaceID { UserDefaults.standard.set(interfaceID, forKey: "lxmfLastInboundDeliveryInterface") }
+        else { UserDefaults.standard.removeObject(forKey: "lxmfLastInboundDeliveryInterface") }
+        UserDefaults.standard.set(matched, forKey: "lxmfLastInboundDeliveryMatched")
+        recordDeliveryDiagnosticEvent("Inbound packet for \(destination) on \(interfaceID ?? "unknown") · \(matched ? "destination matched" : "destination mismatch")")
+    }
+
+    static func inboundProofInterface(for linkID: String, registeredInterfaces: [String: String]) -> String? {
+        registeredInterfaces[linkID]
+    }
+
+    private func recordInboundMessage(source: String?, messageID: String?, result: String) {
+        lastInboundMessageAt = .now
+        lastInboundMessageSource = source
+        lastInboundMessageID = messageID
+        lastInboundMessageResult = result
+        if result.hasPrefix("accepted") { inboundMessagesAccepted += 1 }
+        else { inboundMessagesRejected += 1 }
+        UserDefaults.standard.set(lastInboundMessageAt, forKey: "lxmfLastInboundMessageAt")
+        if let source { UserDefaults.standard.set(source, forKey: "lxmfLastInboundMessageSource") }
+        else { UserDefaults.standard.removeObject(forKey: "lxmfLastInboundMessageSource") }
+        if let messageID { UserDefaults.standard.set(messageID, forKey: "lxmfLastInboundMessageID") }
+        else { UserDefaults.standard.removeObject(forKey: "lxmfLastInboundMessageID") }
+        UserDefaults.standard.set(result, forKey: "lxmfLastInboundMessageResult")
+        UserDefaults.standard.set(inboundMessagesAccepted, forKey: "lxmfInboundMessagesAccepted")
+        UserDefaults.standard.set(inboundMessagesRejected, forKey: "lxmfInboundMessagesRejected")
+        recordDeliveryDiagnosticEvent("Inbound LXMF \(messageID ?? "unknown") from \(source ?? "unknown") · \(result)")
+    }
+
+    private func recordDeliveryProofSent(kind: String, interfaceID: String?) {
+        lastDeliveryProofSentAt = .now
+        lastDeliveryProofInterface = interfaceID
+        lastDeliveryProofKind = kind
+        deliveryProofsSent += 1
+        UserDefaults.standard.set(lastDeliveryProofSentAt, forKey: "lxmfLastDeliveryProofSentAt")
+        if let interfaceID { UserDefaults.standard.set(interfaceID, forKey: "lxmfLastDeliveryProofInterface") }
+        else { UserDefaults.standard.removeObject(forKey: "lxmfLastDeliveryProofInterface") }
+        UserDefaults.standard.set(kind, forKey: "lxmfLastDeliveryProofKind")
+        UserDefaults.standard.set(deliveryProofsSent, forKey: "lxmfDeliveryProofsSent")
+        recordDeliveryDiagnosticEvent("Sent \(kind) delivery proof on \(interfaceID ?? "automatic route")")
+    }
+
+    private func recordDeliveryProofFailure(kind: String, interfaceID: String?, error: Error) {
+        lastDeliveryProofFailureAt = .now
+        lastDeliveryProofFailure = "\(kind) on \(interfaceID ?? "automatic route"): \(error.localizedDescription)"
+        deliveryProofsDeferred += 1
+        UserDefaults.standard.set(lastDeliveryProofFailureAt, forKey: "lxmfLastDeliveryProofFailureAt")
+        UserDefaults.standard.set(lastDeliveryProofFailure, forKey: "lxmfLastDeliveryProofFailure")
+        UserDefaults.standard.set(deliveryProofsDeferred, forKey: "lxmfDeliveryProofsDeferred")
+        recordDeliveryDiagnosticEvent("Deferred \(lastDeliveryProofFailure ?? "delivery proof")")
+    }
+
+    private func recordDeliveryDiagnosticEvent(_ event: String) {
+        let entry = "\(ISO8601DateFormatter().string(from: .now)) · \(event)"
+        deliveryDiagnosticEvents.insert(entry, at: 0)
+        deliveryDiagnosticEvents = Array(deliveryDiagnosticEvents.prefix(24))
+        UserDefaults.standard.set(deliveryDiagnosticEvents, forKey: "lxmfDeliveryDiagnosticEvents")
+        deliveryDebugTrace(event)
     }
 
     private func deliveryDebugTrace(_ message: @autoclosure () -> String) {

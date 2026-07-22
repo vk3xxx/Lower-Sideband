@@ -1308,10 +1308,27 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     let report = store.networkDiagnosticsReport
 
     #expect(report.contains("Sideband Network Diagnostics"))
+    #expect(report.contains("Messaging identity: \(store.messagingIdentityHash)"))
     #expect(report.contains("Local destination: \(store.localDeliveryHash)"))
+    #expect(report.contains("Last announced destination:"))
+    #expect(report.contains("Inbound packet:"))
+    #expect(report.contains("Inbound message:"))
+    #expect(report.contains("Delivery proofs:"))
+    #expect(report.contains("Recent delivery events:"))
     #expect(report.contains("TCP endpoint:"))
     #expect(report.contains("Deferred maintenance:"))
     #expect(!report.localizedCaseInsensitiveContains("private key"))
+}
+
+@MainActor @Test func inboundDeliveryProofReturnsOnLinkIngressInterface() {
+    let linkID = "0123456789abcdef0123456789abcdef"
+    let interfaces = [
+        linkID: "public-beleth-ipv6",
+        "fedcba9876543210fedcba9876543210": "public-dismail-ipv4"
+    ]
+
+    #expect(SidebandStore.inboundProofInterface(for: linkID, registeredInterfaces: interfaces) == "public-beleth-ipv6")
+    #expect(SidebandStore.inboundProofInterface(for: "unknown", registeredInterfaces: interfaces) == nil)
 }
 
 @Test func applicationSnapshotsCarrySchemaVersion() throws {

@@ -1005,6 +1005,48 @@ private struct NetworkView: View {
                 }
                 .padding(6)
             }
+            GroupBox("Delivery diagnostics") {
+                VStack(alignment: .leading, spacing: 8) {
+                    diagnosticRow("Messaging identity", store.messagingIdentityHash, monospaced: true)
+                    diagnosticRow("Active LXMF destination", store.localDeliveryHash, monospaced: true)
+                    diagnosticRow(
+                        "Last announced",
+                        store.lastAnnouncedDeliveryHash.map {
+                            "\($0) · \(store.lastDeliveryAnnounceAt?.formatted(date: .abbreviated, time: .standard) ?? "time unavailable")"
+                        } ?? "Not announced during this session",
+                        monospaced: store.lastAnnouncedDeliveryHash != nil
+                    )
+                    diagnosticRow(
+                        "Last inbound packet",
+                        store.lastInboundDeliveryPacketAt.map {
+                            "\(store.lastInboundDeliveryDestination ?? "unknown") · \(store.lastInboundDeliveryMatched == true ? "matched" : "mismatch") · \(store.lastInboundDeliveryInterface ?? "unknown interface") · \($0.formatted(date: .abbreviated, time: .standard))"
+                        } ?? "No delivery packet recorded"
+                    )
+                    diagnosticRow(
+                        "Last inbound message",
+                        store.lastInboundMessageAt.map {
+                            "\(store.lastInboundMessageResult ?? "unknown") · source \(store.lastInboundMessageSource ?? "unknown") · \($0.formatted(date: .abbreviated, time: .standard))"
+                        } ?? "No LXMF message recorded"
+                    )
+                    diagnosticRow(
+                        "Last delivery proof",
+                        store.lastDeliveryProofSentAt.map {
+                            "sent \(store.lastDeliveryProofKind ?? "unknown") via \(store.lastDeliveryProofInterface ?? "automatic route") · \($0.formatted(date: .abbreviated, time: .standard))"
+                        } ?? "No delivery proof recorded"
+                    )
+                    if let failure = store.lastDeliveryProofFailure {
+                        Label(failure, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("\(store.inboundMessagesAccepted) accepted · \(store.inboundMessagesRejected) rejected · \(store.deliveryProofsSent) proofs sent · \(store.deliveryProofsDeferred) deferred")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             GroupBox("Routing") {
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow { metric("Packets received", store.receivedPacketCount); metric("Known paths", store.knownPathCount) }
@@ -1719,6 +1761,19 @@ private struct NetworkView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func diagnosticRow(_ title: String, _ value: String, monospaced: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(monospaced ? .caption.monospaced() : .caption)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .help("\(title): \(value)")
     }
 
     private func metric(_ title: String, _ value: Int) -> some View {

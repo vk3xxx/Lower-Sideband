@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.13 (51) - 2026-07-22
+
+- Return direct-link LXMF delivery proofs over the same Reticulum interface that received the link, preventing multi-gateway proof loss.
+- Added persistent identity, announce, inbound validation, interface and proof diagnostics to Network Status and copied reports.
+
 ## 1.3.12 (50) - 2026-07-22
 
 - Made transient TCP tunnel-synthesis failures non-modal during automatic gateway recovery.
