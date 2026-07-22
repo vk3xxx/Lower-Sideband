@@ -68,6 +68,16 @@ public struct ReticulumPacket: Equatable, Sendable {
         return routed
     }
 
+    /// Prepares an endpoint-originated packet for the selected Reticulum path.
+    /// Direct, one-hop destinations receive a normal header. Only multi-hop
+    /// paths are injected into transport with the announced next-hop identity,
+    /// matching `RNS.Transport.outbound()`.
+    public func prepared(for path: ReticulumPath) throws -> Data {
+        guard path.hops > 1 else { return raw }
+        guard let nextHop = path.nextHop else { throw RoutingError.invalidRoute }
+        return try routed(via: nextHop)
+    }
+
     public enum ParseError: Error { case tooShort, invalidFlags }
     public enum RoutingError: Error { case invalidRoute }
 }

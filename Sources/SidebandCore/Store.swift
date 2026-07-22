@@ -2867,7 +2867,7 @@ public final class SidebandStore {
             return
         }
         if packet.packetType == .data, packet.destinationType == .single, packet.destinationHash.hex == localDeliveryHash {
-            receiveOpportunisticPacket(packet)
+            receiveOpportunisticPacket(packet, interfaceID: interfaceID)
             return
         }
         guard packet.packetType == .announce else { return }
@@ -3111,7 +3111,8 @@ public final class SidebandStore {
         if isVoice { voiceLinkIDs.insert(linkID) }
         Task {
             do {
-                try await transmitRawPacket(incoming.proofPacket)
+                if let interfaceID { try await transmitRawPacket(incoming.proofPacket, on: interfaceID) }
+                else { try await transmitRawPacket(incoming.proofPacket) }
                 inboundLinksAccepted += 1
                 if isVoice {
                     if voiceCall != nil {
@@ -3322,7 +3323,7 @@ public final class SidebandStore {
         activeLinks.first { linkRemoteDestinations[$0.key] == destinationHash }.map(\.value)
     }
 
-    private func receiveOpportunisticPacket(_ packet: ReticulumPacket) {
+    private func receiveOpportunisticPacket(_ packet: ReticulumPacket, interfaceID: String?) {
         guard let decrypted = try? messagingIdentity.decrypt(packet.data) else {
             deliveryDebugTrace("RX opportunistic decrypt failed")
             return
@@ -3347,7 +3348,11 @@ public final class SidebandStore {
         guard wasPreviouslyReceived || importReceivedMessage(message, sourceIdentity: sourceIdentity) else { return }
         if !wasPreviouslyReceived { opportunisticDeliveriesReceived += 1 }
         Task {
-            do { try await transmitRawPacket(try ReticulumProof.packet(for: packet, identity: messagingIdentity)) }
+            do {
+                let proof = try ReticulumProof.packet(for: packet, identity: messagingIdentity)
+                if let interfaceID { try await transmitRawPacket(proof, on: interfaceID) }
+                else { try await transmitRawPacket(proof) }
+            }
             catch { deliveryDebugTrace("RX proof send deferred after interface loss: \(error.localizedDescription)") }
         }
     }
@@ -3553,26 +3558,51 @@ public final class SidebandStore {
         if !transmitted { throw finalError ?? TransportError.nativeEngineUnavailable }
     }
 
+    /// Sends a response back on the interface where its triggering packet was
+    /// received. Reticulum reverse-path state is interface-specific, so proofs
+    /// must not be broadcast across unrelated public gateways.
+    private func transmitRawPacket(_ packet: Data, on interfaceID: String) async throws {
+        if interfaceID.hasPrefix("rnode:"),
+           let id = UUID(uuidString: String(interfaceID.dropFirst("rnode:".count))) {
+            try await rnodeManager.send(rawPacket: packet, on: id)
+            return
+        }
+        if interfaceID == "auto" {
+            guard !autoInterfaceDiscovery.peers.isEmpty else { throw TransportError.nativeEngineUnavailable }
+            for peer in autoInterfaceDiscovery.peers { autoInterfaceDiscovery.send(rawPacket: packet, to: peer) }
+            return
+        }
+        guard let networkInterfacePool, tcpNetworkState == .ready else { throw TransportError.nativeEngineUnavailable }
+        try await networkInterfacePool.send(rawPacket: packet, on: interfaceID)
+    }
+
     private func transmitDestinationPacket(_ packet: Data, destinationHash: Data) async throws {
         var transmitted = false
         if let networkInterfacePool, tcpNetworkState == .ready {
             let interfaceIDs = await networkInterfacePool.readyInterfaceIDs()
             var tcpSent = false
-            for interfaceID in interfaceIDs {
-                let routedPacket: Data
-                if let path = await pathTable.path(to: destinationHash, on: interfaceID), let nextHop = path.nextHop {
-                    routedPacket = try ReticulumPacket(raw: packet).routed(via: nextHop)
-                    deliveryDebugTrace("TX \(destinationHash.hex) on \(interfaceID), routed \(path.hops) hop(s) via \(nextHop.hex)")
-                } else {
-                    routedPacket = packet
-                    deliveryDebugTrace("TX \(destinationHash.hex) on \(interfaceID), no interface route")
-                }
+            if let path = await pathTable.path(to: destinationHash),
+               let interfaceID = path.interfaceID,
+               interfaceIDs.contains(interfaceID) {
                 do {
+                    let routedPacket = try ReticulumPacket(raw: packet).prepared(for: path)
                     try await networkInterfacePool.send(rawPacket: routedPacket, on: interfaceID)
                     tcpSent = true
+                    let routeDescription = path.hops > 1 ? "routed via \(path.nextHop?.hex ?? "unknown")" : "direct"
+                    deliveryDebugTrace("TX \(destinationHash.hex) on \(interfaceID), \(path.hops) hop(s), \(routeDescription)")
                 } catch {
                     deliveryDebugTrace("TX \(destinationHash.hex) on \(interfaceID) failed: \(error.localizedDescription)")
-                    // A sibling interface can still carry the packet.
+                }
+            } else {
+                // Path discovery has not selected a route yet. Preserve the
+                // Reticulum broadcast fallback for directly attached peers.
+                for interfaceID in interfaceIDs {
+                    do {
+                        try await networkInterfacePool.send(rawPacket: packet, on: interfaceID)
+                        tcpSent = true
+                    } catch {
+                        deliveryDebugTrace("TX \(destinationHash.hex) fallback on \(interfaceID) failed: \(error.localizedDescription)")
+                    }
                 }
             }
             transmitted = tcpSent
@@ -3580,8 +3610,8 @@ public final class SidebandStore {
         for id in rnodeManager.readyInterfaceIDs {
             let interfaceID = "rnode:\(id.uuidString)"
             let routedPacket: Data
-            if let nextHop = await pathTable.path(to: destinationHash, on: interfaceID)?.nextHop {
-                routedPacket = (try? ReticulumPacket(raw: packet).routed(via: nextHop)) ?? packet
+            if let path = await pathTable.path(to: destinationHash, on: interfaceID) {
+                routedPacket = (try? ReticulumPacket(raw: packet).prepared(for: path)) ?? packet
             } else {
                 routedPacket = packet
             }
@@ -4093,15 +4123,26 @@ public final class SidebandStore {
     }
 
     private func receiveDeliveryProof(_ packet: ReticulumPacket) {
-        guard packet.data.count == 96 else { return }
-        let provedHash = Data(packet.data.prefix(32))
-        guard let receipt = pendingReceipts[provedHash.hex],
-              let discovery = discoveries.first(where: { $0.destinationHash == receipt.destinationHash }),
+        let matched: (hash: String, receipt: PendingReceipt)?
+        if packet.data.count == 96 {
+            let hash = Data(packet.data.prefix(32)).hex
+            matched = pendingReceipts[hash].map { (hash, $0) }
+        } else if packet.data.count == 64 {
+            matched = pendingReceipts.first { key, _ in
+                Data(hexadecimal: key)?.prefix(ReticulumPacket.truncatedHashBytes) == packet.destinationHash
+            }.map { ($0.key, $0.value) }
+        } else {
+            matched = nil
+        }
+        guard let matched,
+              let provedHash = Data(hexadecimal: matched.hash) else { return }
+        let receipt = matched.receipt
+        guard let discovery = discoveries.first(where: { $0.destinationHash == receipt.destinationHash }),
               let publicKey = discovery.publicKey,
               let identity = try? ReticulumIdentity(publicKey: publicKey),
-              identity.validate(signature: Data(packet.data.suffix(64)), message: provedHash) else { return }
-        pendingReceipts.removeValue(forKey: provedHash.hex)
-        receiptTimeoutTasks.removeValue(forKey: provedHash.hex)?.cancel()
+              ReticulumProof.validates(packet, packetHash: provedHash, identity: identity) else { return }
+        pendingReceipts.removeValue(forKey: matched.hash)
+        receiptTimeoutTasks.removeValue(forKey: matched.hash)?.cancel()
         updateMessage(receipt.messageID, state: receipt.kind == .propagation ? .sent : .delivered)
         if receipt.kind != .propagation,
            let conversation = conversations.first(where: { $0.destinationHash == receipt.destinationHash }) {

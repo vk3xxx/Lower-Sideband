@@ -526,6 +526,34 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(proof.destinationHash == received.packetHash.prefix(16))
     #expect(proof.data.prefix(32) == received.packetHash)
     #expect(identity.validate(signature: Data(proof.data.suffix(64)), message: received.packetHash))
+    #expect(ReticulumProof.validates(proof, packetHash: received.packetHash, identity: identity))
+}
+
+@Test func implicitSingleDestinationProofValidatesAgainstPendingPacketHash() throws {
+    let identity = ReticulumIdentity()
+    let destination = Data(repeating: 0x23, count: 16)
+    let received = try ReticulumPacket(raw: Data([0x00, 0x00]) + destination + Data([0x00, 0x43]))
+    let signature = try identity.sign(received.packetHash)
+    let raw = Data([0x03, 0x00]) + received.packetHash.prefix(16) + Data([0x00]) + signature
+    let proof = try ReticulumPacket(raw: raw)
+
+    #expect(proof.data.count == 64)
+    #expect(ReticulumProof.validates(proof, packetHash: received.packetHash, identity: identity))
+}
+
+@Test func outboundPacketOnlyAddsTransportHeaderForMultiHopPath() throws {
+    let destination = Data(repeating: 0x24, count: 16)
+    let normalRaw = Data([0x00, 0x00]) + destination + Data([0x00, 0x44])
+    let packet = try ReticulumPacket(raw: normalRaw)
+    let nextHop = Data(repeating: 0x25, count: 16)
+    let direct = ReticulumPath(destinationHash: destination, nextHop: nextHop, hops: 1, updatedAt: .now, expiresAt: .distantFuture, publicKey: Data(), appData: Data(), interfaceID: "direct")
+    let transported = ReticulumPath(destinationHash: destination, nextHop: nextHop, hops: 2, updatedAt: .now, expiresAt: .distantFuture, publicKey: Data(), appData: Data(), interfaceID: "transport")
+
+    #expect(try packet.prepared(for: direct) == normalRaw)
+    let routed = try ReticulumPacket(raw: packet.prepared(for: transported))
+    #expect(routed.headerType == .transport)
+    #expect(routed.transportID == nextHop)
+    #expect(routed.packetHash == packet.packetHash)
 }
 
 @Test func opportunisticLXMFPacketRoundTripsThroughRecipientIdentity() throws {
