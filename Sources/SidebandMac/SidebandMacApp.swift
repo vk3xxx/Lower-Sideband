@@ -70,6 +70,12 @@ struct SidebandApp: App {
     /// out of the hierarchy while the network engine is otherwise available.
     @MainActor private func startRootSoakIfRequested() async {
         guard ProcessInfo.processInfo.environment["SIDEBAND_SOAK_DESTINATION"] != nil else { return }
+        let environment = ProcessInfo.processInfo.environment
+        let currentPrefixes = Set([
+            environment["SIDEBAND_SOAK_OUTBOUND_PREFIX"],
+            environment["SIDEBAND_SOAK_INBOUND_PREFIX"]
+        ].compactMap { $0 })
+        _ = await store.purgeDeliverySoakMessages(keepingPrefixes: currentPrefixes)
         DeliverySoakRunner.configureNetworkIfRequested(store)
         await store.startTransport()
         _ = await DeliverySoakRunner.startNetworkIfRequested(store)
@@ -521,7 +527,7 @@ enum DeliverySoakRunner {
             return
         }
 
-        guard store.addConversation(destinationHash: destination, displayName: "Delivery soak", select: true) else {
+        guard store.addConversation(destinationHash: destination, displayName: "Delivery soak", select: false) else {
             await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "invalid-destination")
             return
         }

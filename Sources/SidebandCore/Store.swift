@@ -1560,14 +1560,36 @@ public final class SidebandStore {
 
     public func clearError() { lastError = nil }
 
-    #if DEBUG
-    public func removeDeliverySoakMessages() {
-        let soakConversationIDs = Set(messages.filter { $0.body.hasPrefix("SOAK-") }.map(\.conversationID))
-        messages.removeAll { $0.body.hasPrefix("SOAK-") }
-        for conversationID in soakConversationIDs { touch(conversationID) }
+    /// Removes artifacts from earlier automated delivery runs without touching
+    /// the currently requested run or ordinary user messages. A terminated
+    /// soak can otherwise leave thousands of queued retries that contaminate
+    /// the next acceptance result.
+    @discardableResult
+    public func purgeDeliverySoakMessages(keepingPrefixes: Set<String> = []) async -> Int {
+        let removedMessages = messages.filter { message in
+            let isSoak = message.body.hasPrefix("SOAK-") || message.body.hasPrefix("LSB-INTERNET-")
+            return isSoak && !keepingPrefixes.contains(where: message.body.hasPrefix)
+        }
+        guard !removedMessages.isEmpty else { return 0 }
+        let removedIDs = Set(removedMessages.map(\.id))
+        let affectedConversations = Set(removedMessages.map(\.conversationID))
+        for message in removedMessages {
+            for attachment in message.attachments {
+                await cancelActiveResources(messageID: message.id, attachmentID: attachment.id)
+                try? await attachmentStore.remove(attachment)
+            }
+        }
+        pendingReceipts = pendingReceipts.filter { !removedIDs.contains($0.value.messageID) }
+        messages.removeAll { removedIDs.contains($0.id) }
+        for conversationID in affectedConversations {
+            if let index = conversations.firstIndex(where: { $0.id == conversationID }) {
+                conversations[index].updatedAt = latestMessage(for: conversationID)?.timestamp ?? .now
+            }
+        }
+        sortConversations()
         save()
+        return removedMessages.count
     }
-    #endif
 
     public func connectNetwork(forceIPv4: Bool = false, explicitHost: String? = nil, explicitPort: UInt16? = nil, internetGatewayID: String? = nil) async {
         guard secureStorageAvailable else {
