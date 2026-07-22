@@ -1012,6 +1012,7 @@ private struct NetworkView: View {
                     GridRow { metric("Unverified announces", store.unverifiedDiscoveryCount); metric("Delivered messages", store.deliveredMessageCount) }
                     GridRow { metric("Pending links", store.pendingLinkCount); metric("Active links", store.activeLinkCount) }
                     GridRow { metric("Encrypted packets", store.encryptedPacketsReceived); metric("Keepalives", store.keepalivesSent + store.keepalivesReceived) }
+                    GridRow { metric("Deferred keepalives", store.deferredKeepalives) }
                     GridRow { metric("Propagation requests", store.propagationRequestsSent); metric("Propagation responses", store.propagationResponsesReceived) }
                     GridRow { metric("Messages available", store.propagationMessagesAvailable); metric("Sent awaiting proof", store.sentMessageCount) }
                     GridRow { metric("Uploads accepted", store.propagationUploadsAccepted); metric("Direct deliveries", store.deliveredMessageCount) }

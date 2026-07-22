@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.10 (48) - 2026-07-22
+
+- Made advisory link keepalive failures during automatic reconnects non-modal so background gateway handovers never interrupt messaging.
+- Added a persistent deferred-keepalive diagnostic to Network Status while preserving genuine connection error reporting.
+
 ## 1.3.3 (41) - 2026-07-22
 
 - Added an explicit **Announce Now** action to Network Status and Connection Settings on Mac, iPhone and iPad.

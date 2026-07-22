@@ -56,6 +56,7 @@ public final class SidebandStore {
     public private(set) var encryptedPacketsReceived = 0
     public private(set) var keepalivesReceived = 0
     public private(set) var keepalivesSent = 0
+    public private(set) var deferredKeepalives = 0
     public private(set) var linkIdentificationsSent = 0
     public private(set) var propagationRequestsSent = 0
     public private(set) var propagationResponsesReceived = 0
@@ -318,6 +319,7 @@ public final class SidebandStore {
         telemetryCollectorHash = UserDefaults.standard.string(forKey: "telemetryCollectorHash") ?? ""
         telemetryCollectorLatestOnly = UserDefaults.standard.object(forKey: "telemetryCollectorLatestOnly") as? Bool ?? true
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
+        deferredKeepalives = UserDefaults.standard.integer(forKey: "reticulumDeferredKeepalives")
         lastBackgroundRefreshAt = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshAt") as? Date
         lastBackgroundRefreshSucceeded = UserDefaults.standard.object(forKey: "sidebandLastBackgroundRefreshSucceeded") as? Bool
         preferredGatewayID = UserDefaults.standard.string(forKey: "reticulumPreferredGatewayID")
@@ -3392,7 +3394,15 @@ public final class SidebandStore {
             try await transmitRawPacket(session.keepalivePacket())
             keepalivesSent += 1
             UserDefaults.standard.set(keepalivesSent, forKey: "reticulumKeepalivesSent")
-        } catch { lastError = "Link keepalive failed: \(error.localizedDescription)" }
+        } catch {
+            // A link timer can race an intentional disconnect or automatic gateway
+            // handover. Keepalives are advisory, so retain this as diagnostics and
+            // let the background connection controller recover without interrupting
+            // the user or changing queued-message state.
+            deferredKeepalives += 1
+            UserDefaults.standard.set(deferredKeepalives, forKey: "reticulumDeferredKeepalives")
+            deliveryDebugTrace("Link keepalive deferred during reconnect: \(error.localizedDescription)")
+        }
     }
 
     private func activateAndRequestPropagation(on session: ReticulumLinkSession) async {
