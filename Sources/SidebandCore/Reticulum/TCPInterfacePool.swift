@@ -65,6 +65,8 @@ public actor ReticulumTCPInterfacePool {
         var state: ReticulumTCPInterface.State = .stopped
         var connectedAt: Date?
         var lastPacketAt: Date?
+        var reconnectAttempt = 0
+        var reconnectToken: UUID?
     }
 
     private var entries: [String: Entry] = [:]
@@ -148,9 +150,41 @@ public actor ReticulumTCPInterfacePool {
     private func stateChanged(_ state: ReticulumTCPInterface.State, on interfaceID: String) async {
         guard var entry = entries[interfaceID] else { return }
         entry.state = state
-        if state == .ready { entry.connectedAt = .now }
+        if state == .ready {
+            entry.connectedAt = .now
+            entry.reconnectAttempt = 0
+            entry.reconnectToken = nil
+        } else if state.needsReconnect, entry.reconnectToken == nil {
+            entry.reconnectAttempt += 1
+            let token = UUID()
+            entry.reconnectToken = token
+            let delay = Self.reconnectDelay(attempt: entry.reconnectAttempt)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                await self?.restart(interfaceID: interfaceID, token: token)
+            }
+        }
         entries[interfaceID] = entry
         await publishState(force: true)
+    }
+
+    /// Restarts a failed member without disturbing healthy sibling sockets.
+    /// Remote Reticulum peers may keep a path bound to any interface on which
+    /// we announced, so silently abandoning one member can make an otherwise
+    /// "ready" client unreachable until that remote path expires.
+    private func restart(interfaceID: String, token: UUID) async {
+        guard var entry = entries[interfaceID], entry.reconnectToken == token,
+              entry.state.needsReconnect else { return }
+        entry.reconnectToken = nil
+        entry.state = .connecting
+        entries[interfaceID] = entry
+        await publishState(force: true)
+        await entry.interface.start()
+    }
+
+    static func reconnectDelay(attempt: Int) -> TimeInterval {
+        TimeInterval(min(60, 1 << min(max(1, attempt), 5)))
     }
 
     private func insert(_ endpoint: Endpoint) {
@@ -194,5 +228,14 @@ public actor ReticulumTCPInterfacePool {
                 isBootstrap: $0.endpoint.isBootstrap
             )
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+}
+
+private extension ReticulumTCPInterface.State {
+    var needsReconnect: Bool {
+        switch self {
+        case .failed, .stopped: true
+        case .connecting, .ready: false
+        }
     }
 }

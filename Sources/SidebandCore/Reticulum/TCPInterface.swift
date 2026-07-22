@@ -85,7 +85,12 @@ public actor ReticulumTCPInterface {
             await setState(.ready)
             if let connection { receive(on: connection) }
         case .failed(let error): await fail(error.localizedDescription)
-        case .cancelled: await setState(.stopped)
+        case .cancelled:
+            // A remotely or system-cancelled NWConnection cannot be started
+            // again. Clear it so the owning interface pool can create a fresh
+            // socket during its per-endpoint reconnect cycle.
+            connection = nil
+            await setState(.stopped)
         default: break
         }
     }

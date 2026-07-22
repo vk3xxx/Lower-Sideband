@@ -2808,6 +2808,14 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(decoder.consume(Data([0x5e, 0x7e])).first == Data([0x01, 0x7e]))
 }
 
+@Test func tcpPoolReconnectBackoffIsBounded() {
+    #expect(ReticulumTCPInterfacePool.reconnectDelay(attempt: 1) == 2)
+    #expect(ReticulumTCPInterfacePool.reconnectDelay(attempt: 2) == 4)
+    #expect(ReticulumTCPInterfacePool.reconnectDelay(attempt: 5) == 32)
+    #expect(ReticulumTCPInterfacePool.reconnectDelay(attempt: 6) == 32)
+    #expect(ReticulumTCPInterfacePool.reconnectDelay(attempt: 100) == 32)
+}
+
 @Test func parsesNormalAndTransportHeaders() throws {
     let destination = Data(0..<16)
     let normalRaw = Data([0b0010_0001, 3]) + destination + Data([0x0b, 0xaa, 0xbb])
