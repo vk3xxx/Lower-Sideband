@@ -29,6 +29,7 @@ struct SidebandApp: App {
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
                     await store.notifications.prepare()
+                    await startRootSoakIfRequested()
                 }
         }
         .defaultSize(width: 1_180, height: 760)
@@ -43,6 +44,7 @@ struct SidebandApp: App {
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
                     await store.notifications.prepare()
+                    await startRootSoakIfRequested()
                     RemoteWakeBridge.shared.install(
                         wake: { [store] in await store.performRemoteWakeSync() },
                         memoryPressure: { [store] in store.handleMemoryPressure() }
@@ -61,6 +63,17 @@ struct SidebandApp: App {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { store.privacyLock.lock() }
         }
+    }
+
+    /// Acceptance runs must not depend on the conversation view appearing.
+    /// Privacy locking and scene restoration can legitimately keep that view
+    /// out of the hierarchy while the network engine is otherwise available.
+    @MainActor private func startRootSoakIfRequested() async {
+        guard ProcessInfo.processInfo.environment["SIDEBAND_SOAK_DESTINATION"] != nil else { return }
+        DeliverySoakRunner.configureNetworkIfRequested(store)
+        await store.startTransport()
+        _ = await DeliverySoakRunner.startNetworkIfRequested(store)
+        await DeliverySoakRunner.runIfRequested(store)
     }
 }
 

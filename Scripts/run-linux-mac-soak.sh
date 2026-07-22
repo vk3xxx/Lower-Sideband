@@ -16,7 +16,7 @@ EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIS
 EXECUTABLE="$APP/Contents/MacOS/$EXECUTABLE_NAME"
 [[ -x "$EXECUTABLE" ]] || EXECUTABLE="$APP/$EXECUTABLE_NAME"
 [[ -x "$EXECUTABLE" ]] || usage
-[[ "$DEST" == [0-9a-f]## && ${#DEST} -eq 32 ]] || usage
+[[ "$DEST" =~ '^[0-9a-f]{32}$' ]] || usage
 [[ "$COUNT" == <2500-> ]] || usage
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -54,10 +54,10 @@ print "Mac log: $LOG"
 SANDBOX_REPORT="$HOME/Library/Containers/com.supes.MacSideband/Data/Library/Application Support/SidebandSwift/$REPORT"
 PLAIN_REPORT="$HOME/Library/Application Support/SidebandSwift/$REPORT"
 while kill -0 "$PID" 2>/dev/null; do
-    for path in "$SANDBOX_REPORT" "$PLAIN_REPORT"; do
-        if [[ -f "$path" ]]; then
-            cp "$path" "$ROOT/.build/$REPORT"
-            phase="$(sed -n 's/.*"phase"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$path" | head -n 1)"
+    for candidate in "$SANDBOX_REPORT" "$PLAIN_REPORT"; do
+        if [[ -f "$candidate" ]]; then
+            cp "$candidate" "$ROOT/.build/$REPORT"
+            phase="$(sed -n 's/.*"phase"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$candidate" | head -n 1)"
             if [[ "$phase" == complete ]]; then
                 print "PASS: $ROOT/.build/$REPORT"
                 exit 0
