@@ -20,7 +20,8 @@ EXECUTABLE="$APP/Contents/MacOS/$EXECUTABLE_NAME"
 [[ "$COUNT" == <2500-> ]] || usage
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RUN_ID="LSB-INTERNET-$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_ID="${SIDEBAND_SOAK_RUN_ID:-LSB-INTERNET-$(date -u +%Y%m%dT%H%M%SZ)}"
+RELEASE_UTC="${SIDEBAND_SOAK_RELEASE_UTC:-}"
 REPORT="linux-mac-soak-$RUN_ID.json"
 LOG="$ROOT/.build/linux-mac-soak-$RUN_ID.log"
 mkdir -p "$ROOT/.build"
@@ -31,8 +32,11 @@ print "Linux outbound prefix: $RUN_ID-LINUX"
 print "Messages each direction: $COUNT"
 print "Attachments: every 500th message; alternating 1 MiB binary and BMP image"
 print "Topology: internet-only automatic public gateway selection; reconnect every 250 messages"
+[[ -z "$RELEASE_UTC" ]] || print "Shared release UTC: $RELEASE_UTC"
 
 env \
+    SIDEBAND_SOAK_RUN_ID="$RUN_ID" \
+    SIDEBAND_SOAK_RELEASE_UTC="$RELEASE_UTC" \
     SIDEBAND_SOAK_NETWORK_MODE=internet \
     SIDEBAND_SOAK_COUNT="$COUNT" \
     SIDEBAND_SOAK_DESTINATION="$DEST" \
@@ -45,6 +49,7 @@ env \
     SIDEBAND_SOAK_JITTER_MIN_MS=25 \
     SIDEBAND_SOAK_JITTER_MAX_MS=350 \
     SIDEBAND_SOAK_DEADLINE_SECONDS=28800 \
+    SIDEBAND_SOAK_PEER_TIMEOUT_SECONDS=900 \
     SIDEBAND_SOAK_PRESERVE=1 \
     "$EXECUTABLE" >"$LOG" 2>&1 &
 PID=$!

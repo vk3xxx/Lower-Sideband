@@ -527,6 +527,25 @@ enum DeliverySoakRunner {
             return
         }
 
+        if let releaseText = environment["SIDEBAND_SOAK_RELEASE_UTC"],
+           !releaseText.isEmpty,
+           let releaseDate = ISO8601DateFormatter().date(from: releaseText) {
+            while Date() < releaseDate {
+                await writeReport(
+                    store: store,
+                    destination: destination,
+                    outboundPrefix: outboundPrefix,
+                    inboundPrefix: inboundPrefix,
+                    count: count,
+                    startedAt: startedAt,
+                    reportURL: reportURL,
+                    phase: "waiting-for-release"
+                )
+                let remaining = max(0.05, min(1, releaseDate.timeIntervalSinceNow))
+                try? await Task.sleep(for: .seconds(remaining))
+            }
+        }
+
         guard store.addConversation(destinationHash: destination, displayName: "Delivery soak", select: false) else {
             await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "invalid-destination")
             return
@@ -535,7 +554,12 @@ enum DeliverySoakRunner {
         // Do not turn a start-up announce race into thousands of queued
         // messages. Both a current path and the recipient identity are needed
         // for authenticated LXMF encryption.
-        guard await waitForPeer(store, destination: destination, timeout: 120) else {
+        let peerTimeout = max(
+            30,
+            Int(environment["SIDEBAND_SOAK_PEER_TIMEOUT_SECONDS"] ?? "")
+                ?? ((environment["SIDEBAND_SOAK_NETWORK_MODE"] == "internet") ? 900 : 120)
+        )
+        guard await waitForPeer(store, destination: destination, timeout: peerTimeout) else {
             await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "peer-discovery-timeout")
             return
         }
@@ -578,7 +602,7 @@ enum DeliverySoakRunner {
             if reconnectInterval > 0, sequence < count, sequence.isMultiple(of: reconnectInterval) {
                 await store.disconnectNetwork()
                 _ = await connect(store, mode: environment["SIDEBAND_SOAK_NETWORK_MODE"] ?? "local")
-                guard await waitForPeer(store, destination: destination, timeout: 120) else {
+                guard await waitForPeer(store, destination: destination, timeout: peerTimeout) else {
                     await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "reconnect-peer-timeout")
                     return
                 }

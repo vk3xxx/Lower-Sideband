@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.11 (49) - 2026-07-22
+
+- Added an absolute UTC release gate so independent macOS and Linux soak runners begin the same run simultaneously.
+- Isolated every Linux-to-Mac soak run by run ID and extended authenticated peer discovery to tolerate long public Reticulum paths.
+
 ## 1.3.10 (48) - 2026-07-22
 
 - Made advisory link keepalive failures during automatic reconnects non-modal so background gateway handovers never interrupt messaging.
