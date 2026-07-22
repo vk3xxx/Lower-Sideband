@@ -402,7 +402,6 @@ final class SidebandAppDelegate: NSObject, UIApplicationDelegate {
 }
 #endif
 
-#if DEBUG
 @MainActor
 enum DeliverySoakRunner {
     private static let environment = ProcessInfo.processInfo.environment
@@ -426,10 +425,9 @@ enum DeliverySoakRunner {
             if let value = UserDefaults.standard.object(forKey: key) { savedNetworkPreferences[key] = value }
             else { missingNetworkPreferences.insert(key) }
         }
-        if environment["SIDEBAND_SOAK_PRESERVE"] != "1" { store.removeDeliverySoakMessages() }
         deliveryTimeoutBaseline = store.deliveryTimeoutCount
-        store.autoConnectEnabled = mode == "automatic" || environment["SIDEBAND_SOAK_AUTOCONNECT"] == "1"
-        store.internetOnlyEnabled = mode == "public"
+        store.autoConnectEnabled = mode == "automatic" || mode == "internet" || environment["SIDEBAND_SOAK_AUTOCONNECT"] == "1"
+        store.internetOnlyEnabled = mode == "public" || mode == "internet"
         store.preferIPv6 = true
         store.networkPort = Int(environment["SIDEBAND_SOAK_PORT"] ?? "4242") ?? 4_242
         store.networkInternetPort = Int(environment["SIDEBAND_SOAK_INTERNET_PORT"] ?? "4242") ?? 4_242
@@ -442,7 +440,7 @@ enum DeliverySoakRunner {
             store.networkHost = ""
             store.networkIPv6Host = ""
             store.networkInternetHost = environment["SIDEBAND_SOAK_INTERNET_HOST"] ?? "sydney.reticulum.au"
-        case "automatic":
+        case "automatic", "internet":
             store.networkHost = ""
             store.networkIPv6Host = ""
             store.networkInternetHost = ""
@@ -473,7 +471,7 @@ enum DeliverySoakRunner {
             let host = environment["SIDEBAND_SOAK_INTERNET_HOST"] ?? "sydney.reticulum.au"
             let port = UInt16(environment["SIDEBAND_SOAK_INTERNET_PORT"] ?? "4242") ?? 4_242
             await store.connectNetwork(explicitHost: host, explicitPort: port, internetGatewayID: "\(host.lowercased()):\(port)")
-        case "automatic":
+        case "automatic", "internet":
             await store.startAutomaticConnection()
         default:
             return false
@@ -526,6 +524,10 @@ enum DeliverySoakRunner {
         let jitterMinimum = max(0, Int(environment["SIDEBAND_SOAK_JITTER_MIN_MS"] ?? "5") ?? 5)
         let jitterMaximum = max(jitterMinimum, Int(environment["SIDEBAND_SOAK_JITTER_MAX_MS"] ?? "45") ?? 45)
         let attachmentInterval = max(0, Int(environment["SIDEBAND_SOAK_ATTACHMENT_INTERVAL"] ?? "0") ?? 0)
+        let attachmentBytes = min(
+            ReticulumResourceLimits.maximumAttachmentBytes,
+            max(1, Int(environment["SIDEBAND_SOAK_ATTACHMENT_BYTES"] ?? "1048576") ?? 1_048_576)
+        )
         let reconnectInterval = max(0, Int(environment["SIDEBAND_SOAK_RECONNECT_INTERVAL"] ?? "0") ?? 0)
         var randomState = UInt64(environment["SIDEBAND_SOAK_SEED"] ?? "") ?? 0x5B1D_BA5E_CAFE_F00D
         let existingBodies = Set(store.messages.map(\.body))
@@ -534,11 +536,15 @@ enum DeliverySoakRunner {
             if !existingBodies.contains(body) {
                 var attachments: [Attachment] = []
                 if attachmentInterval > 0, sequence.isMultiple(of: attachmentInterval) {
-                    let payload = attachmentPayload(prefix: outboundPrefix, sequence: sequence)
+                    let attachmentOrdinal = sequence / attachmentInterval
+                    let isImage = attachmentOrdinal.isMultiple(of: 2)
+                    let payload = isImage
+                        ? imagePayload(prefix: outboundPrefix, sequence: sequence, size: attachmentBytes)
+                        : attachmentPayload(prefix: outboundPrefix, sequence: sequence, size: attachmentBytes)
                     if var attachment = try? await store.attachmentStore.save(
                         data: payload,
-                        filename: "soak-\(sequence).bin",
-                        mimeType: "application/octet-stream"
+                        filename: "soak-\(sequence).\(isImage ? "bmp" : "bin")",
+                        mimeType: isImage ? "image/bmp" : "application/octet-stream"
                     ) {
                         attachment.state = .local
                         attachment.progress = 0
@@ -623,7 +629,14 @@ enum DeliverySoakRunner {
                 attachmentIntegrityFailures.append("\(body): missing attachment metadata")
                 continue
             }
-            let expected = attachmentPayload(prefix: inboundPrefix, sequence: sequence)
+            let attachmentBytes = min(
+                ReticulumResourceLimits.maximumAttachmentBytes,
+                max(1, Int(environment["SIDEBAND_SOAK_ATTACHMENT_BYTES"] ?? "1048576") ?? 1_048_576)
+            )
+            let attachmentOrdinal = sequence / attachmentInterval
+            let expected = attachmentOrdinal.isMultiple(of: 2)
+                ? imagePayload(prefix: inboundPrefix, sequence: sequence, size: attachmentBytes)
+                : attachmentPayload(prefix: inboundPrefix, sequence: sequence, size: attachmentBytes)
             guard let received = try? await store.attachmentStore.read(message.attachments[0]),
                   received == expected,
                   message.attachments[0].contentHash == Data(SHA256.hash(data: expected)) else {
@@ -664,11 +677,35 @@ enum DeliverySoakRunner {
         "\(prefix)-\(String(format: "%03d", sequence))"
     }
 
-    private static func attachmentPayload(prefix: String, sequence: Int) -> Data {
-        let sizes = [1_024, 8_193, 32_768, 65_537]
-        let size = sizes[(max(1, sequence) - 1) % sizes.count]
+    private static func attachmentPayload(prefix: String, sequence: Int, size: Int) -> Data {
         let seed = Data(SHA256.hash(data: Data("\(prefix):\(sequence)".utf8)))
         return Data((0..<size).map { index in seed[index % seed.count] ^ UInt8(truncatingIfNeeded: index &+ sequence) })
+    }
+
+    /// A valid 24-bit BMP padded to the requested byte count. The deterministic
+    /// pixels and exact length let a remote soak peer verify both image decoding
+    /// and byte-for-byte attachment integrity without checking in a fixture.
+    private static func imagePayload(prefix: String, sequence: Int, size: Int) -> Data {
+        guard size >= 58 else { return attachmentPayload(prefix: prefix, sequence: sequence, size: size) }
+        let width = 512
+        let rowBytes = ((width * 3 + 3) / 4) * 4
+        let height = max(1, min(Int(Int32.max), (size - 54) / rowBytes))
+        let pixelBytes = rowBytes * height
+        var data = Data(repeating: 0, count: size)
+        func write16(_ value: UInt16, at offset: Int) {
+            data[offset] = UInt8(truncatingIfNeeded: value)
+            data[offset + 1] = UInt8(truncatingIfNeeded: value >> 8)
+        }
+        func write32(_ value: UInt32, at offset: Int) {
+            for byte in 0..<4 { data[offset + byte] = UInt8(truncatingIfNeeded: value >> UInt32(byte * 8)) }
+        }
+        data[0] = 0x42; data[1] = 0x4d
+        write32(UInt32(size), at: 2); write32(54, at: 10); write32(40, at: 14)
+        write32(UInt32(width), at: 18); write32(UInt32(height), at: 22)
+        write16(1, at: 26); write16(24, at: 28); write32(UInt32(pixelBytes), at: 34)
+        let seed = Data(SHA256.hash(data: Data("image:\(prefix):\(sequence)".utf8)))
+        for index in 0..<pixelBytes { data[54 + index] = seed[index % seed.count] ^ UInt8(truncatingIfNeeded: index &+ sequence) }
+        return data
     }
 
     private static func waitForPeer(_ store: SidebandStore, destination: String, timeout: Int) async -> Bool {
@@ -737,4 +774,3 @@ private struct DeliverySoakReport: Codable {
     let deliveryTimeouts: Int
     let lastError: String?
 }
-#endif

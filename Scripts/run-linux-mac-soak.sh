@@ -1,0 +1,68 @@
+#!/bin/zsh
+set -euo pipefail
+
+usage() {
+    print -u2 "Usage: $0 <signed-mac-app> <linux-lxmf-destination> [count]"
+    print -u2 "Example: $0 '/Applications/Lower Sideband.app' e83856f0405047785a7609bf5f97b4a6 2500"
+    exit 64
+}
+
+[[ $# -ge 2 ]] || usage
+APP="$1"; DEST="${2:l}"; COUNT="${3:-2500}"
+[[ -x "$APP/Contents/MacOS/Lower Sideband" ]] || usage
+[[ "$DEST" == [0-9a-f]## && ${#DEST} -eq 32 ]] || usage
+[[ "$COUNT" == <2500-> ]] || usage
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUN_ID="LSB-INTERNET-$(date -u +%Y%m%dT%H%M%SZ)"
+REPORT="linux-mac-soak-$RUN_ID.json"
+LOG="$ROOT/.build/linux-mac-soak-$RUN_ID.log"
+mkdir -p "$ROOT/.build"
+
+print "Run ID: $RUN_ID"
+print "Mac outbound prefix: $RUN_ID-MAC"
+print "Linux outbound prefix: $RUN_ID-LINUX"
+print "Messages each direction: $COUNT"
+print "Attachments: every 500th message; alternating 1 MiB binary and BMP image"
+print "Topology: internet-only automatic public gateway selection; reconnect every 250 messages"
+
+env \
+    SIDEBAND_SOAK_NETWORK_MODE=internet \
+    SIDEBAND_SOAK_COUNT="$COUNT" \
+    SIDEBAND_SOAK_DESTINATION="$DEST" \
+    SIDEBAND_SOAK_OUTBOUND_PREFIX="$RUN_ID-MAC" \
+    SIDEBAND_SOAK_INBOUND_PREFIX="$RUN_ID-LINUX" \
+    SIDEBAND_SOAK_REPORT="$REPORT" \
+    SIDEBAND_SOAK_ATTACHMENT_INTERVAL=500 \
+    SIDEBAND_SOAK_ATTACHMENT_BYTES=1048576 \
+    SIDEBAND_SOAK_RECONNECT_INTERVAL=250 \
+    SIDEBAND_SOAK_JITTER_MIN_MS=25 \
+    SIDEBAND_SOAK_JITTER_MAX_MS=350 \
+    SIDEBAND_SOAK_DEADLINE_SECONDS=28800 \
+    SIDEBAND_SOAK_PRESERVE=1 \
+    "$APP/Contents/MacOS/Lower Sideband" >"$LOG" 2>&1 &
+PID=$!
+print "Mac soak PID: $PID"
+print "Mac log: $LOG"
+
+SANDBOX_REPORT="$HOME/Library/Containers/com.supes.MacSideband/Data/Library/Application Support/SidebandSwift/$REPORT"
+PLAIN_REPORT="$HOME/Library/Application Support/SidebandSwift/$REPORT"
+while kill -0 "$PID" 2>/dev/null; do
+    for path in "$SANDBOX_REPORT" "$PLAIN_REPORT"; do
+        if [[ -f "$path" ]]; then
+            cp "$path" "$ROOT/.build/$REPORT"
+            phase="$(sed -n 's/.*"phase"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$path" | head -n 1)"
+            if [[ "$phase" == complete ]]; then
+                print "PASS: $ROOT/.build/$REPORT"
+                exit 0
+            fi
+            if [[ "$phase" == *timeout || "$phase" == invalid-destination ]]; then
+                print -u2 "FAIL ($phase): $ROOT/.build/$REPORT"
+                exit 1
+            fi
+        fi
+    done
+    sleep 5
+done
+print -u2 "Mac soak process ended before a complete report was produced. Inspect $LOG."
+exit 1

@@ -377,21 +377,13 @@ struct ContentView: View {
             CallKitCoordinator.shared.install(store: store)
             synchronizeCallKit(store.voiceCall)
             #endif
-            #if DEBUG
             DeliverySoakRunner.configureNetworkIfRequested(store)
-            #endif
             await store.startTransport()
-            #if DEBUG
             let startedSoakNetwork = await DeliverySoakRunner.startNetworkIfRequested(store)
-            #else
-            let startedSoakNetwork = false
-            #endif
             if !startedSoakNetwork, store.autoConnectEnabled { await store.startAutomaticConnection() }
             if store.autoInterfaceEnabled { store.startAutoInterfaceDiscovery() }
             if store.iCloudSyncEnabled { await store.syncICloudNow() }
-            #if DEBUG
             await DeliverySoakRunner.runIfRequested(store)
-            #endif
         }
         .onOpenURL { url in
             if url.scheme?.lowercased() == LXMURI.scheme {
