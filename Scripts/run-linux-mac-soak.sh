@@ -9,7 +9,13 @@ usage() {
 
 [[ $# -ge 2 ]] || usage
 APP="$1"; DEST="${2:l}"; COUNT="${3:-2500}"
-[[ -x "$APP/Contents/MacOS/Lower Sideband" ]] || usage
+PLIST="$APP/Contents/Info.plist"
+[[ -f "$PLIST" ]] || PLIST="$APP/Info.plist"
+[[ -f "$PLIST" ]] || usage
+EXECUTABLE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST" 2>/dev/null || true)"
+EXECUTABLE="$APP/Contents/MacOS/$EXECUTABLE_NAME"
+[[ -x "$EXECUTABLE" ]] || EXECUTABLE="$APP/$EXECUTABLE_NAME"
+[[ -x "$EXECUTABLE" ]] || usage
 [[ "$DEST" == [0-9a-f]## && ${#DEST} -eq 32 ]] || usage
 [[ "$COUNT" == <2500-> ]] || usage
 
@@ -40,7 +46,7 @@ env \
     SIDEBAND_SOAK_JITTER_MAX_MS=350 \
     SIDEBAND_SOAK_DEADLINE_SECONDS=28800 \
     SIDEBAND_SOAK_PRESERVE=1 \
-    "$APP/Contents/MacOS/Lower Sideband" >"$LOG" 2>&1 &
+    "$EXECUTABLE" >"$LOG" 2>&1 &
 PID=$!
 print "Mac soak PID: $PID"
 print "Mac log: $LOG"
