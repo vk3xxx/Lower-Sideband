@@ -3607,10 +3607,7 @@ public final class SidebandStore {
     private func activateAndRequestPropagation(on session: ReticulumLinkSession) async {
         do {
             try await transmitRawPacket(try session.encryptedPacket(MessagePack.double(session.rtt), context: 0xfe))
-            let signedData = session.linkID + messagingIdentity.publicKey
-            let identifyData = messagingIdentity.publicKey + (try messagingIdentity.sign(signedData))
-            try await transmitRawPacket(try session.encryptedPacket(identifyData, context: 0xfb))
-            linkIdentificationsSent += 1
+            try await identify(session)
             await syncPropagationNow()
             for conversation in conversations { await propagateQueued(for: conversation.id) }
             await sendKeepalive(on: session)
@@ -3620,9 +3617,27 @@ public final class SidebandStore {
     private func activateDirectLink(_ session: ReticulumLinkSession, conversationID: UUID) async {
         do {
             try await transmitRawPacket(try session.encryptedPacket(MessagePack.double(session.rtt), context: 0xfe))
+            // Stock LXMF only generates a delivery proof after it can recall
+            // and validate the source identity. Identify every Mac-initiated
+            // direct link before releasing queued messages, just as we do for
+            // propagation links. Without this handshake the peer can decrypt
+            // and store the message but reports SOURCE_UNKNOWN and withholds
+            // its proof.
+            try await identify(session)
             await attemptDelivery(for: conversationID)
             await sendKeepalive(on: session)
         } catch { lastError = "Direct link activation failed: \(error.localizedDescription)" }
+    }
+
+    private func identify(_ session: ReticulumLinkSession) async throws {
+        let payload = try Self.linkIdentificationPayload(session: session, identity: messagingIdentity)
+        try await transmitRawPacket(try session.encryptedPacket(payload, context: 0xfb))
+        linkIdentificationsSent += 1
+        recordDeliveryDiagnosticEvent("Identified messaging identity \(messagingIdentityHash) on link \(session.linkID.hex)")
+    }
+
+    static func linkIdentificationPayload(session: ReticulumLinkSession, identity: ReticulumIdentity) throws -> Data {
+        identity.publicKey + (try identity.sign(session.linkID + identity.publicKey))
     }
 
     private func handlePropagationResponse(_ plaintext: Data, session: ReticulumLinkSession) async {

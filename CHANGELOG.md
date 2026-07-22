@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.14 (52) - 2026-07-23
+
+- Identify the local messaging identity on every Mac-initiated direct Reticulum link before sending LXMF payloads, allowing stock LXMF peers to validate the source and return delivery proofs.
+- Reused one authenticated link-identification handshake for direct and propagation links and recorded it in persistent delivery diagnostics.
+
 ## 1.3.13 (51) - 2026-07-22
 
 - Return direct-link LXMF delivery proofs over the same Reticulum interface that received the link, preventing multi-gateway proof loss.

@@ -3213,6 +3213,26 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(session.keepalivePacket().hex == "0c00c85013b4b47e0f4e804b72ebd0641407faff")
 }
 
+@MainActor @Test func directLinkIdentificationBindsMessagingIdentity() throws {
+    let identity = try ReticulumIdentity(privateKey: Data(0..<64))
+    let session = ReticulumLinkSession(
+        linkID: Data(hex: "c85013b4b47e0f4e804b72ebd0641407"),
+        destinationHash: Data(hex: "fae321c442e3c9bdcd7a3e79d850e03c"),
+        peerPublicKey: Data(hex: "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a"),
+        derivedKey: Data(hex: "09e497207060e1f86c5af8e6799238216b85aeb5b6ee7111cdfc247f88fa5047dda46186f4847c9730b6001d080f6cfd163b0fadb84752cb3139abdc15ee1c16"),
+        mtu: 500
+    )
+
+    let payload = try SidebandStore.linkIdentificationPayload(session: session, identity: identity)
+
+    #expect(payload.count == 128)
+    #expect(Data(payload.prefix(64)) == identity.publicKey)
+    #expect(identity.validate(
+        signature: Data(payload.suffix(64)),
+        message: session.linkID + identity.publicKey
+    ))
+}
+
 @Test func lxmfPackingMatchesPythonReference() throws {
     let identity = try ReticulumIdentity(privateKey: Data(0..<64))
     let source = Data(hex: "fae321c442e3c9bdcd7a3e79d850e03c")
