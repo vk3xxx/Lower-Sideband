@@ -419,6 +419,7 @@ struct SidebandSettingsView: View {
                 LabeledContent("System network", value: reachabilityText)
                 LabeledContent("Automatic connection", value: store.automaticConnectionDescription)
                 LabeledContent("Last connected", value: store.lastNetworkReadyAt?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
+                LabeledContent("Last announced", value: store.lastDeliveryAnnounceAt?.formatted(date: .abbreviated, time: .standard) ?? "Not this session")
                 ForEach(store.networkInterfaces) { interface in
                     SettingsStateRow(
                         title: interface.name + (interface.isBootstrap ? " (bootstrap)" : ""),
@@ -427,6 +428,15 @@ struct SidebandSettingsView: View {
                         tint: interface.state == .ready ? .green : .secondary
                     )
                 }
+                Button {
+                    Task { _ = await store.announceDeliveryDestinationNow() }
+                } label: {
+                    Label("Announce Now", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .disabled(store.networkState != .ready)
+                .help(store.networkState == .ready
+                      ? "Broadcast your LXMF delivery and voice destinations on every ready Reticulum interface now."
+                      : "Connect to Reticulum before announcing your destinations.")
                 connectionActions
             }
 

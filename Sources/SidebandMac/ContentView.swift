@@ -999,6 +999,20 @@ private struct NetworkView: View {
             }
             .textFieldStyle(.roundedBorder)
             .padding(6)
+            GroupBox("Identity announcement") {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        announceStatus
+                        Spacer()
+                        announceButton
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        announceStatus
+                        announceButton
+                    }
+                }
+                .padding(6)
+            }
             GroupBox("Routing") {
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow { metric("Packets received", store.receivedPacketCount); metric("Known paths", store.knownPathCount) }
@@ -1544,6 +1558,33 @@ private struct NetworkView: View {
                 }
             } onCancel: { editingRNode = nil }
         }
+    }
+
+    private var announceStatus: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("My LXMF destination")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(store.localDeliveryHash)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+            Text(store.lastDeliveryAnnounceAt.map { "Last announced \($0.formatted(date: .abbreviated, time: .standard))" }
+                 ?? "Not announced during this session")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var announceButton: some View {
+        Button {
+            Task { _ = await store.announceDeliveryDestinationNow() }
+        } label: {
+            Label("Announce Now", systemImage: "antenna.radiowaves.left.and.right")
+        }
+        .disabled(store.networkState != .ready)
+        .help(store.networkState == .ready
+              ? "Broadcast your LXMF delivery and voice destinations on every ready Reticulum interface now."
+              : "Connect to Reticulum before announcing your destinations.")
     }
 
     private var compactInterfaceSettings: some View {

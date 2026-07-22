@@ -62,6 +62,7 @@ public final class SidebandStore {
     public private(set) var propagationMessagesAvailable = 0
     public private(set) var propagationUploadsAccepted = 0
     public private(set) var deliveryAnnouncesSent = 0
+    public private(set) var lastDeliveryAnnounceAt: Date?
     public private(set) var inboundLinksAccepted = 0
     public private(set) var opportunisticDeliveriesReceived = 0
     public private(set) var lastPropagationSync: Date?
@@ -174,7 +175,6 @@ public final class SidebandStore {
     private var directLinkFallbackDestinations: Set<String> = []
     private var deliveryPassesInProgress: Set<UUID> = []
     private var deliveryPassRerunRequested: Set<UUID> = []
-    private var lastDeliveryAnnounceAt: Date?
     private struct OutgoingResource {
         let manifest: ReticulumResourceManifest; let parts: [Data]; let expectedProof: Data
         let messageID: UUID; let attachmentID: UUID?; let linkID: String
@@ -2782,7 +2782,17 @@ public final class SidebandStore {
         catch { lastError = "TCP tunnel synthesis failed: \(error.localizedDescription)" }
     }
 
-    private func announceLocalDeliveryDestination() async {
+    /// Immediately broadcasts this profile's LXMF delivery and voice
+    /// destinations on every ready Reticulum interface. Automatic announces
+    /// continue to run independently on connection and during maintenance.
+    @discardableResult
+    public func announceDeliveryDestinationNow() async -> Bool {
+        guard networkState == .ready else { return false }
+        return await announceLocalDeliveryDestination()
+    }
+
+    @discardableResult
+    private func announceLocalDeliveryDestination() async -> Bool {
         do {
             let packet = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: "lxmf.delivery", appData: localAnnounceAppData)
             try await transmitRawPacket(packet)
@@ -2790,9 +2800,11 @@ public final class SidebandStore {
             try await transmitRawPacket(voicePacket)
             deliveryAnnouncesSent += 1
             lastDeliveryAnnounceAt = .now
+            return true
         } catch {
             // Connection transitions are retried by the engine. An announce is
             // maintenance traffic and must never interrupt the user with a modal.
+            return false
         }
     }
 

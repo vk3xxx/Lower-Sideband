@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.3 (41) - 2026-07-22
+
+- Added an explicit **Announce Now** action to Network Status and Connection Settings on Mac, iPhone and iPad.
+- Displayed the current LXMF destination and last successful announce time for internet-route testing and diagnostics.
+
 ## 1.3.2 (40) - 2026-07-21
 
 - Rebuilt Settings around a native, searchable information architecture for connection, delivery, sync, privacy, notifications, voice, telemetry, radios, plugins, and advanced diagnostics.

@@ -1197,6 +1197,17 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(LXMFAnnounceInfo(appData: store.localAnnounceAppData)?.displayName == "Native iPhone")
 }
 
+@MainActor @Test func manualDeliveryAnnounceRequiresReadyNetwork() async {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+
+    let announced = await store.announceDeliveryDestinationNow()
+
+    #expect(!announced)
+    #expect(store.lastDeliveryAnnounceAt == nil)
+    #expect(store.deliveryAnnouncesSent == 0)
+}
+
 @MainActor @Test func internetOnlyConnectionPolicyPersists() {
     let defaults = UserDefaults.standard
     let previousInternetOnly = defaults.object(forKey: "reticulumInternetOnly")
