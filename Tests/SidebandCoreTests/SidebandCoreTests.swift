@@ -1377,6 +1377,33 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(received.validate(with: sender))
 }
 
+@Test func standardPythonLXMFOneMiBAttachmentsDecodeAndValidate() throws {
+    let sender = ReticulumIdentity()
+    let payload = Data((0..<1_048_576).map { UInt8(truncatingIfNeeded: $0) })
+    let destination = Data(repeating: 0x01, count: 16)
+    let source = Data(repeating: 0x02, count: 16)
+    let file = try LXMFMessage(
+        destinationHash: destination, sourceHash: source, sourceIdentity: sender,
+        content: Data("file".utf8),
+        encodedFields: [0x05: MessagePack.array([
+            MessagePack.array([MessagePack.binary(Data("payload.bin".utf8)), MessagePack.binary(payload)])
+        ])]
+    )
+    let image = try LXMFMessage(
+        destinationHash: destination, sourceHash: source, sourceIdentity: sender,
+        content: Data("image".utf8),
+        encodedFields: [0x06: MessagePack.array([
+            MessagePack.binary(Data("bmp".utf8)), MessagePack.binary(payload)
+        ])]
+    )
+    let receivedFile = try LXMFReceivedMessage(packed: file.packed)
+    let receivedImage = try LXMFReceivedMessage(packed: image.packed)
+    #expect(receivedFile.fields[0x05] != nil)
+    #expect(receivedImage.fields[0x06] != nil)
+    #expect(receivedFile.validate(with: sender))
+    #expect(receivedImage.validate(with: sender))
+}
+
 @Test func lxmfReactionFieldMatchesUpstreamMapShape() throws {
     let sender = ReticulumIdentity()
     let target = Data(repeating: 0xAB, count: 32)

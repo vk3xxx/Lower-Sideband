@@ -18,7 +18,13 @@ public struct LXMFReceivedMessage: Sendable {
         sourceHash = packed.subdata(in: 16..<32)
         signature = packed.subdata(in: 32..<96)
         payload = Data(packed.dropFirst(96))
-        guard case let .array(parts) = try MessagePackDecoder.decode(payload), parts.count >= 4,
+        let limits = MessagePackDecoder.Limits(
+            maximumDepth: 32,
+            maximumCollectionCount: 4_096,
+            maximumNodeCount: 16_384,
+            maximumScalarBytes: SidebandMessageLimits.maximumWireMessageBytes
+        )
+        guard case let .array(parts) = try MessagePackDecoder.decode(payload, limits: limits), parts.count >= 4,
               case let .double(ts) = parts[0], case let .binary(title) = parts[1], case let .binary(content) = parts[2],
               case let .map(fieldEntries) = parts[3] else { throw ParseError.invalidPayload }
         stamp = if parts.count > 4, case let .binary(value) = parts[4] { value } else { nil }

@@ -3142,9 +3142,10 @@ public final class SidebandStore {
         let remoteIdentity = inboundRemoteIdentities[session.linkID.hex] ?? discoveries.first(where: { $0.destinationHash == message.sourceHash.hex }).flatMap { $0.publicKey }.flatMap { try? ReticulumIdentity(publicKey: $0) }
         guard let remoteIdentity, message.validate(with: remoteIdentity) else { return }
         bind(session: session, to: remoteIdentity)
-        let wasPreviouslyReceived = receivedLXMFIDs.contains(message.messageID.hex)
-        guard wasPreviouslyReceived || importReceivedMessage(message, sourceIdentity: remoteIdentity) else { return }
         Task {
+            let wasPreviouslyReceived = receivedLXMFIDs.contains(message.messageID.hex)
+            let accepted = wasPreviouslyReceived ? true : await importReceivedResourceMessage(message, sourceIdentity: remoteIdentity)
+            guard accepted else { return }
             do {
                 let hash = packet.packetHash
                 let proofData = hash + (try messagingIdentity.sign(hash))
@@ -3530,6 +3531,63 @@ public final class SidebandStore {
         return true
     }
 
+    /// Imports the standard Python LXMF file and image fields before a
+    /// delivery proof is emitted. Staging first avoids acknowledging a message
+    /// whose attachment could not be durably saved.
+    private func importReceivedResourceMessage(_ message: LXMFReceivedMessage, sourceIdentity: ReticulumIdentity) async -> Bool {
+        guard let payloads = standardLXMFResourcePayloads(message) else { return false }
+        if payloads.isEmpty { return importReceivedMessage(message, sourceIdentity: sourceIdentity) }
+        guard payloads.count <= SidebandMessageLimits.maximumAttachments,
+              payloads.reduce(0, { $0 + $1.data.count }) <= SidebandMessageLimits.maximumCombinedAttachmentBytes else { return false }
+        var staged: [Attachment] = []
+        for payload in payloads {
+            guard let attachment = try? await attachmentStore.save(
+                data: payload.data,
+                filename: payload.filename,
+                mimeType: payload.mimeType
+            ) else { return false }
+            staged.append(attachment)
+        }
+        guard importReceivedMessage(message, sourceIdentity: sourceIdentity),
+              let index = messages.firstIndex(where: { $0.lxmfID == message.messageID && $0.direction == .incoming }) else { return false }
+        messages[index].attachments = staged
+        save()
+        return true
+    }
+
+    private func standardLXMFResourcePayloads(_ message: LXMFReceivedMessage) -> [(filename: String, mimeType: String?, data: Data)]? {
+        var payloads: [(String, String?, Data)] = []
+        if let value = message.fields[0x05] {
+            guard case let .array(files) = value else { return nil }
+            for file in files {
+                guard case let .array(parts) = file, parts.count == 2,
+                      let name = messagePackString(parts[0]),
+                      case let .binary(data) = parts[1],
+                      !name.isEmpty, name.count <= 180, name.utf8.count <= 720,
+                      data.count <= ReticulumResourceLimits.maximumAttachmentBytes else { return nil }
+                payloads.append((name, nil, data))
+            }
+        }
+        if let value = message.fields[0x06] {
+            guard case let .array(parts) = value, parts.count == 2,
+                  let rawExtension = messagePackString(parts[0]),
+                  case let .binary(data) = parts[1],
+                  data.count <= ReticulumResourceLimits.maximumAttachmentBytes else { return nil }
+            let ext = rawExtension.lowercased().filter { $0.isLetter || $0.isNumber }.prefix(12)
+            guard !ext.isEmpty else { return nil }
+            payloads.append(("image.\(ext)", "image/\(ext)", data))
+        }
+        return payloads
+    }
+
+    private func messagePackString(_ value: MessagePackValue) -> String? {
+        switch value {
+        case .string(let string): string
+        case .binary(let data): String(data: data, encoding: .utf8)
+        default: nil
+        }
+    }
+
     private func transmitRawPacket(_ packet: Data) async throws {
         var transmitted = false
         var finalError: Error?
@@ -3734,8 +3792,29 @@ public final class SidebandStore {
         guard let attachment = message.attachments.first(where: { $0.state == .local || $0.state == .queued }) else { return }
         do {
             let data = try await attachmentStore.read(attachment)
-            let envelope = try LXMFResourceEnvelope(filename: attachment.filename, mimeType: attachment.mimeType, messageBody: message.body, sourceHash: sourceHash, groupID: message.id, renderer: message.renderer, replyTo: message.replyTo, replyQuote: message.replyQuote, timestamp: message.timestamp, fileData: data, signingIdentity: messagingIdentity).encode()
-            let segments = try ReticulumResourceSegmentPlanner.prepare(data: envelope, session: session, hasMetadata: true)
+            var encodedFields = lxmfEncodedFields(for: message)
+            if attachment.mimeType?.lowercased().hasPrefix("image/") == true {
+                let ext = URL(fileURLWithPath: attachment.filename).pathExtension.lowercased()
+                let format = ext.isEmpty ? "png" : ext
+                encodedFields[0x06] = MessagePack.array([
+                    MessagePack.binary(Data(format.utf8)), MessagePack.binary(data)
+                ])
+            } else {
+                encodedFields[0x05] = MessagePack.array([
+                    MessagePack.array([
+                        MessagePack.binary(Data(attachment.filename.utf8)), MessagePack.binary(data)
+                    ])
+                ])
+            }
+            guard let conversation = conversations.first(where: { $0.id == message.conversationID }),
+                  let destination = Data(hexadecimal: conversation.destinationHash) else { return }
+            let lxmf = try LXMFMessage(
+                destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity,
+                timestamp: message.timestamp.timeIntervalSince1970, content: Data(message.body.utf8),
+                fields: lxmfFields(for: message), encodedFields: encodedFields
+            )
+            recordLXMFID(lxmf.messageID, for: message.id)
+            let segments = try ReticulumResourceSegmentPlanner.prepare(data: lxmf.packed, session: session, hasMetadata: false)
             guard let first = segments.first else { return }
             registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: message.id, attachmentID: attachment.id, session: session)
             recordDeliveryAttempt(message.id, mode: .resource)
@@ -3959,7 +4038,8 @@ public final class SidebandStore {
                 ?? discoveries.first(where: { $0.destinationHash == message.sourceHash.hex })?.publicKey.flatMap({ try? ReticulumIdentity(publicKey: $0) }),
            message.validate(with: identity) {
             let alreadyImported = receivedLXMFIDs.contains(message.messageID.hex)
-            if alreadyImported || importReceivedMessage(message, sourceIdentity: identity) {
+            let accepted = alreadyImported ? true : await importReceivedResourceMessage(message, sourceIdentity: identity)
+            if accepted {
                 incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
                 await acknowledgeResource()
                 return

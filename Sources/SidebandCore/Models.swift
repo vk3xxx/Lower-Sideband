@@ -3,7 +3,10 @@ import Foundation
 public enum SidebandMessageLimits {
     public static let maximumTextCharacters = 4_096
     public static let maximumTextBytes = 16 * 1_024
-    public static let maximumWireMessageBytes = 64 * 1_024
+    // Large standard LXMF attachment/image fields arrive as Reticulum
+    // resources. Keep the decoded message bounded by the same 64 MiB policy
+    // as native attachment resources, plus conservative envelope overhead.
+    public static let maximumWireMessageBytes = 65 * 1_024 * 1_024
     public static let maximumReplyQuoteCharacters = 280
     public static let maximumReplyQuoteBytes = 1_120
     public static let maximumRememberedMessageIDs = 10_000
