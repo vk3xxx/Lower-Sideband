@@ -759,7 +759,7 @@ enum DeliverySoakRunner {
                store.hasPath(to: destination),
                store.hasValidatedDiscovery(to: destination) { return true }
             if store.networkState == .ready, ContinuousClock.now >= nextRequest {
-                await store.requestPath(to: destination)
+                await store.requestPath(to: destination, surfaceErrors: false)
                 nextRequest = ContinuousClock.now + .seconds(4)
             }
             try? await Task.sleep(for: .milliseconds(250))

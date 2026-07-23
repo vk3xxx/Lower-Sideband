@@ -484,7 +484,7 @@ public final class SidebandStore {
         voiceCall = call
         let voiceDestination = LXSTVoice.destinationHash(for: remoteIdentity)
         if !hasPath(to: voiceDestination.hex) {
-            await requestPath(to: voiceDestination.hex)
+            await requestPath(to: voiceDestination.hex, surfaceErrors: false)
             let deadline = ContinuousClock.now + .seconds(10)
             while !hasPath(to: voiceDestination.hex), ContinuousClock.now < deadline,
                   voiceCall?.id == call.id, !Task.isCancelled {
@@ -2026,7 +2026,7 @@ public final class SidebandStore {
             lastError = "Enter a valid 32-character LXMF propagation-node destination."
             return
         }
-        await requestPath(to: propagationNodeHash)
+        await requestPath(to: propagationNodeHash, surfaceErrors: false)
     }
 
     public var propagationNodeHasPath: Bool { hasPath(to: propagationNodeHash) }
@@ -2333,9 +2333,9 @@ public final class SidebandStore {
         addConversation(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName ?? "Discovered \(discovery.destinationHash.prefix(8))")
     }
 
-    public func requestPath(to destinationHash: String) async {
+    public func requestPath(to destinationHash: String, surfaceErrors: Bool = true) async {
         guard let target = Data(hexadecimal: destinationHash) else {
-            lastError = "The destination address is invalid."
+            if surfaceErrors { lastError = "The destination address is invalid." }
             return
         }
         let normalized = destinationHash.lowercased()
@@ -2383,7 +2383,7 @@ public final class SidebandStore {
                 }
             }
         } catch {
-            lastError = "Path request failed: \(error.localizedDescription)"
+            if surfaceErrors { lastError = "Path request failed: \(error.localizedDescription)" }
         }
     }
 
@@ -2406,7 +2406,7 @@ public final class SidebandStore {
             return
         }
         guard hasPath(to: normalized) else {
-            await requestPath(to: normalized)
+            await requestPath(to: normalized, surfaceErrors: false)
             deferLinkRequest(to: normalized)
             return
         }
@@ -2485,7 +2485,7 @@ public final class SidebandStore {
             await pathTable.invalidate(destination)
             await refreshPathState()
         }
-        await requestPath(to: destinationHash)
+        await requestPath(to: destinationHash, surfaceErrors: false)
     }
 
     private func clearPendingLinks(to destinationHash: String) {
@@ -2673,7 +2673,7 @@ public final class SidebandStore {
             deferredPathRequests.removeAll()
             for destination in deferred {
                 pendingPathHashes.remove(destination)
-                await requestPath(to: destination)
+                await requestPath(to: destination, surfaceErrors: false)
             }
             if DestinationHash.isValid(propagationNodeHash), !propagationNodeHasPath, !propagationNodePathPending { await requestPropagationNodePath() }
             for conversation in conversations { await attemptDelivery(for: conversation.id) }
@@ -3115,7 +3115,7 @@ public final class SidebandStore {
         UserDefaults.standard.set(hash, forKey: "lxmfPropagationNode")
         if changed {
             Task {
-                await requestPath(to: hash)
+                await requestPath(to: hash, surfaceErrors: false)
                 if hasPath(to: hash) { await requestLink(to: hash) }
             }
         }
@@ -3965,11 +3965,11 @@ public final class SidebandStore {
               let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated }),
               let publicKey = discovery.publicKey,
               let recipient = try? ReticulumIdentity(publicKey: publicKey) else {
-            if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash) }
+            if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash, surfaceErrors: false) }
             return
         }
         if !hasPath(to: conversation.destinationHash) {
-            if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash) }
+            if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash, surfaceErrors: false) }
         }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
@@ -4328,7 +4328,7 @@ public final class SidebandStore {
             // before its announce/identity has finished traversing the reverse
             // path. Hold the fully reassembled resource briefly and actively
             // request that identity instead of discarding a valid attachment.
-            await requestPath(to: envelope.sourceHash.hex)
+            await requestPath(to: envelope.sourceHash.hex, surfaceErrors: false)
             let identityDeadline = ContinuousClock.now + .seconds(12)
             while resolvedIdentity == nil, ContinuousClock.now < identityDeadline {
                 try? await Task.sleep(for: .milliseconds(250))
@@ -4554,7 +4554,7 @@ public final class SidebandStore {
                 await refreshPathState()
             }
             pendingPathHashes.remove(destinationHash)
-            await requestPath(to: destinationHash)
+            await requestPath(to: destinationHash, surfaceErrors: false)
             if activeLinkHashes.contains(destinationHash),
                let conversation = conversations.first(where: { $0.destinationHash == destinationHash }) {
                 // An attachment or an explicit link request may have activated
@@ -4596,7 +4596,7 @@ public final class SidebandStore {
                 await refreshPathState()
             }
             pendingPathHashes.remove(destinationHash)
-            await requestPath(to: destinationHash)
+            await requestPath(to: destinationHash, surfaceErrors: false)
             await requestLink(to: destinationHash)
             deferLinkRequest(to: destinationHash)
             if conversation.deliveryPreference == .propagationPreferred {
