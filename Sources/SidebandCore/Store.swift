@@ -236,6 +236,7 @@ public final class SidebandStore {
     public private(set) var gatewayHealth: [String: GatewayHealthRecord] = [:]
     private var networkConnectionStartedAt: Date?
     private var deferredPathRequests: Set<String> = []
+    private var answeredLocalPathRequestTags: [Data: Date] = [:]
     private var intentionallyDisconnected = false
     private var reconnectAttempt = 0
     private let transportIdentity: ReticulumIdentity
@@ -1680,7 +1681,12 @@ public final class SidebandStore {
                 preferredID: internetGatewayID,
                 health: gatewayHealth
             )
-            endpoints = Array(publicGateways.prefix(3)).map {
+            // Keep every configured public entrypoint live. Remote transports
+            // can retain a valid route to any gateway on which this identity
+            // announced for up to seven days. Rotating a three-gateway subset
+            // made the client unreachable through a previously advertised
+            // entrypoint even though its remaining sockets were healthy.
+            endpoints = publicGateways.map {
                 ReticulumTCPInterfacePool.Endpoint(id: $0.id, name: $0.name, host: $0.host, port: $0.port, isBootstrap: true)
             }
             activeNetworkHost = "\(endpoints.count) public gateways"
@@ -2947,6 +2953,11 @@ public final class SidebandStore {
 
     private func receive(_ packet: ReticulumPacket, interfaceID: String? = nil) {
         receivedPacketCount += 1
+        if let request = ReticulumPathRequest.decode(packet),
+           request.targetHash.hex == localDeliveryHash || request.targetHash.hex == localVoiceHash {
+            answerLocalPathRequest(request, interfaceID: interfaceID)
+            return
+        }
         if packet.packetType == .linkRequest,
            packet.destinationHash.hex == localDeliveryHash || packet.destinationHash.hex == localVoiceHash {
             recordInboundDeliveryPacket(destination: packet.destinationHash.hex, interfaceID: interfaceID, matched: true)
@@ -3028,6 +3039,46 @@ public final class SidebandStore {
         discoveries.sort { $0.lastSeen > $1.lastSeen }
         trimDiscoveryCache()
         scheduleDiscoverySave()
+    }
+
+    private func answerLocalPathRequest(
+        _ request: (targetHash: Data, tag: Data),
+        interfaceID: String?
+    ) {
+        let now = Date.now
+        answeredLocalPathRequestTags = answeredLocalPathRequestTags.filter {
+            now.timeIntervalSince($0.value) < 120
+        }
+        let requestKey = request.targetHash + request.tag
+        guard answeredLocalPathRequestTags[requestKey] == nil else { return }
+        answeredLocalPathRequestTags[requestKey] = now
+        let destinationName = request.targetHash.hex == localVoiceHash
+            ? LXSTVoice.destinationName
+            : "lxmf.delivery"
+        let appData = destinationName == "lxmf.delivery" ? localAnnounceAppData : Data()
+        Task {
+            // Match the reference transport grace period so a directly
+            // attached destination can answer before a cached transport route.
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            do {
+                let response = try ReticulumAnnounceBuilder.packet(
+                    identity: messagingIdentity,
+                    destinationName: destinationName,
+                    appData: appData,
+                    context: 0x0B
+                )
+                if let interfaceID { try await transmitRawPacket(response, on: interfaceID) }
+                else { try await transmitRawPacket(response) }
+                recordDeliveryDiagnosticEvent(
+                    "Answered path request for \(request.targetHash.hex) on \(interfaceID ?? "automatic route")"
+                )
+            } catch {
+                recordDeliveryDiagnosticEvent(
+                    "Path response deferred on \(interfaceID ?? "automatic route"): \(error.localizedDescription)"
+                )
+            }
+        }
     }
 
     private func considerDiscoveredNetworkInterface(_ candidate: DiscoveredReticulumInterface) {

@@ -2955,6 +2955,21 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(announce.destinationHash.hex == "fae321c442e3c9bdcd7a3e79d850e03c")
 }
 
+@Test func buildsValidReticulumPathResponseAnnounce() throws {
+    let identity = try ReticulumIdentity(privateKey: Data(0..<64))
+    let raw = try ReticulumAnnounceBuilder.packet(
+        identity: identity,
+        destinationName: "lxmf.delivery",
+        appData: ReticulumAnnounceBuilder.lxmfAppData(displayName: "Sideband Swift"),
+        randomHash: Data(0..<10),
+        context: 0x0B
+    )
+    let packet = try ReticulumPacket(raw: raw)
+    #expect(packet.packetType == .announce)
+    #expect(packet.context == 0x0B)
+    #expect(try ReticulumAnnounce(packet: packet).validate())
+}
+
 @Test func decodesLXMFAnnounceDisplayNameAndStampCost() {
     let appData = MessagePack.array([MessagePack.binary(Data("Alice".utf8)), Data([0x07]), MessagePack.array([Data([0x00])])])
     let info = LXMFAnnounceInfo(appData: appData)
@@ -2970,6 +2985,24 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     let parsed = try ReticulumPacket(raw: packet)
     #expect(parsed.destinationType == .plain)
     #expect(parsed.destinationHash == ReticulumPathRequest.destinationHash)
+    let decoded = try #require(ReticulumPathRequest.decode(parsed))
+    #expect(decoded.targetHash == target)
+    #expect(decoded.tag == tag)
+}
+
+@Test func transportOriginatedPathRequestDecodesTrailingTag() throws {
+    let target = Data(0..<16)
+    let requestingTransport = Data(32..<48)
+    let tag = Data(16..<32)
+    let raw = Data([0x08, 0x00])
+        + ReticulumPathRequest.destinationHash
+        + Data([0x00])
+        + target
+        + requestingTransport
+        + tag
+    let decoded = try #require(ReticulumPathRequest.decode(ReticulumPacket(raw: raw)))
+    #expect(decoded.targetHash == target)
+    #expect(decoded.tag == tag)
 }
 
 @Test func pathTableAcceptsValidatedAndPrefersBetterPaths() async throws {

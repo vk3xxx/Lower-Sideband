@@ -1,7 +1,15 @@
 import Foundation
 
 public enum ReticulumAnnounceBuilder {
-    public static func packet(identity: ReticulumIdentity, destinationName: String, appData: Data = Data(), randomHash: Data? = nil, ratchet: Data? = nil, emittedAt: Date = .now) throws -> Data {
+    public static func packet(
+        identity: ReticulumIdentity,
+        destinationName: String,
+        appData: Data = Data(),
+        randomHash: Data? = nil,
+        ratchet: Data? = nil,
+        emittedAt: Date = .now,
+        context: UInt8 = 0x00
+    ) throws -> Data {
         let nameHash = Data(ReticulumIdentity.fullHash(Data(destinationName.utf8)).prefix(10))
         let destinationHash = ReticulumIdentity.truncatedHash(nameHash + identity.hash)
         // Reticulum announce nonces are not ten unconstrained random bytes.
@@ -16,7 +24,7 @@ public enum ReticulumAnnounceBuilder {
         let signed = destinationHash + identity.publicKey + nameHash + randomHash + ratchetData + appData
         let announceData = identity.publicKey + nameHash + randomHash + ratchetData + (try identity.sign(signed)) + appData
         let flags: UInt8 = 0x01 | (ratchet == nil ? 0 : 0x20)
-        return Data([flags, 0x00]) + destinationHash + Data([0x00]) + announceData
+        return Data([flags, 0x00]) + destinationHash + Data([context]) + announceData
     }
 
     static func announceRandomHash(emittedAt: Date) -> Data {
