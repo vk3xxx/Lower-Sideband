@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.15 (53) - 2026-07-23
+
+- Accept authenticated explicit Reticulum delivery proofs addressed to a secure link ID, preventing valid Linux LXMF proofs from timing out on Mac.
+- Announce the local LXMF delivery identity before the first message on every new direct link and allow it to propagate before sending, preventing `SOURCE_UNKNOWN` on stock LXMF receivers.
+- Added regression coverage for valid and forged explicit link proofs.
+
 ## 1.3.14 (52) - 2026-07-23
 
 - Identify the local messaging identity on every Mac-initiated direct Reticulum link before sending LXMF payloads, allowing stock LXMF peers to validate the source and return delivery proofs.

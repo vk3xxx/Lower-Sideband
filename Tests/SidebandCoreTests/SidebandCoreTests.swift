@@ -541,6 +541,40 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(ReticulumProof.validates(proof, packetHash: received.packetHash, identity: identity))
 }
 
+@Test func explicitLinkProofUsesEmbeddedPacketHashInsteadOfLinkIDForRouting() throws {
+    let identity = ReticulumIdentity()
+    let packetHash = Data(ReticulumIdentity.fullHash(Data("link payload".utf8)))
+    let linkID = Data(repeating: 0x7a, count: ReticulumPacket.truncatedHashBytes)
+    let proofData = packetHash + (try identity.sign(packetHash))
+    let raw = Data([0x0f, 0x00]) + linkID + Data([0x00]) + proofData
+    let proof = try ReticulumPacket(raw: raw)
+
+    #expect(proof.packetType == .proof)
+    #expect(proof.destinationType == .link)
+    #expect(proof.destinationHash == linkID)
+    #expect(proof.destinationHash != packetHash.prefix(ReticulumPacket.truncatedHashBytes))
+    #expect(ReticulumProof.validates(proof, packetHash: packetHash, identity: identity))
+}
+
+@Test func explicitLinkProofRejectsWrongEmbeddedHashOrSignature() throws {
+    let identity = ReticulumIdentity()
+    let packetHash = Data(ReticulumIdentity.fullHash(Data("expected packet".utf8)))
+    let wrongHash = Data(ReticulumIdentity.fullHash(Data("different packet".utf8)))
+    let linkID = Data(repeating: 0x7b, count: ReticulumPacket.truncatedHashBytes)
+    let wrongHashProof = try ReticulumPacket(
+        raw: Data([0x0f, 0x00]) + linkID + Data([0x00])
+            + wrongHash + (try identity.sign(wrongHash))
+    )
+    let wrongSigner = ReticulumIdentity()
+    let wrongSignatureProof = try ReticulumPacket(
+        raw: Data([0x0f, 0x00]) + linkID + Data([0x00])
+            + packetHash + (try wrongSigner.sign(packetHash))
+    )
+
+    #expect(!ReticulumProof.validates(wrongHashProof, packetHash: packetHash, identity: identity))
+    #expect(!ReticulumProof.validates(wrongSignatureProof, packetHash: packetHash, identity: identity))
+}
+
 @Test func outboundPacketOnlyAddsTransportHeaderForMultiHopPath() throws {
     let destination = Data(repeating: 0x24, count: 16)
     let normalRaw = Data([0x00, 0x00]) + destination + Data([0x00, 0x44])

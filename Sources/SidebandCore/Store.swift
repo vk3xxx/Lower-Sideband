@@ -3616,17 +3616,33 @@ public final class SidebandStore {
 
     private func activateDirectLink(_ session: ReticulumLinkSession, conversationID: UUID) async {
         do {
+            // LINKIDENTIFY authenticates this secure link, but stock LXMF
+            // resolves message signatures through the separately announced
+            // `lxmf.delivery` destination. Send a fresh signed announce for
+            // every newly activated peer link and give transports a bounded
+            // propagation window before the first queued message is released.
+            // This prevents the receiver from permanently recording the first
+            // message as SOURCE_UNKNOWN on multi-hop public paths.
+            guard await prepareLocalIdentityForDirectDelivery() else {
+                recordDeliveryDiagnosticEvent("Held direct delivery until the local identity can be announced")
+                return
+            }
             try await transmitRawPacket(try session.encryptedPacket(MessagePack.double(session.rtt), context: 0xfe))
-            // Stock LXMF only generates a delivery proof after it can recall
-            // and validate the source identity. Identify every Mac-initiated
-            // direct link before releasing queued messages, just as we do for
-            // propagation links. Without this handshake the peer can decrypt
-            // and store the message but reports SOURCE_UNKNOWN and withholds
-            // its proof.
             try await identify(session)
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
             await attemptDelivery(for: conversationID)
             await sendKeepalive(on: session)
         } catch { lastError = "Direct link activation failed: \(error.localizedDescription)" }
+    }
+
+    private func prepareLocalIdentityForDirectDelivery() async -> Bool {
+        for retry in 0..<3 {
+            if await announceLocalDeliveryDestination() { return true }
+            guard retry < 2, !Task.isCancelled else { break }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        return false
     }
 
     private func identify(_ session: ReticulumLinkSession) async throws {
