@@ -788,6 +788,15 @@ enum DeliverySoakRunner {
             "attachments=\(report.inboundAttachmentsVerified)/\(report.expectedAttachmentsEachDirection) " +
             "timeouts=\(report.deliveryTimeouts)"
         )
+        if report.phase == "complete" ||
+            report.phase.hasSuffix("timeout") ||
+            report.phase == "invalid-destination" {
+            // A sandboxed distributed app may write its report inside a
+            // container the invoking terminal cannot traverse. Emit the final
+            // evidence once so the launcher can recover the exact JSON without
+            // weakening the sandbox or requesting extra filesystem access.
+            print("SIDEBAND_SOAK_FINAL_JSON \(data.base64EncodedString())")
+        }
     }
 }
 

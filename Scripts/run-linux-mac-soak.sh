@@ -59,6 +59,17 @@ print "Mac log: $LOG"
 SANDBOX_REPORT="$HOME/Library/Containers/com.supes.MacSideband/Data/Library/Application Support/SidebandSwift/$REPORT"
 PLAIN_REPORT="$HOME/Library/Application Support/SidebandSwift/$REPORT"
 while kill -0 "$PID" 2>/dev/null; do
+    final_payload="$(sed -n 's/^SIDEBAND_SOAK_FINAL_JSON //p' "$LOG" | tail -n 1)"
+    if [[ -n "$final_payload" ]]; then
+        print -r -- "$final_payload" | base64 -D >"$ROOT/.build/$REPORT"
+        phase="$(sed -n 's/.*"phase"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/.build/$REPORT" | head -n 1)"
+        if [[ "$phase" == complete ]]; then
+            print "PASS: $ROOT/.build/$REPORT"
+            exit 0
+        fi
+        print -u2 "FAIL ($phase): $ROOT/.build/$REPORT"
+        exit 1
+    fi
     for candidate in "$SANDBOX_REPORT" "$PLAIN_REPORT"; do
         if [[ -f "$candidate" ]]; then
             cp "$candidate" "$ROOT/.build/$REPORT"
