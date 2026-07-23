@@ -28,8 +28,8 @@ struct SidebandApp: App {
                 .frame(minWidth: 1_020, minHeight: 640)
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
-                    await store.notifications.prepare()
                     await startRootSoakIfRequested()
+                    await store.notifications.prepare()
                 }
         }
         .defaultSize(width: 1_180, height: 760)
@@ -43,8 +43,8 @@ struct SidebandApp: App {
             protectedContent
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
-                    await store.notifications.prepare()
                     await startRootSoakIfRequested()
+                    await store.notifications.prepare()
                     RemoteWakeBridge.shared.install(
                         wake: { [store] in await store.performRemoteWakeSync() },
                         memoryPressure: { [store] in store.handleMemoryPressure() }
