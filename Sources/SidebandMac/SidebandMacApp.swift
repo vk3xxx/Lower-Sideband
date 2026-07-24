@@ -427,7 +427,8 @@ enum DeliverySoakRunner {
     private static let networkPreferenceKeys = [
         "reticulumAutoConnect", "reticulumInternetOnly", "reticulumHost",
         "reticulumIPv6Host", "reticulumInternetHost", "reticulumInternetPort",
-        "reticulumPort", "reticulumPreferIPv6", "reticulumConnectionMode"
+        "reticulumPort", "reticulumPreferIPv6", "reticulumConnectionMode",
+        "reticulumTransportInstanceEnabled"
     ]
     private static var savedNetworkPreferences: [String: Any] = [:]
     private static var missingNetworkPreferences: Set<String> = []
@@ -445,6 +446,11 @@ enum DeliverySoakRunner {
             else { missingNetworkPreferences.insert(key) }
         }
         deliveryTimeoutBaseline = store.deliveryTimeoutCount
+        // Acceptance runs exercise this app as an endpoint. Never inherit the
+        // operator-only transport-router switch, since bridging several public
+        // gateways changes the topology under test and can feed unrelated
+        // network traffic back through the client.
+        store.setTransportInstanceEnabled(false)
         store.autoConnectEnabled = mode == "automatic" || mode == "internet" || environment["SIDEBAND_SOAK_AUTOCONNECT"] == "1"
         store.internetOnlyEnabled = mode == "public" || mode == "internet"
         store.preferIPv6 = true
