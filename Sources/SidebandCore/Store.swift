@@ -3256,7 +3256,8 @@ public final class SidebandStore {
             destinationHash: destination,
             keeping: linkID,
             remoteDestinations: linkRemoteDestinations,
-            inboundLinkIDs: inboundLinkIDs
+            inboundLinkIDs: inboundLinkIDs,
+            protectedLinkIDs: Set(outgoingResources.values.map(\.linkID))
         )
         for supersededLinkID in supersededLinkIDs {
             let orphanedReceipts = pendingReceipts.filter { $0.value.linkID == supersededLinkID }
@@ -3297,12 +3298,14 @@ public final class SidebandStore {
         destinationHash: String,
         keeping linkID: String,
         remoteDestinations: [String: String],
-        inboundLinkIDs: Set<String>
+        inboundLinkIDs: Set<String>,
+        protectedLinkIDs: Set<String> = []
     ) -> [String] {
         remoteDestinations.compactMap { candidateLinkID, remoteDestination in
             guard candidateLinkID != linkID,
                   remoteDestination == destinationHash,
-                  !inboundLinkIDs.contains(candidateLinkID) else {
+                  !inboundLinkIDs.contains(candidateLinkID),
+                  !protectedLinkIDs.contains(candidateLinkID) else {
                 return nil
             }
             return candidateLinkID
@@ -4440,6 +4443,17 @@ public final class SidebandStore {
                     return
                 }
             }
+            // Resource requests can take longer than the base inactivity
+            // window on constrained links. Refresh activity after each
+            // successfully transmitted batch so a progressing transfer is
+            // never retired solely because of its total wall-clock duration.
+            if var current = outgoingResources[request.resourceHash.hex],
+               current.linkID == session.linkID.hex {
+                current.sentIndices.formUnion(resource.sentIndices)
+                current.timeoutToken = UUID()
+                outgoingResources[request.resourceHash.hex] = current
+                scheduleResourceTimeout(hash: request.resourceHash.hex, incoming: false)
+            }
             if request.wantsMoreHashMap, let last = request.lastKnownMapHash,
                let lastIndex = resource.manifest.partHashes.firstIndex(of: last) {
                 let segment = (lastIndex + 1) / ReticulumResourceAdvertisement.hashMapMaximumEntries
@@ -4761,12 +4775,21 @@ public final class SidebandStore {
 
     private func scheduleResourceTimeout(hash: String, incoming: Bool) {
         let token = incoming ? incomingResources[hash]?.timeoutToken : outgoingResources[hash]?.timeoutToken
-        guard let token else { return }
+        let transferSize = incoming ? incomingResources[hash]?.receiver.manifest.size : outgoingResources[hash]?.manifest.size
+        guard let token, let transferSize else { return }
+        let timeoutSeconds = Self.resourceInactivityTimeoutSeconds(transferSize: transferSize)
         Task { [weak self] in
-            try? await Task.sleep(for: .seconds(60))
+            try? await Task.sleep(for: .seconds(timeoutSeconds))
             guard !Task.isCancelled else { return }
             await self?.expireResource(hash: hash, token: token, incoming: incoming)
         }
+    }
+
+    static func resourceInactivityTimeoutSeconds(transferSize: Int) -> TimeInterval {
+        // Allow at least three minutes, then scale for an intentionally modest
+        // 8 KiB/s path. The cap prevents abandoned transfers from occupying
+        // memory forever while still supporting large radio/mesh resources.
+        min(1_800, max(180, 60 + Double(max(0, transferSize)) / 8_192))
     }
 
     private func expireResource(hash: String, token: UUID, incoming: Bool) async {

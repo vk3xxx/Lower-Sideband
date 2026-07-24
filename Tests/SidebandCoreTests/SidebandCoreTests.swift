@@ -3340,6 +3340,27 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(superseded == ["old-outbound-1", "old-outbound-2"])
 }
 
+@MainActor @Test func activeResourceLinkIsNotRetiredByNewLinkProof() {
+    let superseded = SidebandStore.supersededOutboundLinkIDs(
+        destinationHash: "peer-a",
+        keeping: "new-outbound",
+        remoteDestinations: [
+            "resource-link": "peer-a",
+            "idle-link": "peer-a"
+        ],
+        inboundLinkIDs: [],
+        protectedLinkIDs: ["resource-link"]
+    )
+
+    #expect(superseded == ["idle-link"])
+}
+
+@MainActor @Test func resourceInactivityTimeoutScalesWithTransferSize() {
+    #expect(SidebandStore.resourceInactivityTimeoutSeconds(transferSize: 0) == 180)
+    #expect(SidebandStore.resourceInactivityTimeoutSeconds(transferSize: 1_048_576) == 188)
+    #expect(SidebandStore.resourceInactivityTimeoutSeconds(transferSize: 100_000_000) == 1_800)
+}
+
 @MainActor @Test func restoredPathIdentityMustMatchLXMFSourceHash() throws {
     let identity = ReticulumIdentity()
     let deliveryNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
