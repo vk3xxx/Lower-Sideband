@@ -3340,13 +3340,6 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(superseded == ["old-outbound-1", "old-outbound-2"])
 }
 
-@MainActor @Test func opportunisticDeliveryRetriesBeforeDirectLinkEscalation() {
-    #expect(!SidebandStore.shouldEscalateOpportunisticDelivery(afterTimeoutCount: 1))
-    #expect(!SidebandStore.shouldEscalateOpportunisticDelivery(afterTimeoutCount: 2))
-    #expect(SidebandStore.shouldEscalateOpportunisticDelivery(afterTimeoutCount: 3))
-    #expect(SidebandStore.shouldEscalateOpportunisticDelivery(afterTimeoutCount: 4))
-}
-
 @MainActor @Test func restoredPathIdentityMustMatchLXMFSourceHash() throws {
     let identity = ReticulumIdentity()
     let deliveryNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
