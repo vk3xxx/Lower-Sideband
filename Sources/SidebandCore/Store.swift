@@ -3248,12 +3248,31 @@ public final class SidebandStore {
             deliveryDebugTrace("RX link proof \(linkID) failed validation; bytes=\(packet.data.count), context=\(packet.context)")
             return
         }
+        let destination = request.destinationHash.hex
+        let supersededLinkIDs = Self.supersededOutboundLinkIDs(
+            destinationHash: destination,
+            keeping: linkID,
+            remoteDestinations: linkRemoteDestinations,
+            inboundLinkIDs: inboundLinkIDs
+        )
+        for supersededLinkID in supersededLinkIDs {
+            let orphanedReceipts = pendingReceipts.filter { $0.value.linkID == supersededLinkID }
+            for (hash, receipt) in orphanedReceipts {
+                pendingReceipts.removeValue(forKey: hash)
+                receiptTimeoutTasks.removeValue(forKey: hash)?.cancel()
+                if let index = messages.firstIndex(where: { $0.id == receipt.messageID }) {
+                    messages[index].state = .queued
+                    messages[index].lastDeliveryFailure = "Secure route changed; retrying on the newest verified link."
+                }
+            }
+            deliveryDebugTrace("Retiring superseded outbound link \(supersededLinkID) for \(destination)")
+            removeLink(supersededLinkID)
+        }
         deliveryDebugTrace("RX link proof \(linkID) activated for \(request.destinationHash.hex)")
         activeLinks[linkID] = session
         if let interfaceID { linkInterfaceIDs[linkID] = interfaceID }
         pendingLinks.removeValue(forKey: linkID)
         pendingLinkTimeoutTokens.removeValue(forKey: linkID)
-        let destination = request.destinationHash.hex
         linkRemoteDestinations[linkID] = destination
         pendingLinkHashes.remove(destination)
         activeLinkHashes.insert(destination)
@@ -3269,6 +3288,22 @@ public final class SidebandStore {
         else if let conversation = conversations.first(where: { $0.destinationHash == destination }) {
             Task { await activateDirectLink(session, conversationID: conversation.id) }
         }
+    }
+
+    static func supersededOutboundLinkIDs(
+        destinationHash: String,
+        keeping linkID: String,
+        remoteDestinations: [String: String],
+        inboundLinkIDs: Set<String>
+    ) -> [String] {
+        remoteDestinations.compactMap { candidateLinkID, remoteDestination in
+            guard candidateLinkID != linkID,
+                  remoteDestination == destinationHash,
+                  !inboundLinkIDs.contains(candidateLinkID) else {
+                return nil
+            }
+            return candidateLinkID
+        }.sorted()
     }
 
     private func receiveLinkPacket(_ packet: ReticulumPacket, interfaceID: String?) {

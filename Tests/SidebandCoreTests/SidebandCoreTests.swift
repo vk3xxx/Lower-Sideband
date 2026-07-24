@@ -3323,6 +3323,23 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     ))
 }
 
+@MainActor @Test func newerOutboundLinkSupersedesOnlyOlderOutboundLinksForTheSamePeer() {
+    let superseded = SidebandStore.supersededOutboundLinkIDs(
+        destinationHash: "peer-a",
+        keeping: "new-outbound",
+        remoteDestinations: [
+            "old-outbound-2": "peer-a",
+            "old-outbound-1": "peer-a",
+            "new-outbound": "peer-a",
+            "inbound": "peer-a",
+            "other-peer": "peer-b"
+        ],
+        inboundLinkIDs: ["inbound"]
+    )
+
+    #expect(superseded == ["old-outbound-1", "old-outbound-2"])
+}
+
 @MainActor @Test func restoredPathIdentityMustMatchLXMFSourceHash() throws {
     let identity = ReticulumIdentity()
     let deliveryNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
