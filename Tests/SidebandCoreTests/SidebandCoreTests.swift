@@ -2126,6 +2126,13 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(store.recoveredOutboundCount == 1)
 }
 
+@MainActor @Test func deliveryTrackingWatchdogRespectsReceiptWindow() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    #expect(!SidebandStore.deliveryTrackingIsStale(lastAttemptAt: now.addingTimeInterval(-239), now: now))
+    #expect(SidebandStore.deliveryTrackingIsStale(lastAttemptAt: now.addingTimeInterval(-240), now: now))
+    #expect(SidebandStore.deliveryTrackingIsStale(lastAttemptAt: nil, now: now))
+}
+
 @MainActor @Test func showingConversationClearsPersistedUnreadCount() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let unread = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Unread", unreadCount: 3)

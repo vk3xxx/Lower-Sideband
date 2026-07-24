@@ -1772,6 +1772,10 @@ public final class SidebandStore {
     public func applicationDidBecomeActive() async {
         await pluginRegistry.startEnabledServices()
         isApplicationActive = true
+        let recoveredConversations = recoverStaleSentMessages()
+        for conversationID in recoveredConversations {
+            await attemptDelivery(for: conversationID)
+        }
         if let visibleConversationID { markConversationRead(visibleConversationID) }
         // Re-evaluate every configured transport on foregrounding. The aggregate
         // state may already be ready through a radio while the TCP pool still
@@ -1983,6 +1987,10 @@ public final class SidebandStore {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 guard !Task.isCancelled else { return }
+                let recoveredConversations = await self?.recoverStaleSentMessages() ?? []
+                for conversationID in recoveredConversations {
+                    await self?.attemptDelivery(for: conversationID)
+                }
                 await self?.announceLocalDeliveryDestination()
                 await self?.syncPropagationNow()
             }
@@ -4926,6 +4934,40 @@ public final class SidebandStore {
         // existing 30-second floor for normal Internet jitter and cap stale
         // routes so the durable outbox always makes progress.
         min(180, max(30, 6 + (Double(hops ?? 0) * 6)))
+    }
+
+    static func deliveryTrackingIsStale(lastAttemptAt: Date?, now: Date = .now) -> Bool {
+        guard let lastAttemptAt else { return true }
+        // Receipt timers are capped at 180 seconds. Allow one additional
+        // maintenance interval before treating an in-memory receipt as
+        // orphaned after suspension, clock churn or an interface transition.
+        return now.timeIntervalSince(lastAttemptAt) >= 240
+    }
+
+    @discardableResult
+    func recoverStaleSentMessages(now: Date = .now) -> Set<UUID> {
+        var conversationsToRetry: Set<UUID> = []
+        let activeResourceMessageIDs = Set(outgoingResources.values.map(\.messageID))
+        let staleMessageIDs = messages.compactMap { message -> UUID? in
+            guard message.direction == .outgoing,
+                  message.state == .sent,
+                  ownsOutbox(message),
+                  !activeResourceMessageIDs.contains(message.id),
+                  Self.deliveryTrackingIsStale(lastAttemptAt: message.lastDeliveryAttemptAt, now: now) else {
+                return nil
+            }
+            return message.id
+        }
+        guard !staleMessageIDs.isEmpty else { return [] }
+        for messageID in staleMessageIDs {
+            removePendingReceipts(for: messageID)
+            guard let index = messages.firstIndex(where: { $0.id == messageID }) else { continue }
+            messages[index].state = .queued
+            messages[index].lastDeliveryFailure = "Delivery tracking expired; retrying automatically."
+            conversationsToRetry.insert(messages[index].conversationID)
+        }
+        save()
+        return conversationsToRetry
     }
 
     private func expireReceipt(_ packetHash: String) async {
