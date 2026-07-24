@@ -3368,8 +3368,17 @@ public final class SidebandStore {
                 let hash = packet.packetHash
                 let proofData = hash + (try messagingIdentity.sign(hash))
                 let proof = Data([0x0f, 0x00]) + session.linkID + Data([0x00]) + proofData
+                deliveryDebugTrace(
+                    "RX direct proof prepared link=\(session.linkID.hex) " +
+                    "interface=\(proofInterface ?? "automatic route") " +
+                    "packetHash=\(hash.hex) rawBase64=\(proof.base64EncodedString())"
+                )
                 if let proofInterface { try await transmitRawPacket(proof, on: proofInterface) }
                 else { try await transmitRawPacket(proof) }
+                deliveryDebugTrace(
+                    "RX direct proof handed to transport link=\(session.linkID.hex) " +
+                    "interface=\(proofInterface ?? "automatic route") packetHash=\(hash.hex)"
+                )
                 recordDeliveryProofSent(kind: "direct", interfaceID: proofInterface)
             } catch {
                 // The sender retains the message until it receives this proof
@@ -3667,10 +3676,8 @@ public final class SidebandStore {
     }
 
     private func deliveryDebugTrace(_ message: @autoclosure () -> String) {
-        #if DEBUG
         guard ProcessInfo.processInfo.environment["SIDEBAND_SOAK_NETWORK_MODE"] != nil else { return }
         print("SIDEBAND_DELIVERY_TRACE \(message())")
-        #endif
     }
 
     private func sendKeepalive(on session: ReticulumLinkSession) async {
