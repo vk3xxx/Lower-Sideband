@@ -1365,6 +1365,17 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(SidebandStore.inboundProofInterface(for: "unknown", registeredInterfaces: interfaces) == nil)
 }
 
+@MainActor @Test func deliverySoakCleanupRecognizesCurrentAndLegacyRunNamesOnly() {
+    #expect(SidebandStore.isDeliverySoakMessageBody("SOAK-001"))
+    #expect(SidebandStore.isDeliverySoakMessageBody("LSB-INTERNET-20260722T141523Z-MAC-001"))
+    #expect(SidebandStore.isDeliverySoakMessageBody("LSB-B60-P5-20260724T070000Z-MAC-001"))
+    #expect(SidebandStore.isDeliverySoakMessageBody("LSB-B60-P2500-20260724T070000Z-LINUX-2500"))
+    #expect(SidebandStore.isDeliverySoakMessageBody("LSB-B60-LOCAL5-20260724T070000Z-SIM-005"))
+    #expect(!SidebandStore.isDeliverySoakMessageBody("LSB is a useful app"))
+    #expect(!SidebandStore.isDeliverySoakMessageBody("LSB-CONTACT-MAC-not-a-sequence"))
+    #expect(!SidebandStore.isDeliverySoakMessageBody("Ordinary message 001"))
+}
+
 @Test func applicationSnapshotsCarrySchemaVersion() throws {
     let data = try JSONEncoder().encode(AppSnapshot())
     let decoded = try JSONDecoder().decode(AppSnapshot.self, from: data)

@@ -1627,7 +1627,7 @@ public final class SidebandStore {
     @discardableResult
     public func purgeDeliverySoakMessages(keepingPrefixes: Set<String> = []) async -> Int {
         let removedMessages = messages.filter { message in
-            let isSoak = message.body.hasPrefix("SOAK-") || message.body.hasPrefix("LSB-INTERNET-")
+            let isSoak = Self.isDeliverySoakMessageBody(message.body)
             return isSoak && !keepingPrefixes.contains(where: message.body.hasPrefix)
         }
         guard !removedMessages.isEmpty else { return 0 }
@@ -1649,6 +1649,20 @@ public final class SidebandStore {
         sortConversations()
         save()
         return removedMessages.count
+    }
+
+    static func isDeliverySoakMessageBody(_ body: String) -> Bool {
+        if body.hasPrefix("SOAK-") || body.hasPrefix("LSB-INTERNET-") { return true }
+        guard body.hasPrefix("LSB-") else { return false }
+        for marker in ["-MAC-", "-SIM-", "-LINUX-"] {
+            guard let range = body.range(of: marker, options: .backwards) else { continue }
+            let sequence = body[range.upperBound...]
+            if sequence.count >= 3, sequence.count <= 6,
+               sequence.allSatisfy(\.isNumber) {
+                return true
+            }
+        }
+        return false
     }
 
     public func connectNetwork(forceIPv4: Bool = false, explicitHost: String? = nil, explicitPort: UInt16? = nil, internetGatewayID: String? = nil) async {
