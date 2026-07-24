@@ -212,6 +212,7 @@ public final class SidebandStore {
     private var receiptRetryTasks: [String: Task<Void, Never>] = [:]
     private var pendingReceiptRetryKinds: [String: Set<ReceiptKind>] = [:]
     private var directLinkFallbackDestinations: Set<String> = []
+    private var opportunisticTimeoutCounts: [String: Int] = [:]
     private var deliveryPassesInProgress: Set<UUID> = []
     private var deliveryPassRerunRequested: Set<UUID> = []
     private struct OutgoingResource {
@@ -2524,6 +2525,12 @@ public final class SidebandStore {
         guard pendingLinkTimeoutTokens[linkID] == token, pendingLinks.removeValue(forKey: linkID) != nil else { return }
         pendingLinkTimeoutTokens.removeValue(forKey: linkID)
         pendingLinkHashes.remove(destinationHash)
+        // A direct-link attempt can fail on public Reticulum routes even when
+        // ordinary opportunistic packets remain viable. Return small messages
+        // to the stock LXMF delivery method instead of waiting exclusively for
+        // another link that may follow the same broken route.
+        directLinkFallbackDestinations.remove(destinationHash)
+        opportunisticTimeoutCounts[destinationHash] = 0
         if UserDefaults.standard.string(forKey: "reticulumLastPendingLink") == linkID {
             UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
         }
@@ -2564,6 +2571,7 @@ public final class SidebandStore {
         for task in receiptRetryTasks.values { task.cancel() }
         receiptRetryTasks.removeAll()
         pendingReceiptRetryKinds.removeAll()
+        opportunisticTimeoutCounts.removeAll()
         // Link and resource cryptographic state is bound to the interface that
         // disappeared. Preserve the durable outbox, but return interrupted
         // transfers to queued so reconnect can negotiate a fresh link and
@@ -3304,6 +3312,10 @@ public final class SidebandStore {
             }
             return candidateLinkID
         }.sorted()
+    }
+
+    static func shouldEscalateOpportunisticDelivery(afterTimeoutCount timeoutCount: Int) -> Bool {
+        timeoutCount >= 3
     }
 
     private func receiveLinkPacket(_ packet: ReticulumPacket, interfaceID: String?) {
@@ -4855,13 +4867,14 @@ public final class SidebandStore {
         guard proofIsValid else { return }
         pendingReceipts.removeValue(forKey: matched.hash)
         receiptTimeoutTasks.removeValue(forKey: matched.hash)?.cancel()
+        directLinkFallbackDestinations.remove(receipt.destinationHash)
+        opportunisticTimeoutCounts.removeValue(forKey: receipt.destinationHash)
         updateMessage(receipt.messageID, state: receipt.kind == .propagation ? .sent : .delivered)
         if receipt.kind != .propagation,
            let conversation = conversations.first(where: { $0.destinationHash == receipt.destinationHash }) {
             // Advance the bounded delivery window only after an authenticated
-            // proof frees a slot. Secure-link fallback intentionally remains
-            // sticky for this process once opportunistic delivery proved
-            // unreliable on the current network path.
+            // proof frees a slot. Successful delivery also resets the
+            // per-destination fallback cycle for the next queued message.
             Task { await attemptDelivery(for: conversation.id) }
         }
         if receipt.kind == .propagation {
@@ -4908,13 +4921,21 @@ public final class SidebandStore {
         let kinds = pendingReceiptRetryKinds.removeValue(forKey: destinationHash) ?? []
         save()
         if kinds.contains(.opportunistic), !isPathPending(to: destinationHash) {
-            // A missing opportunistic proof can indicate that ordinary data
-            // packets are not traversing a path that still answers discovery.
-            // Escalate the durable outbox to an encrypted link instead of
-            // repeating the same unreliable delivery method indefinitely.
-            directLinkFallbackDestinations.insert(destinationHash)
-            // Refresh this client's direct route before asking the network for
-            // the peer again. This is essential after roaming or reconnecting
+            // Stock LXMF retries opportunistic delivery several times while
+            // rediscovering the path. Public Reticulum routes often carry
+            // ordinary packets even when an end-to-end link cannot remain
+            // established, so one lost proof must not permanently force every
+            // queued message onto a direct link.
+            let timeoutCount = min(10_000, (opportunisticTimeoutCounts[destinationHash] ?? 0) + 1)
+            opportunisticTimeoutCounts[destinationHash] = timeoutCount
+            let shouldEscalate = Self.shouldEscalateOpportunisticDelivery(afterTimeoutCount: timeoutCount)
+            if shouldEscalate {
+                directLinkFallbackDestinations.insert(destinationHash)
+            } else {
+                directLinkFallbackDestinations.remove(destinationHash)
+            }
+            // Refresh this client's route before asking the network for the
+            // peer again. This is essential after roaming or reconnecting
             // through a different gateway interface.
             if lastDeliveryAnnounceAt.map({ Date.now.timeIntervalSince($0) >= 5 }) ?? true {
                 await announceLocalDeliveryDestination()
@@ -4933,7 +4954,7 @@ public final class SidebandStore {
                 // a no-op, but the newly requeued messages still need an
                 // immediate delivery pass over the already-active link.
                 await attemptDelivery(for: conversation.id)
-            } else {
+            } else if shouldEscalate {
                 deferLinkRequest(to: destinationHash)
             }
             if DestinationHash.isValid(propagationNodeHash),
@@ -4961,6 +4982,8 @@ public final class SidebandStore {
             }
             let staleLinks = linkRemoteDestinations.filter { $0.value == destinationHash }.map(\.key)
             for linkID in staleLinks { removeLink(linkID) }
+            directLinkFallbackDestinations.remove(destinationHash)
+            opportunisticTimeoutCounts[destinationHash] = 0
             if let destination = Data(hexadecimal: destinationHash) {
                 await pathTable.invalidate(destination)
                 await refreshPathState()
