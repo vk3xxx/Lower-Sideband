@@ -1987,7 +1987,7 @@ public final class SidebandStore {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 guard !Task.isCancelled else { return }
-                let recoveredConversations = await self?.recoverStaleSentMessages() ?? []
+                let recoveredConversations = self?.recoverStaleSentMessages() ?? []
                 for conversationID in recoveredConversations {
                     await self?.attemptDelivery(for: conversationID)
                 }
@@ -4252,7 +4252,7 @@ public final class SidebandStore {
         }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
-        if conversation.deliveryPreference == .propagationPreferred,
+        if Self.shouldUsePropagation(conversation.deliveryPreference),
            activeLinks.values.contains(where: { $0.destinationHash.hex == propagationNodeHash }) {
             await propagateQueued(for: conversationID)
         }
@@ -5062,6 +5062,7 @@ public final class SidebandStore {
 
     private func propagateQueued(for conversationID: UUID) async {
         guard let conversation = conversations.first(where: { $0.id == conversationID }),
+              Self.shouldUsePropagation(conversation.deliveryPreference),
               let destination = Data(hexadecimal: conversation.destinationHash),
               let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash }),
               let publicKey = discovery.publicKey,
@@ -5100,6 +5101,10 @@ public final class SidebandStore {
                 // interrupting the user with a modal alert.
             }
         }
+    }
+
+    static func shouldUsePropagation(_ preference: Conversation.DeliveryPreference) -> Bool {
+        preference == .propagationPreferred
     }
 
     private func refreshPathState() async {

@@ -2133,6 +2133,11 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(SidebandStore.deliveryTrackingIsStale(lastAttemptAt: nil, now: now))
 }
 
+@MainActor @Test func propagationDeliveryRemainsExplicitlyOptIn() {
+    #expect(!SidebandStore.shouldUsePropagation(.automatic))
+    #expect(SidebandStore.shouldUsePropagation(.propagationPreferred))
+}
+
 @MainActor @Test func showingConversationClearsPersistedUnreadCount() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
     let unread = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Unread", unreadCount: 3)
