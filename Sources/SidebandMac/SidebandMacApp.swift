@@ -550,6 +550,12 @@ enum DeliverySoakRunner {
             await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "invalid-destination")
             return
         }
+        guard let conversationID = store.conversations.first(where: {
+            $0.destinationHash == destination.lowercased()
+        })?.id else {
+            await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "missing-conversation")
+            return
+        }
 
         // Do not turn a start-up announce race into thousands of queued
         // messages. Both a current path and the recipient identity are needed
@@ -594,7 +600,7 @@ enum DeliverySoakRunner {
                         attachments = [attachment]
                     }
                 }
-                _ = await store.send(body, attachments: attachments)
+                _ = await store.send(body, to: conversationID, attachments: attachments)
             }
             if sequence.isMultiple(of: 25) {
                 await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "enqueueing-\(sequence)-of-\(count)")
