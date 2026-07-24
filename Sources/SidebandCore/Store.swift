@@ -543,7 +543,10 @@ public final class SidebandStore {
     public func sendVoiceFrame(_ payload: Data) async {
         guard let call = voiceCall, call.state == .active, !payload.isEmpty,
               let linkID = activeVoiceLinkID, let session = activeLinks[linkID] else { return }
-        try? await transmitRawPacket(try session.encryptedPacket(LXSTVoice.frame(codec: call.profile.codec, payload: payload)))
+        try? await transmitLinkPacket(
+            try session.encryptedPacket(LXSTVoice.frame(codec: call.profile.codec, payload: payload)),
+            session: session
+        )
     }
 
     public var automaticBackupURL: URL {
@@ -1596,7 +1599,15 @@ public final class SidebandStore {
         let matches = outgoingResources.filter { $0.value.messageID == messageID && $0.value.attachmentID == attachmentID }
         for (hash, resource) in matches {
             outgoingResources.removeValue(forKey: hash)
-            if let session = activeLinks[resource.linkID] { try? await transmitRawPacket(try session.resourceCancelPacket(resourceHash: resource.manifest.resourceHash, initiatedBySender: true)) }
+            if let session = activeLinks[resource.linkID] {
+                try? await transmitLinkPacket(
+                    try session.resourceCancelPacket(
+                        resourceHash: resource.manifest.resourceHash,
+                        initiatedBySender: true
+                    ),
+                    session: session
+                )
+            }
         }
     }
 
@@ -1927,7 +1938,7 @@ public final class SidebandStore {
         do {
             let requestPacket = try session.encryptedPacket(LXMFPropagation.messageListRequest(), context: 0x09)
             pendingPropagationRequests[try ReticulumIdentity.truncatedHash(ReticulumPacket(raw: requestPacket).hashablePart).hex] = .list
-            try await transmitRawPacket(requestPacket)
+            try await transmitLinkPacket(requestPacket, session: session)
             propagationRequestsSent += 1
             lastPropagationSync = .now
             UserDefaults.standard.set(propagationRequestsSent, forKey: "lxmfPropagationRequestsSent")
@@ -3420,8 +3431,14 @@ public final class SidebandStore {
                 do {
                     let signedData = session.linkID + messagingIdentity.publicKey
                     let identifyData = messagingIdentity.publicKey + (try messagingIdentity.sign(signedData))
-                    try await transmitRawPacket(try session.encryptedPacket(identifyData, context: 0xfb))
-                    try await transmitRawPacket(try session.encryptedPacket(LXSTVoice.preferredProfile(voiceCall?.profile ?? preferredVoiceProfile)))
+                    try await transmitLinkPacket(
+                        try session.encryptedPacket(identifyData, context: 0xfb),
+                        session: session
+                    )
+                    try await transmitLinkPacket(
+                        try session.encryptedPacket(LXSTVoice.preferredProfile(voiceCall?.profile ?? preferredVoiceProfile)),
+                        session: session
+                    )
                 } catch { finishVoiceCall(failure: "Voice identity exchange failed.") }
             }
         case .ringing:
@@ -3448,11 +3465,14 @@ public final class SidebandStore {
     }
 
     private func sendVoiceSignal(_ signal: LXSTVoice.Signal, on session: ReticulumLinkSession) async throws {
-        try await transmitRawPacket(try session.encryptedPacket(LXSTVoice.signalling([signal.rawValue])))
+        try await transmitLinkPacket(
+            try session.encryptedPacket(LXSTVoice.signalling([signal.rawValue])),
+            session: session
+        )
     }
 
     private func closeVoiceLink(_ session: ReticulumLinkSession) async {
-        try? await transmitRawPacket(try session.closePacket())
+        try? await transmitLinkPacket(try session.closePacket(), session: session)
         removeLink(session.linkID.hex)
     }
 
@@ -3641,7 +3661,7 @@ public final class SidebandStore {
 
     private func sendKeepalive(on session: ReticulumLinkSession) async {
         do {
-            try await transmitRawPacket(session.keepalivePacket())
+            try await transmitLinkPacket(session.keepalivePacket(), session: session)
             keepalivesSent += 1
             UserDefaults.standard.set(keepalivesSent, forKey: "reticulumKeepalivesSent")
         } catch {
@@ -3657,7 +3677,10 @@ public final class SidebandStore {
 
     private func activateAndRequestPropagation(on session: ReticulumLinkSession) async {
         do {
-            try await transmitRawPacket(try session.encryptedPacket(MessagePack.double(session.rtt), context: 0xfe))
+            try await transmitLinkPacket(
+                try session.encryptedPacket(MessagePack.double(session.rtt), context: 0xfe),
+                session: session
+            )
             try await identify(session)
             await syncPropagationNow()
             for conversation in conversations { await propagateQueued(for: conversation.id) }
@@ -3678,7 +3701,10 @@ public final class SidebandStore {
                 recordDeliveryDiagnosticEvent("Held direct delivery until the local identity can be announced")
                 return
             }
-            try await transmitRawPacket(try session.encryptedPacket(MessagePack.double(session.rtt), context: 0xfe))
+            try await transmitLinkPacket(
+                try session.encryptedPacket(MessagePack.double(session.rtt), context: 0xfe),
+                session: session
+            )
             try await identify(session)
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
@@ -3698,7 +3724,10 @@ public final class SidebandStore {
 
     private func identify(_ session: ReticulumLinkSession) async throws {
         let payload = try Self.linkIdentificationPayload(session: session, identity: messagingIdentity)
-        try await transmitRawPacket(try session.encryptedPacket(payload, context: 0xfb))
+        try await transmitLinkPacket(
+            try session.encryptedPacket(payload, context: 0xfb),
+            session: session
+        )
         linkIdentificationsSent += 1
         recordDeliveryDiagnosticEvent("Identified messaging identity \(messagingIdentityHash) on link \(session.linkID.hex)")
     }
@@ -3720,7 +3749,7 @@ public final class SidebandStore {
             do {
                 let requestPacket = try session.encryptedPacket(request, context: 0x09)
                 pendingPropagationRequests[try ReticulumIdentity.truncatedHash(ReticulumPacket(raw: requestPacket).hashablePart).hex] = .download
-                try await transmitRawPacket(requestPacket); propagationRequestsSent += 1
+                try await transmitLinkPacket(requestPacket, session: session); propagationRequestsSent += 1
             }
             catch { lastError = "Propagation download request failed: \(error.localizedDescription)" }
         case .download:
@@ -3731,7 +3760,15 @@ public final class SidebandStore {
             }
             propagationMessagesAvailable = max(0, propagationMessagesAvailable - acknowledgements.count)
             guard !acknowledgements.isEmpty else { return }
-            do { try await transmitRawPacket(try session.encryptedPacket(LXMFPropagation.acknowledgementRequest(acknowledgements), context: 0x09)) }
+            do {
+                try await transmitLinkPacket(
+                    try session.encryptedPacket(
+                        LXMFPropagation.acknowledgementRequest(acknowledgements),
+                        context: 0x09
+                    ),
+                    session: session
+                )
+            }
             catch { lastError = "Propagation acknowledgement failed: \(error.localizedDescription)" }
         }
     }
@@ -3947,6 +3984,21 @@ public final class SidebandStore {
         try await networkInterfacePool.send(rawPacket: packet, on: interfaceID)
     }
 
+    /// Link packets follow the interface on which the handshake completed.
+    /// Broadcasting encrypted link traffic to every public gateway wastes
+    /// constrained capacity and can strand a session behind a transport that
+    /// never saw its link request.
+    private func transmitLinkPacket(_ packet: Data, session: ReticulumLinkSession) async throws {
+        if let interfaceID = Self.inboundProofInterface(
+            for: session.linkID.hex,
+            registeredInterfaces: linkInterfaceIDs
+        ) {
+            try await transmitRawPacket(packet, on: interfaceID)
+        } else {
+            try await transmitRawPacket(packet)
+        }
+    }
+
     private func transmitDestinationPacket(_ packet: Data, destinationHash: Data) async throws {
         var transmitted = false
         if let networkInterfacePool, tcpNetworkState == .ready {
@@ -4074,7 +4126,7 @@ public final class SidebandStore {
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
                 recordDeliveryAttempt(item.id, mode: .directLink)
-                try await transmitRawPacket(raw)
+                try await transmitLinkPacket(raw, session: session)
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
             } catch {
@@ -4133,7 +4185,10 @@ public final class SidebandStore {
             recordDeliveryAttempt(message.id, mode: .resource)
             updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .transferring, progress: 0)
             deliveryDebugTrace("TX attachment resource \(first.manifest.resourceHash.hex) on link \(session.linkID.hex), \(first.parts.count) parts")
-            try await transmitRawPacket(try session.resourceAdvertisementPacket(first.advertisement))
+            try await transmitLinkPacket(
+                try session.resourceAdvertisementPacket(first.advertisement),
+                session: session
+            )
         } catch {
             recordDeliveryFailure(message.id, reason: "Attachment transfer could not start.")
             updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .failed, progress: 0)
@@ -4146,7 +4201,10 @@ public final class SidebandStore {
         registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: messageID, attachmentID: nil, session: session)
         recordDeliveryAttempt(messageID, mode: .resource)
         updateMessage(messageID, state: .sent)
-        try await transmitRawPacket(try session.resourceAdvertisementPacket(first.advertisement))
+        try await transmitLinkPacket(
+            try session.resourceAdvertisementPacket(first.advertisement),
+            session: session
+        )
     }
 
     private func registerOutgoingSegment(_ segment: ReticulumPreparedResourceSegment, remaining: [ReticulumPreparedResourceSegment], messageID: UUID, attachmentID: UUID?, session: ReticulumLinkSession) {
@@ -4171,7 +4229,10 @@ public final class SidebandStore {
             for requestedHash in request.requestedPartHashes {
                 guard let index = resource.manifest.partHashes.firstIndex(of: requestedHash) else { continue }
                 do {
-                    try await transmitRawPacket(session.resourcePartPacket(resource.parts[index]))
+                    try await transmitLinkPacket(
+                        session.resourcePartPacket(resource.parts[index]),
+                        session: session
+                    )
                     resource.sentIndices.insert(index)
                     deliveryDebugTrace("TX resource part \(index + 1)/\(resource.parts.count) for \(request.resourceHash.hex) on link \(session.linkID.hex)")
                 } catch {
@@ -4186,7 +4247,10 @@ public final class SidebandStore {
                 let end = min(start + ReticulumResourceAdvertisement.hashMapMaximumEntries, resource.manifest.partHashes.count)
                 if start < end {
                     let update = try ReticulumResourceHashMapUpdate(resourceHash: resource.manifest.resourceHash, segment: segment, partHashes: Array(resource.manifest.partHashes[start..<end]))
-                    try? await transmitRawPacket(try session.resourceHashMapUpdatePacket(update))
+                    try? await transmitLinkPacket(
+                        try session.resourceHashMapUpdatePacket(update),
+                        session: session
+                    )
                 }
             }
             outgoingResources[request.resourceHash.hex] = resource
@@ -4214,7 +4278,12 @@ public final class SidebandStore {
             if let attachmentID = resource.attachmentID {
                 updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .transferring, progress: Double(resource.segmentIndex) / Double(resource.totalSegments))
             }
-            Task { try? await transmitRawPacket(try session.resourceAdvertisementPacket(next.advertisement)) }
+            Task {
+                try? await transmitLinkPacket(
+                    try session.resourceAdvertisementPacket(next.advertisement),
+                    session: session
+                )
+            }
             return
         }
         if let attachmentID = resource.attachmentID {
@@ -4237,7 +4306,12 @@ public final class SidebandStore {
             // Resource advertisements are retried when their proof is lost.
             // Re-acknowledge a payload already accepted on this live session
             // instead of transferring or importing it a second time.
-            Task { try? await transmitRawPacket(Data([0x0f, 0x00]) + session.linkID + Data([0x05]) + proof) }
+            Task {
+                try? await transmitLinkPacket(
+                    Data([0x0f, 0x00]) + session.linkID + Data([0x05]) + proof,
+                    session: session
+                )
+            }
             return
         }
         guard
@@ -4266,7 +4340,12 @@ public final class SidebandStore {
     private func requestIncomingResourceParts(resourceHash: String) {
         guard let incoming = incomingResources[resourceHash],
               let request = try? incoming.receiver.nextRequest() else { return }
-        Task { try? await transmitRawPacket(try incoming.session.resourceRequestPacket(request)) }
+        Task {
+            try? await transmitLinkPacket(
+                try incoming.session.resourceRequestPacket(request),
+                session: incoming.session
+            )
+        }
     }
 
     private func handleResourceHashMapUpdate(_ plaintext: Data, session: ReticulumLinkSession) {
@@ -4323,7 +4402,10 @@ public final class SidebandStore {
                 receivedResourceProofs.removeValue(forKey: evicted)
             }
             do {
-                try await transmitRawPacket(Data([0x0f, 0x00]) + incoming.session.linkID + Data([0x05]) + proof)
+                try await transmitLinkPacket(
+                    Data([0x0f, 0x00]) + incoming.session.linkID + Data([0x05]) + proof,
+                    session: incoming.session
+                )
                 deliveryDebugTrace("TX resource proof \(resourceHash) on link \(incoming.session.linkID.hex)")
             } catch {
                 deliveryDebugTrace("TX resource proof failed for \(resourceHash): \(error.localizedDescription)")
@@ -4472,7 +4554,13 @@ public final class SidebandStore {
         if incoming {
             guard let resource = incomingResources[hash], resource.timeoutToken == token else { return }
             incomingResources.removeValue(forKey: hash)
-            try? await transmitRawPacket(try resource.session.resourceCancelPacket(resourceHash: resource.receiver.manifest.resourceHash, initiatedBySender: false))
+            try? await transmitLinkPacket(
+                try resource.session.resourceCancelPacket(
+                    resourceHash: resource.receiver.manifest.resourceHash,
+                    initiatedBySender: false
+                ),
+                session: resource.session
+            )
         } else {
             guard let resource = outgoingResources[hash], resource.timeoutToken == token else { return }
             outgoingResources.removeValue(forKey: hash)
@@ -4482,7 +4570,15 @@ public final class SidebandStore {
                 updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .queued, progress: 0)
                 updateMessage(resource.messageID, state: .queued)
             } else { updateMessage(resource.messageID, state: .queued) }
-            if let session = activeLinks[resource.linkID] { try? await transmitRawPacket(try session.resourceCancelPacket(resourceHash: resource.manifest.resourceHash, initiatedBySender: true)) }
+            if let session = activeLinks[resource.linkID] {
+                try? await transmitLinkPacket(
+                    try session.resourceCancelPacket(
+                        resourceHash: resource.manifest.resourceHash,
+                        initiatedBySender: true
+                    ),
+                    session: session
+                )
+            }
             removeLink(resource.linkID)
             if let destinationHash {
                 directLinkFallbackDestinations.insert(destinationHash)
@@ -4674,7 +4770,7 @@ public final class SidebandStore {
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .propagation, destinationHash: propagationNodeHash)
                 recordDeliveryAttempt(item.id, mode: .propagation)
-                try await transmitRawPacket(raw)
+                try await transmitLinkPacket(raw, session: propagationSession)
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
             } catch {
