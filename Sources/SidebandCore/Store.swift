@@ -2598,9 +2598,12 @@ public final class SidebandStore {
         snapshots: [ReticulumTCPInterfacePool.Snapshot] = []
     ) async {
         guard generation == networkConnectionGeneration else { return }
+        let aggregateWasReady = networkState == .ready
+        let previousInterfaceIDs = knownTCPInterfaceIDs
         let currentInterfaceIDs = Set(snapshots.compactMap { snapshot in
             snapshot.state == .ready ? snapshot.id : nil
         })
+        let addedInterfaceIDs = currentInterfaceIDs.subtracting(previousInterfaceIDs)
         let removedInterfaceIDs = knownTCPInterfaceIDs.subtracting(currentInterfaceIDs)
         knownTCPInterfaceIDs = currentInterfaceIDs
         if !removedInterfaceIDs.isEmpty {
@@ -2634,9 +2637,18 @@ public final class SidebandStore {
                 preferredInternetGatewayID = activeInternetGatewayID
                 UserDefaults.standard.set(activeInternetGatewayID, forKey: "reticulumPreferredInternetGatewayID")
             }
-            Task {
-                await synthesizeTCPTunnel()
-                await announceLocalDeliveryDestination()
+            // The first ready interface is handled by
+            // refreshAggregateNetworkState(), which broadcasts one initial
+            // announce. When another interface joins an already-live pool,
+            // announce only on that interface. Broadcasting on every ready
+            // callback caused reconnecting public gateways to amplify one
+            // transition into an announce storm across the whole pool.
+            if aggregateWasReady, !addedInterfaceIDs.isEmpty {
+                Task {
+                    for interfaceID in addedInterfaceIDs {
+                        await announceLocalDeliveryDestination(on: interfaceID)
+                    }
+                }
             }
         }
         switch state {
@@ -2923,18 +2935,24 @@ public final class SidebandStore {
     }
 
     @discardableResult
-    private func announceLocalDeliveryDestination() async -> Bool {
+    private func announceLocalDeliveryDestination(on interfaceID: String? = nil) async -> Bool {
         do {
             let packet = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: "lxmf.delivery", appData: localAnnounceAppData)
-            try await transmitRawPacket(packet)
             let voicePacket = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: LXSTVoice.destinationName)
-            try await transmitRawPacket(voicePacket)
+            if let interfaceID {
+                try await transmitRawPacket(packet, on: interfaceID)
+                try await transmitRawPacket(voicePacket, on: interfaceID)
+            } else {
+                try await transmitRawPacket(packet)
+                try await transmitRawPacket(voicePacket)
+            }
             deliveryAnnouncesSent += 1
             lastDeliveryAnnounceAt = .now
             lastAnnouncedDeliveryHash = localDeliveryHash
             UserDefaults.standard.set(lastAnnouncedDeliveryHash, forKey: "lxmfLastAnnouncedDeliveryHash")
             UserDefaults.standard.set(lastDeliveryAnnounceAt, forKey: "lxmfLastDeliveryAnnounceAt")
-            recordDeliveryDiagnosticEvent("Announced delivery destination \(localDeliveryHash)")
+            let scope = interfaceID.map { " on \($0)" } ?? " on all ready interfaces"
+            recordDeliveryDiagnosticEvent("Announced delivery destination \(localDeliveryHash)\(scope)")
             return true
         } catch {
             // Connection transitions are retried by the engine. An announce is
@@ -3298,7 +3316,11 @@ public final class SidebandStore {
             return
         }
         let linkID = incoming.session.linkID.hex
-        deliveryDebugTrace("RX link request \(linkID) accepted; returning proof")
+        let ingress = interfaceID ?? "all ready interfaces"
+        deliveryDebugTrace(
+            "RX link request \(linkID) accepted on \(ingress); returning proof "
+                + "bytes=\(incoming.proofPacket.count) rawBase64=\(incoming.proofPacket.base64EncodedString())"
+        )
         activeLinks[linkID] = incoming.session
         if let interfaceID { linkInterfaceIDs[linkID] = interfaceID }
         inboundLinkIDs.insert(linkID)
@@ -3307,6 +3329,7 @@ public final class SidebandStore {
             do {
                 if let interfaceID { try await transmitRawPacket(incoming.proofPacket, on: interfaceID) }
                 else { try await transmitRawPacket(incoming.proofPacket) }
+                deliveryDebugTrace("RX link proof \(linkID) handed to transport on \(ingress)")
                 inboundLinksAccepted += 1
                 if isVoice {
                     if voiceCall != nil {
@@ -3317,7 +3340,10 @@ public final class SidebandStore {
                     }
                 }
             }
-            catch { lastError = "Incoming link proof failed: \(error.localizedDescription)" }
+            catch {
+                deliveryDebugTrace("RX link proof \(linkID) failed on \(ingress): \(error.localizedDescription)")
+                lastError = "Incoming link proof failed: \(error.localizedDescription)"
+            }
         }
     }
 
