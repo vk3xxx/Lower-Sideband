@@ -3361,6 +3361,13 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(SidebandStore.resourceInactivityTimeoutSeconds(transferSize: 100_000_000) == 1_800)
 }
 
+@MainActor @Test func deliveryProofTimeoutScalesWithReticulumHopCount() {
+    #expect(SidebandStore.deliveryProofTimeoutSeconds(hops: nil) == 30)
+    #expect(SidebandStore.deliveryProofTimeoutSeconds(hops: 2) == 30)
+    #expect(SidebandStore.deliveryProofTimeoutSeconds(hops: 8) == 54)
+    #expect(SidebandStore.deliveryProofTimeoutSeconds(hops: .max) == 180)
+}
+
 @MainActor @Test func restoredPathIdentityMustMatchLXMFSourceHash() throws {
     let identity = ReticulumIdentity()
     let deliveryNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))

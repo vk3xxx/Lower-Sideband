@@ -4233,7 +4233,14 @@ public final class SidebandStore {
             return
         }
         if !hasPath(to: conversation.destinationHash) {
-            if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash, surfaceErrors: false) }
+            if !isPathPending(to: conversation.destinationHash) {
+                await requestPath(to: conversation.destinationHash, surfaceErrors: false)
+            }
+            // Stock LXMF defers opportunistic delivery until Reticulum has a
+            // route. Broadcasting an encrypted packet to every public
+            // boundary while a path request is pending cannot reach a
+            // multi-hop destination and only creates false proof timeouts.
+            return
         }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
@@ -4274,7 +4281,7 @@ public final class SidebandStore {
                     continue
                 }
                 updateMessage(item.id, state: .sent)
-                scheduleReceiptTimeout(packetHash)
+                await scheduleReceiptTimeout(packetHash)
             } catch {
                 removePendingReceipts(for: item.id)
                 recordDeliveryFailure(item.id, reason: "Opportunistic send failed; rediscovering the route.")
@@ -4316,7 +4323,7 @@ public final class SidebandStore {
                     continue
                 }
                 updateMessage(item.id, state: .sent)
-                scheduleReceiptTimeout(packetHash)
+                await scheduleReceiptTimeout(packetHash)
             } catch {
                 removePendingReceipts(for: item.id)
                 recordDeliveryFailure(item.id, reason: "Encrypted-link delivery failed.")
@@ -4894,16 +4901,30 @@ public final class SidebandStore {
         }
     }
 
-    private func scheduleReceiptTimeout(_ packetHash: String) {
+    private func scheduleReceiptTimeout(_ packetHash: String) async {
         receiptTimeoutTasks.removeValue(forKey: packetHash)?.cancel()
+        guard let receipt = pendingReceipts[packetHash] else { return }
+        let hops: UInt8?
+        if receipt.kind == .opportunistic,
+           let destination = Data(hexadecimal: receipt.destinationHash) {
+            hops = await pathTable.path(to: destination)?.hops
+        } else {
+            hops = nil
+        }
+        let timeoutSeconds = Self.deliveryProofTimeoutSeconds(hops: hops)
         receiptTimeoutTasks[packetHash] = Task { [weak self] in
-            // Proofs share the same constrained links as payloads. A modest
-            // window avoids manufacturing retries during legitimate bursts,
-            // while the durable outbox still recovers a truly lost proof.
-            try? await Task.sleep(for: .seconds(30))
+            try? await Task.sleep(for: .seconds(timeoutSeconds))
             guard !Task.isCancelled else { return }
             await self?.expireReceipt(packetHash)
         }
+    }
+
+    static func deliveryProofTimeoutSeconds(hops: UInt8?) -> TimeInterval {
+        // Mirror Reticulum PacketReceipt: one first-hop timeout plus one
+        // DEFAULT_PER_HOP_TIMEOUT (six seconds) for every routed hop. Keep the
+        // existing 30-second floor for normal Internet jitter and cap stale
+        // routes so the durable outbox always makes progress.
+        min(180, max(30, 6 + (Double(hops ?? 0) * 6)))
     }
 
     private func expireReceipt(_ packetHash: String) async {
@@ -5027,7 +5048,7 @@ public final class SidebandStore {
                     continue
                 }
                 updateMessage(item.id, state: .sent)
-                scheduleReceiptTimeout(packetHash)
+                await scheduleReceiptTimeout(packetHash)
             } catch {
                 removePendingReceipts(for: item.id)
                 recordDeliveryFailure(item.id, reason: "Propagation-node upload failed.")
