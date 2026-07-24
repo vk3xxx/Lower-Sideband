@@ -56,14 +56,21 @@ public actor ReticulumPathTable {
     }
 
     public func path(to destinationHash: Data, now: Date = .now) -> ReticulumPath? {
-        guard var routes = paths[destinationHash] else { return nil }
+        paths(to: destinationHash, now: now).first
+    }
+
+    /// Returns all valid routes to a destination in preference order. This
+    /// allows bounded redundancy across independent public interfaces without
+    /// broadcasting traffic to interfaces that never announced the peer.
+    public func paths(to destinationHash: Data, now: Date = .now) -> [ReticulumPath] {
+        guard var routes = paths[destinationHash] else { return [] }
         routes = routes.filter { $0.value.expiresAt > now }
-        if routes.isEmpty { paths.removeValue(forKey: destinationHash); return nil }
+        if routes.isEmpty { paths.removeValue(forKey: destinationHash); return [] }
         paths[destinationHash] = routes
         return routes.values.sorted {
             if $0.hops != $1.hops { return $0.hops < $1.hops }
             return $0.updatedAt > $1.updatedAt
-        }.first
+        }
     }
 
     public func path(to destinationHash: Data, on interfaceID: String, now: Date = .now) -> ReticulumPath? {

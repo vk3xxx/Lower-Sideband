@@ -194,7 +194,19 @@ public final class SidebandStore {
     private var linkRemoteDestinations: [String: String] = [:]
     private var linkInterfaceIDs: [String: String] = [:]
     private enum ReceiptKind: Hashable { case direct, opportunistic, propagation }
-    private struct PendingReceipt { let messageID: UUID; let kind: ReceiptKind; let destinationHash: String }
+    private struct PendingReceipt {
+        let messageID: UUID
+        let kind: ReceiptKind
+        let destinationHash: String
+        let linkID: String?
+
+        init(messageID: UUID, kind: ReceiptKind, destinationHash: String, linkID: String? = nil) {
+            self.messageID = messageID
+            self.kind = kind
+            self.destinationHash = destinationHash
+            self.linkID = linkID
+        }
+    }
     private var pendingReceipts: [String: PendingReceipt] = [:]
     private var receiptTimeoutTasks: [String: Task<Void, Never>] = [:]
     private var receiptRetryTasks: [String: Task<Void, Never>] = [:]
@@ -3374,17 +3386,32 @@ public final class SidebandStore {
             recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: destination mismatch")
             return
         }
-        let remoteIdentity = inboundRemoteIdentities[session.linkID.hex] ?? discoveries.first(where: { $0.destinationHash == message.sourceHash.hex }).flatMap { $0.publicKey }.flatMap { try? ReticulumIdentity(publicKey: $0) }
-        guard let remoteIdentity else {
-            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: sender identity unavailable")
-            return
-        }
-        guard message.validate(with: remoteIdentity) else {
-            recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: signature invalid")
-            return
-        }
-        bind(session: session, to: remoteIdentity)
         Task {
+            // Stock LXMF senders are not required to identify themselves with
+            // LINKIDENTIFY before sending a message. Resolve the signing
+            // identity from a validated announce, including an announce that
+            // was restored into the path table before this UI session began.
+            var remoteIdentity = inboundRemoteIdentities[session.linkID.hex]
+                ?? discoveries.first(where: {
+                    $0.destinationHash == message.sourceHash.hex && $0.isValidated
+                }).flatMap(\.publicKey).flatMap { try? ReticulumIdentity(publicKey: $0) }
+
+            if remoteIdentity == nil,
+               let path = await pathTable.path(to: message.sourceHash),
+               Self.identityPublicKey(path.publicKey, matchesLXMFDeliveryHash: message.sourceHash) {
+                remoteIdentity = try? ReticulumIdentity(publicKey: path.publicKey)
+            }
+
+            guard let remoteIdentity else {
+                recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: sender identity unavailable")
+                return
+            }
+            guard message.validate(with: remoteIdentity) else {
+                recordInboundMessage(source: message.sourceHash.hex, messageID: message.messageID.hex, result: "rejected: signature invalid")
+                return
+            }
+            bind(session: session, to: remoteIdentity)
+
             let wasPreviouslyReceived = receivedLXMFIDs.contains(message.messageID.hex)
             let accepted = wasPreviouslyReceived ? true : await importReceivedResourceMessage(message, sourceIdentity: remoteIdentity)
             guard accepted else {
@@ -3398,8 +3425,7 @@ public final class SidebandStore {
             )
             do {
                 let hash = packet.packetHash
-                let proofData = hash + (try messagingIdentity.sign(hash))
-                let proof = Data([0x0f, 0x00]) + session.linkID + Data([0x00]) + proofData
+                let proof = try session.proofPacket(for: packet)
                 deliveryDebugTrace(
                     "RX direct proof prepared link=\(session.linkID.hex) " +
                     "interface=\(proofInterface ?? "automatic route") " +
@@ -3421,6 +3447,12 @@ public final class SidebandStore {
                 deliveryDebugTrace("RX direct proof send deferred after interface loss: \(error.localizedDescription)")
             }
         }
+    }
+
+    static func identityPublicKey(_ publicKey: Data, matchesLXMFDeliveryHash destinationHash: Data) -> Bool {
+        guard let identity = try? ReticulumIdentity(publicKey: publicKey) else { return false }
+        let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+        return ReticulumIdentity.truncatedHash(nameHash + identity.hash) == destinationHash
     }
 
     /// Handles LXST telephony payloads before the normal LXMF link decoder.
@@ -4063,22 +4095,33 @@ public final class SidebandStore {
         }
     }
 
-    private func transmitDestinationPacket(_ packet: Data, destinationHash: Data) async throws {
+    private func transmitDestinationPacket(
+        _ packet: Data,
+        destinationHash: Data,
+        redundantRoutes: Bool = false
+    ) async throws {
         var transmitted = false
         if let networkInterfacePool, tcpNetworkState == .ready {
             let interfaceIDs = await networkInterfacePool.readyInterfaceIDs()
             var tcpSent = false
-            if let path = await pathTable.path(to: destinationHash),
-               let interfaceID = path.interfaceID,
-               interfaceIDs.contains(interfaceID) {
-                do {
-                    let routedPacket = try ReticulumPacket(raw: packet).prepared(for: path)
-                    try await networkInterfacePool.send(rawPacket: routedPacket, on: interfaceID)
-                    tcpSent = true
-                    let routeDescription = path.hops > 1 ? "routed via \(path.nextHop?.hex ?? "unknown")" : "direct"
-                    deliveryDebugTrace("TX \(destinationHash.hex) on \(interfaceID), \(path.hops) hop(s), \(routeDescription)")
-                } catch {
-                    deliveryDebugTrace("TX \(destinationHash.hex) on \(interfaceID) failed: \(error.localizedDescription)")
+            let availableRoutes = await pathTable.paths(to: destinationHash).filter { path in
+                path.interfaceID.map(interfaceIDs.contains) == true
+            }
+            let selectedRoutes = redundantRoutes
+                ? Array(availableRoutes.prefix(3))
+                : Array(availableRoutes.prefix(1))
+            if !selectedRoutes.isEmpty {
+                for path in selectedRoutes {
+                    guard let interfaceID = path.interfaceID else { continue }
+                    do {
+                        let routedPacket = try ReticulumPacket(raw: packet).prepared(for: path)
+                        try await networkInterfacePool.send(rawPacket: routedPacket, on: interfaceID)
+                        tcpSent = true
+                        let routeDescription = path.hops > 1 ? "routed via \(path.nextHop?.hex ?? "unknown")" : "direct"
+                        deliveryDebugTrace("TX \(destinationHash.hex) on \(interfaceID), \(path.hops) hop(s), \(routeDescription)")
+                    } catch {
+                        deliveryDebugTrace("TX \(destinationHash.hex) on \(interfaceID) failed: \(error.localizedDescription)")
+                    }
                 }
             } else {
                 // Path discovery has not selected a route yet. Preserve the
@@ -4161,6 +4204,12 @@ public final class SidebandStore {
         let maximumInFlightReceipts = 1
         let inFlightForDestination = pendingReceipts.values.count { $0.destinationHash == conversation.destinationHash }
         let availableReceiptSlots = max(0, maximumInFlightReceipts - inFlightForDestination)
+        // Follow stock LXMF delivery selection for ordinary messages on every
+        // network type: try an opportunistic encrypted packet first, then make
+        // direct-link fallback sticky only after its proof times out. Public
+        // transports can carry opportunistic packets reliably even when they
+        // cannot keep a peer-to-peer link route alive for the whole session.
+        // Attachments still require a direct link below.
         let forceDirectLink = directLinkFallbackDestinations.contains(conversation.destinationHash)
         var requiresLink = !attachmentMessages.isEmpty || forceDirectLink
         for item in forceDirectLink ? [] : Array(remainingQueued.prefix(availableReceiptSlots)) {
@@ -4173,7 +4222,11 @@ public final class SidebandStore {
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .opportunistic, destinationHash: conversation.destinationHash)
                 recordDeliveryAttempt(item.id, mode: .opportunistic)
-                try await transmitDestinationPacket(raw, destinationHash: destination)
+                try await transmitDestinationPacket(
+                    raw,
+                    destinationHash: destination,
+                    redundantRoutes: true
+                )
                 guard deliveryEpoch == deliveryConnectionEpoch else {
                     removePendingReceipts(for: item.id)
                     updateMessage(item.id, state: .queued)
@@ -4207,7 +4260,12 @@ public final class SidebandStore {
                 }
                 let raw = try session.encryptedPacket(lxmf.packed)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
-                pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
+                pendingReceipts[packetHash] = PendingReceipt(
+                    messageID: item.id,
+                    kind: .direct,
+                    destinationHash: conversation.destinationHash,
+                    linkID: session.linkID.hex
+                )
                 recordDeliveryAttempt(item.id, mode: .directLink)
                 try await transmitLinkPacket(raw, session: session)
                 guard deliveryEpoch == deliveryConnectionEpoch else {
@@ -4749,10 +4807,17 @@ public final class SidebandStore {
         guard let matched,
               let provedHash = Data(hexadecimal: matched.hash) else { return }
         let receipt = matched.receipt
-        guard let discovery = discoveries.first(where: { $0.destinationHash == receipt.destinationHash }),
-              let publicKey = discovery.publicKey,
-              let identity = try? ReticulumIdentity(publicKey: publicKey),
-              ReticulumProof.validates(packet, packetHash: provedHash, identity: identity) else { return }
+        let proofIsValid: Bool
+        if let linkID = receipt.linkID, let session = activeLinks[linkID] {
+            proofIsValid = session.validatesProof(packet, packetHash: provedHash)
+        } else if let discovery = discoveries.first(where: { $0.destinationHash == receipt.destinationHash }),
+                  let publicKey = discovery.publicKey,
+                  let identity = try? ReticulumIdentity(publicKey: publicKey) {
+            proofIsValid = ReticulumProof.validates(packet, packetHash: provedHash, identity: identity)
+        } else {
+            proofIsValid = false
+        }
+        guard proofIsValid else { return }
         pendingReceipts.removeValue(forKey: matched.hash)
         receiptTimeoutTasks.removeValue(forKey: matched.hash)?.cancel()
         updateMessage(receipt.messageID, state: receipt.kind == .propagation ? .sent : .delivered)
@@ -4892,7 +4957,12 @@ public final class SidebandStore {
                 let envelope = try lxmf.propagatedEnvelope(recipientIdentity: recipient, ratchet: discovery.ratchet)
                 let raw = try propagationSession.encryptedPacket(envelope)
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
-                pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .propagation, destinationHash: propagationNodeHash)
+                pendingReceipts[packetHash] = PendingReceipt(
+                    messageID: item.id,
+                    kind: .propagation,
+                    destinationHash: propagationNodeHash,
+                    linkID: propagationSession.linkID.hex
+                )
                 recordDeliveryAttempt(item.id, mode: .propagation)
                 try await transmitLinkPacket(raw, session: propagationSession)
                 guard deliveryEpoch == deliveryConnectionEpoch else {

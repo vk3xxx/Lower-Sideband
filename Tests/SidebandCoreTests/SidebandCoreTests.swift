@@ -3087,6 +3087,7 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(await table.path(to: announce.destinationHash, on: "europe")?.hops == 3)
     #expect(await table.path(to: announce.destinationHash, on: "europe")?.nextHop == Data(repeating: 0x55, count: 16))
     #expect(await table.all().count == 2)
+    #expect(await table.paths(to: announce.destinationHash).map(\.interfaceID) == ["sydney", "europe"])
 }
 
 @Test func invalidatingPathRemovesFailedRoute() async throws {
@@ -3279,6 +3280,59 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(incoming.session.derivedKey.hex == "580b56fcdfa20365c08d6b8000b13c63e08821e7c367fbcb772b4560a20c70131565a116169265df1d25b582e223694e57468f616c1e1efde5f42599b4807129")
     let proof = try ReticulumPacket(raw: incoming.proofPacket)
     #expect(proof.context == 0xff && proof.destinationHash == incoming.session.linkID)
+}
+
+@Test func linkPacketProofsUseNegotiatedSigningKeysInBothDirections() throws {
+    let destinationIdentity = try ReticulumIdentity(privateKey: Data(96..<160))
+    let destination = ReticulumIdentity.truncatedHash(
+        Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+            + destinationIdentity.hash
+    )
+    let request = try ReticulumLinkRequest(
+        destinationHash: destination,
+        keyAgreementPrivateKey: Data(0..<32),
+        signingPrivateKey: Data(32..<64)
+    )
+    let incoming = try ReticulumIncomingLink(
+        request: ReticulumPacket(raw: request.rawPacket),
+        localIdentity: destinationIdentity,
+        responderPrivateKey: Data(64..<96)
+    )
+    let initiator = try request.validateProof(
+        ReticulumPacket(raw: incoming.proofPacket),
+        destinationPublicKey: destinationIdentity.publicKey
+    )
+
+    let initiatorData = try ReticulumPacket(
+        raw: initiator.encryptedPacket(Data("initiator to responder".utf8), iv: Data(0..<16))
+    )
+    let responderProof = try ReticulumPacket(raw: incoming.session.proofPacket(for: initiatorData))
+    #expect(initiator.validatesProof(responderProof, packetHash: initiatorData.packetHash))
+
+    let responderData = try ReticulumPacket(
+        raw: incoming.session.encryptedPacket(Data("responder to initiator".utf8), iv: Data(16..<32))
+    )
+    let initiatorProof = try ReticulumPacket(raw: initiator.proofPacket(for: responderData))
+    #expect(incoming.session.validatesProof(initiatorProof, packetHash: responderData.packetHash))
+
+    let unrelatedIdentity = ReticulumIdentity()
+    #expect(!ReticulumProof.validates(
+        responderProof,
+        packetHash: initiatorData.packetHash,
+        identity: unrelatedIdentity
+    ))
+}
+
+@MainActor @Test func restoredPathIdentityMustMatchLXMFSourceHash() throws {
+    let identity = ReticulumIdentity()
+    let deliveryNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+    let deliveryHash = ReticulumIdentity.truncatedHash(deliveryNameHash + identity.hash)
+
+    #expect(SidebandStore.identityPublicKey(identity.publicKey, matchesLXMFDeliveryHash: deliveryHash))
+
+    let unrelatedIdentity = ReticulumIdentity()
+    #expect(!SidebandStore.identityPublicKey(unrelatedIdentity.publicKey, matchesLXMFDeliveryHash: deliveryHash))
+    #expect(!SidebandStore.identityPublicKey(Data(repeating: 0, count: 63), matchesLXMFDeliveryHash: deliveryHash))
 }
 
 @Test func tokenEncryptionMatchesPythonReference() throws {

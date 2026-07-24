@@ -11,6 +11,7 @@ public struct ReticulumLinkRequest: Sendable {
     public let linkID: Data
     public let createdAt: Date
     private let privateKey: Curve25519.KeyAgreement.PrivateKey
+    private let signingKey: Curve25519.Signing.PrivateKey
 
     public init(destinationHash: Data) throws {
         try self.init(destinationHash: destinationHash, keyAgreementPrivateKey: Data(Curve25519.KeyAgreement.PrivateKey().rawRepresentation), signingPrivateKey: Data(Curve25519.Signing.PrivateKey().rawRepresentation))
@@ -23,6 +24,7 @@ public struct ReticulumLinkRequest: Sendable {
         self.destinationHash = destinationHash
         createdAt = .now
         self.privateKey = privateKey
+        self.signingKey = signingKey
         publicKey = privateKey.publicKey.rawRepresentation
         signingPublicKey = signingKey.publicKey.rawRepresentation
         let requestData = publicKey + signingPublicKey + Self.signallingBytes(mtu: Self.mtu, mode: Self.modeAES256CBC)
@@ -48,7 +50,16 @@ public struct ReticulumLinkRequest: Sendable {
         let identity = try ReticulumIdentity(publicKey: destinationPublicKey)
         let signedData = linkID + peerPublicKey + destinationPublicKey.suffix(32) + signalling
         guard identity.validate(signature: Data(signature), message: signedData) else { throw LinkError.invalidProof }
-        return ReticulumLinkSession(linkID: linkID, destinationHash: destinationHash, peerPublicKey: peerPublicKey, derivedKey: try deriveKey(peerPublicKey: peerPublicKey), mtu: Self.mtu, rtt: max(0.001, Date().timeIntervalSince(createdAt)))
+        return ReticulumLinkSession(
+            linkID: linkID,
+            destinationHash: destinationHash,
+            peerPublicKey: peerPublicKey,
+            derivedKey: try deriveKey(peerPublicKey: peerPublicKey),
+            mtu: Self.mtu,
+            rtt: max(0.001, Date().timeIntervalSince(createdAt)),
+            localSigningPrivateKey: signingKey.rawRepresentation,
+            peerSigningPublicKey: Data(destinationPublicKey.suffix(32))
+        )
     }
 
     public static func signallingBytes(mtu: Int, mode: UInt8) -> Data {
@@ -65,15 +76,28 @@ public struct ReticulumLinkSession: Sendable {
     public let derivedKey: Data
     public let mtu: Int
     public let rtt: Double
+    private let localSigningPrivateKey: Data?
+    private let peerSigningPublicKey: Data?
     public var resourceSDU: Int { mtu - 36 }
 
-    public init(linkID: Data, destinationHash: Data, peerPublicKey: Data, derivedKey: Data, mtu: Int, rtt: Double = 0.1) {
+    public init(
+        linkID: Data,
+        destinationHash: Data,
+        peerPublicKey: Data,
+        derivedKey: Data,
+        mtu: Int,
+        rtt: Double = 0.1,
+        localSigningPrivateKey: Data? = nil,
+        peerSigningPublicKey: Data? = nil
+    ) {
         self.linkID = linkID
         self.destinationHash = destinationHash
         self.peerPublicKey = peerPublicKey
         self.derivedKey = derivedKey
         self.mtu = mtu
         self.rtt = rtt
+        self.localSigningPrivateKey = localSigningPrivateKey
+        self.peerSigningPublicKey = peerSigningPublicKey
     }
 
     public func encryptedPacket(_ plaintext: Data, context: UInt8 = 0, iv: Data? = nil) throws -> Data {
@@ -84,6 +108,34 @@ public struct ReticulumLinkSession: Sendable {
     public func decrypt(_ packet: ReticulumPacket) throws -> Data {
         guard packet.destinationType == .link, packet.destinationHash == linkID else { throw SessionError.wrongLink }
         return try ReticulumToken(key: derivedKey).decrypt(packet.data)
+    }
+
+    /// Reticulum LINK packet proofs use the signing key negotiated by the
+    /// link handshake, not the destination's long-term identity in every
+    /// direction. The initiator owns an ephemeral Ed25519 key while the
+    /// responder uses its destination identity key.
+    public func proofPacket(for receivedPacket: ReticulumPacket) throws -> Data {
+        guard receivedPacket.destinationType == .link,
+              receivedPacket.destinationHash == linkID,
+              let localSigningPrivateKey else {
+            throw SessionError.signingKeyUnavailable
+        }
+        let hash = receivedPacket.packetHash
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: localSigningPrivateKey)
+        let proofData = hash + (try key.signature(for: hash))
+        return Data([0x0f, 0x00]) + linkID + Data([0x00]) + proofData
+    }
+
+    public func validatesProof(_ proofPacket: ReticulumPacket, packetHash: Data) -> Bool {
+        guard proofPacket.packetType == .proof,
+              proofPacket.destinationType == .link,
+              proofPacket.destinationHash == linkID,
+              proofPacket.data.count == 96,
+              proofPacket.data.prefix(32) == packetHash,
+              let peerSigningPublicKey,
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: peerSigningPublicKey)
+        else { return false }
+        return key.isValidSignature(Data(proofPacket.data.suffix(64)), for: packetHash)
     }
 
     public func keepalivePacket() -> Data {
@@ -127,7 +179,7 @@ public struct ReticulumLinkSession: Sendable {
         Data([0x0c, 0x00]) + linkID + Data([0x01]) + part
     }
 
-    public enum SessionError: Error { case wrongLink, invalidResource }
+    public enum SessionError: Error { case wrongLink, invalidResource, signingKeyUnavailable }
 }
 
 public struct ReticulumIncomingLink: Sendable {
@@ -153,7 +205,15 @@ public struct ReticulumIncomingLink: Sendable {
         let material = shared.withUnsafeBytes { Data($0) }
         let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: material), salt: linkID, info: Data(), outputByteCount: 64)
         let derived = key.withUnsafeBytes { Data($0) }
-        session = ReticulumLinkSession(linkID: linkID, destinationHash: request.destinationHash, peerPublicKey: initiatorPublic, derivedKey: derived, mtu: signalledMTU)
+        session = ReticulumLinkSession(
+            linkID: linkID,
+            destinationHash: request.destinationHash,
+            peerPublicKey: initiatorPublic,
+            derivedKey: derived,
+            mtu: signalledMTU,
+            localSigningPrivateKey: localIdentity.privateKey.map { Data($0.suffix(32)) },
+            peerSigningPublicKey: initiatorSigningPublicKey
+        )
         let signed = linkID + privateKey.publicKey.rawRepresentation + localIdentity.publicKey.suffix(32) + signalling
         let proofData = try localIdentity.sign(signed) + privateKey.publicKey.rawRepresentation + signalling
         proofPacket = Data([0x0f, 0x00]) + linkID + Data([0xff]) + proofData
