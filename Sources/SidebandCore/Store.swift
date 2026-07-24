@@ -4269,11 +4269,12 @@ public final class SidebandStore {
                 let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .opportunistic, destinationHash: conversation.destinationHash)
                 recordDeliveryAttempt(item.id, mode: .opportunistic)
-                try await transmitDestinationPacket(
-                    raw,
-                    destinationHash: destination,
-                    redundantRoutes: true
-                )
+                // Match Reticulum's normal packet forwarding semantics: send
+                // over the single best validated route. Racing identical
+                // packets over several public transports can make the
+                // receiver deduplicate later copies after the first copy
+                // established proof return state on a stale path.
+                try await transmitDestinationPacket(raw, destinationHash: destination)
                 guard deliveryEpoch == deliveryConnectionEpoch else {
                     removePendingReceipts(for: item.id)
                     updateMessage(item.id, state: .queued)
