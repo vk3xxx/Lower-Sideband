@@ -65,6 +65,7 @@ public struct ReticulumLinkSession: Sendable {
     public let derivedKey: Data
     public let mtu: Int
     public let rtt: Double
+    public var resourceSDU: Int { mtu - 36 }
 
     public init(linkID: Data, destinationHash: Data, peerPublicKey: Data, derivedKey: Data, mtu: Int, rtt: Double = 0.1) {
         self.linkID = linkID
@@ -139,6 +140,12 @@ public struct ReticulumIncomingLink: Sendable {
         let initiatorPublic = request.data.subdata(in: 0..<32)
         initiatorSigningPublicKey = request.data.subdata(in: 32..<64)
         let signalling = request.data.suffix(3)
+        let signalledMTU = ((Int(signalling[signalling.startIndex]) & 0x1f) << 16)
+            | (Int(signalling[signalling.index(after: signalling.startIndex)]) << 8)
+            | Int(signalling[signalling.index(signalling.startIndex, offsetBy: 2)])
+        guard (ReticulumLinkRequest.mtu...0x1f_ffff).contains(signalledMTU) else {
+            throw IncomingError.invalidRequest
+        }
         let linkID = ReticulumIdentity.truncatedHash(Data(request.hashablePart.dropLast(3)))
         let privateKey = try responderPrivateKey.map { try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: $0) } ?? Curve25519.KeyAgreement.PrivateKey()
         let peer = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: initiatorPublic)
@@ -146,7 +153,7 @@ public struct ReticulumIncomingLink: Sendable {
         let material = shared.withUnsafeBytes { Data($0) }
         let key = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: material), salt: linkID, info: Data(), outputByteCount: 64)
         let derived = key.withUnsafeBytes { Data($0) }
-        session = ReticulumLinkSession(linkID: linkID, destinationHash: request.destinationHash, peerPublicKey: initiatorPublic, derivedKey: derived, mtu: 500)
+        session = ReticulumLinkSession(linkID: linkID, destinationHash: request.destinationHash, peerPublicKey: initiatorPublic, derivedKey: derived, mtu: signalledMTU)
         let signed = linkID + privateKey.publicKey.rawRepresentation + localIdentity.publicKey.suffix(32) + signalling
         let proofData = try localIdentity.sign(signed) + privateKey.publicKey.rawRepresentation + signalling
         proofPacket = Data([0x0f, 0x00]) + linkID + Data([0xff]) + proofData

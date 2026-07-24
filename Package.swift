@@ -16,7 +16,7 @@ let package = Package(
         .target(
             name: "SidebandCore",
             dependencies: ["CCodec2", .product(name: "Ed25519", package: "ed25519")],
-            linkerSettings: [.linkedLibrary("sqlite3")]
+            linkerSettings: [.linkedLibrary("sqlite3"), .linkedLibrary("bz2")]
         ),
         .executableTarget(name: "SidebandMac", dependencies: ["SidebandCore"]),
         .testTarget(name: "SidebandCoreTests", dependencies: ["SidebandCore"])

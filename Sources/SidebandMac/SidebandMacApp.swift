@@ -689,9 +689,12 @@ enum DeliverySoakRunner {
                 max(1, Int(environment["SIDEBAND_SOAK_ATTACHMENT_BYTES"] ?? "1048576") ?? 1_048_576)
             )
             let attachmentOrdinal = sequence / attachmentInterval
+            let attachmentPayloadPrefix = environment["SIDEBAND_SOAK_ATTACHMENTS_ARE_ECHOED"] == "1"
+                ? outboundPrefix
+                : inboundPrefix
             let expected = attachmentOrdinal.isMultiple(of: 2)
-                ? imagePayload(prefix: inboundPrefix, sequence: sequence, size: attachmentBytes)
-                : attachmentPayload(prefix: inboundPrefix, sequence: sequence, size: attachmentBytes)
+                ? imagePayload(prefix: attachmentPayloadPrefix, sequence: sequence, size: attachmentBytes)
+                : attachmentPayload(prefix: attachmentPayloadPrefix, sequence: sequence, size: attachmentBytes)
             guard let received = try? await store.attachmentStore.read(message.attachments[0]),
                   received == expected,
                   message.attachments[0].contentHash == Data(SHA256.hash(data: expected)) else {

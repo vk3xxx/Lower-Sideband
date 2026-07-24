@@ -1,7 +1,9 @@
 import Foundation
 
 public struct ReticulumResourceManifest: Equatable, Sendable {
-    public static let defaultSDU = 465
+    /// Stock Reticulum resource payload capacity at the default 500-byte MTU:
+    /// MTU - maximum header (35) - minimum IFAC (1).
+    public static let defaultSDU = 464
     public static let mapHashLength = 4
     public static let randomHashLength = 4
 
@@ -31,14 +33,14 @@ public struct ReticulumResourceManifest: Equatable, Sendable {
     }
 
     public init(advertisement: ReticulumResourceAdvertisement, sdu: Int = Self.defaultSDU) throws {
-        guard sdu == Self.defaultSDU,
-              ReticulumResourceLimits.accepts(
+        guard ReticulumResourceLimits.accepts(
                   dataSize: advertisement.dataSize,
                   transferSize: advertisement.transferSize,
                   partCount: advertisement.partCount,
                   segments: advertisement.totalSegments,
                   segmentIndex: advertisement.segmentIndex,
-                  advertisedPartHashCount: advertisement.partHashes.count
+                  advertisedPartHashCount: advertisement.partHashes.count,
+                  sdu: sdu
               ) else { throw ResourceError.invalidManifest }
         size = advertisement.transferSize; dataSize = advertisement.dataSize; self.sdu = sdu
         randomHash = advertisement.mapRandomHash; resourceHash = advertisement.resourceHash; partHashes = advertisement.partHashes; partCount = advertisement.partCount
@@ -52,7 +54,11 @@ public struct ReticulumResourceManifest: Equatable, Sendable {
     }
 
     public func validate(data: Data) -> Bool {
-        data.count == dataSize && ReticulumIdentity.fullHash(data + randomHash) == resourceHash
+        data.count == dataSize && validateHash(data: data)
+    }
+
+    public func validateHash(data: Data) -> Bool {
+        ReticulumIdentity.fullHash(data + randomHash) == resourceHash
     }
 }
 

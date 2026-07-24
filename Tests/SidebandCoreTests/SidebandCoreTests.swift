@@ -2863,7 +2863,13 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
 }
 
 @Test func largeResourceRequestsNextHashMapAtPartialWindowBoundary() throws {
-    let data = Data((0..<65_537).map { UInt8(truncatingIfNeeded: $0) })
+    var generator: UInt64 = 0x4c53_422d_524e_5301
+    let data = Data((0..<65_537).map { _ in
+        generator ^= generator << 13
+        generator ^= generator >> 7
+        generator ^= generator << 17
+        return UInt8(truncatingIfNeeded: generator)
+    })
     let randomHash = Data([0x10, 0x20, 0x30, 0x40])
     let manifest = try ReticulumResourceManifest(data: data, randomHash: randomHash)
     #expect(manifest.partCount > ReticulumResourceAdvertisement.hashMapMaximumEntries)
@@ -2877,17 +2883,26 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     for index in 0..<ReticulumResourceAdvertisement.hashMapMaximumEntries {
         try receiver.accept(part: parts[index], at: index)
     }
-    #expect(receiver.receivedPartCount == 82)
+    #expect(receiver.receivedPartCount == ReticulumResourceAdvertisement.hashMapMaximumEntries)
     #expect(receiver.missingPartIndices.isEmpty)
     #expect(receiver.needsMoreHashMap)
     let mapRequest = try receiver.nextRequest()
     #expect(mapRequest.wantsMoreHashMap)
     #expect(mapRequest.requestedPartHashes.isEmpty)
 
-    try receiver.applyHashMap(segment: 1, hashes: Array(manifest.partHashes.dropFirst(82)))
+    try receiver.applyHashMap(
+        segment: 1,
+        hashes: Array(manifest.partHashes.dropFirst(ReticulumResourceAdvertisement.hashMapMaximumEntries))
+    )
     let nextParts = try receiver.nextRequest()
     #expect(!nextParts.wantsMoreHashMap)
     #expect(nextParts.requestedPartHashes.count == 4)
+}
+
+@Test func pythonBZip2ResourcePayloadDecompressesNatively() throws {
+    let compressed = try #require(Data(base64Encoded: "QlpoOTFBWSZTWV6O89AAAP+XgEABAARIAD5n3qAwARgBQAYjTTRoUAGI000aBVU0DQxA0yQA2A8A4A6AXA1AwzAkBoBIDIDMDUDkCgG4FwKgWA2AQA7AmBwBYCoEgLAYcgYgUAgB8BICIFQIgWA9AXAmB2BkBECACoHwEwNwHoFwPxdyRThQkF6O89A="))
+    let expected = Data(String(repeating: "Lower Sideband Python resource compression interoperability. ", count: 64).utf8)
+    #expect(try BZip2.decompress(compressed, maximumOutputBytes: expected.count) == expected)
 }
 
 @Test func hdlcMatchesReticulumEscapingAndStreams() {
@@ -2954,6 +2969,15 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     var corrupted = raw
     corrupted[corrupted.endIndex - 1] ^= 1
     #expect(try !ReticulumAnnounce(packet: ReticulumPacket(raw: corrupted)).validate())
+}
+
+@Test func validatesPythonRatchetedLXMFAnnounceVector() throws {
+    let raw = Data(hex: "2100a4fc09f653ba1e292d3527f64357ad150046a70f960f49909ad4b98f9e07ea7f2f49e2fdd0e798990b1c17787c576dab52b1df5fa7dc8479a48f9892202ffbe8d1ba35c7ce0774a70df21f25aa81f6af206ec60bc318e2c0f0d90830b0c5bb74006a634c057b51fceaecbe75f0ba0c6c7ab6b62197a851721a736923925fccb049c8a7a911e7be500b4d812ff4151a0bcdc8d21a76f6c472dab7a1d399eac2b93616eb03f8fdbf0e0e52d27ffb6a06e0fac64ca8e9c3a4800de881203e2f3232bf581ff20a93c41f4c6f776572205369646562616e6420507974686f6e205265666572656e6365c09100")
+    let packet = try ReticulumPacket(raw: raw)
+    let announce = try ReticulumAnnounce(packet: packet)
+    #expect(packet.contextFlag)
+    #expect(announce.ratchet != nil)
+    #expect(announce.validate())
 }
 
 @Test func buildsValidLXMFDeliveryAnnounce() throws {

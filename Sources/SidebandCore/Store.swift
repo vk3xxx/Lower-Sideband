@@ -182,6 +182,10 @@ public final class SidebandStore {
     private var tcpNetworkState: ReticulumTCPInterface.State = .stopped
     private var autoConnectedDiscoveredInterfaceIDs: Set<String> = []
     private var networkConnectionGeneration = UUID()
+    /// Changes whenever link/receipt state is invalidated. Async sends capture
+    /// this value before yielding to an interface and must not publish `sent`
+    /// state if the connection was reset while the write was in progress.
+    private var deliveryConnectionEpoch = UUID()
     private let pathTable = ReticulumPathTable()
     private var pendingLinks: [String: ReticulumLinkRequest] = [:]
     private var pendingLinkTimeoutTokens: [String: UUID] = [:]
@@ -2446,7 +2450,7 @@ public final class SidebandStore {
             if networkState != .connecting { await startAutomaticConnection() }
             return
         }
-        guard !activeLinkHashes.contains(normalized),
+        guard outboundSession(to: normalized) == nil,
               !pendingLinks.values.contains(where: { $0.destinationHash == target }) else {
             return
         }
@@ -2472,7 +2476,7 @@ public final class SidebandStore {
     }
 
     private func deferLinkRequest(to destinationHash: String) {
-        guard !activeLinkHashes.contains(destinationHash) else { return }
+        guard outboundSession(to: destinationHash) == nil else { return }
         let token = UUID()
         deferredLinkRetryTokens[destinationHash] = token
         pendingLinkHashes.insert(destinationHash)
@@ -2531,9 +2535,11 @@ public final class SidebandStore {
 
     private func resetLinkState() {
         if voiceCall != nil { finishVoiceCall(failure: "The network connection ended.") }
+        deliveryConnectionEpoch = UUID()
         // A receipt tied to a vanished interface cannot arrive on the new
         // connection. Requeue it immediately instead of displaying Sent and
         // holding a delivery-window slot until its timer expires.
+        let interruptedReceiptCount = pendingReceipts.count
         for receipt in pendingReceipts.values {
             if let messageIndex = messages.firstIndex(where: { $0.id == receipt.messageID }) {
                 messages[messageIndex].state = .queued
@@ -2579,7 +2585,7 @@ public final class SidebandStore {
         pendingVoicePublicKeys.removeAll()
         activeVoiceLinkID = nil
         pendingPropagationRequests.removeAll()
-        if !interruptedResources.isEmpty { save() }
+        if interruptedReceiptCount > 0 || !interruptedResources.isEmpty { save() }
         UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
         UserDefaults.standard.removeObject(forKey: "reticulumLastActiveLink")
     }
@@ -3586,7 +3592,18 @@ public final class SidebandStore {
     }
 
     private func activeSession(to destinationHash: String) -> ReticulumLinkSession? {
-        activeLinks.first { linkRemoteDestinations[$0.key] == destinationHash }.map(\.value)
+        outboundSession(to: destinationHash)
+            ?? activeLinks.first { linkRemoteDestinations[$0.key] == destinationHash }.map(\.value)
+    }
+
+    /// A link initiated by the remote peer is an inbound delivery channel.
+    /// Stock LXMF does not install an incoming-resource handler on the
+    /// initiating end of that link, so it must not replace our independently
+    /// initiated outbound delivery channel.
+    private func outboundSession(to destinationHash: String) -> ReticulumLinkSession? {
+        activeLinks.first {
+            !inboundLinkIDs.contains($0.key) && linkRemoteDestinations[$0.key] == destinationHash
+        }.map(\.value)
     }
 
     private func receiveOpportunisticPacket(_ packet: ReticulumPacket, interfaceID: String?) {
@@ -4108,9 +4125,22 @@ public final class SidebandStore {
         guard let conversation = conversations.first(where: { $0.id == conversationID }) else { return }
         let pending = messages.filter {
             $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && ownsOutbox($0)
+        }.sorted {
+            if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+            return $0.id.uuidString < $1.id.uuidString
         }
         guard !pending.isEmpty else { return }
-        let attachmentMessages = pending.filter { !$0.attachments.isEmpty }
+        // Preserve conversational order across mixed text and resource
+        // messages. A later small packet must never overtake an earlier large
+        // attachment while it is waiting for its resource proof.
+        let hasReceiptInFlight = pendingReceipts.values.contains {
+            $0.destinationHash == conversation.destinationHash
+        }
+        let hasResourceInFlight = outgoingResources.values.contains { resource in
+            messages.first(where: { $0.id == resource.messageID })?.conversationID == conversationID
+        }
+        guard !hasReceiptInFlight, !hasResourceInFlight, let nextMessage = pending.first else { return }
+        let attachmentMessages = nextMessage.attachments.isEmpty ? [] : [nextMessage]
         guard let destination = Data(hexadecimal: conversation.destinationHash),
               let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated }),
               let publicKey = discovery.publicKey,
@@ -4127,16 +4157,15 @@ public final class SidebandStore {
            activeLinks.values.contains(where: { $0.destinationHash.hex == propagationNodeHash }) {
             await propagateQueued(for: conversationID)
         }
-        let remainingQueued = messages.filter {
-            $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && $0.attachments.isEmpty && ownsOutbox($0)
-        }
-        let maximumInFlightReceipts = 24
+        let remainingQueued = nextMessage.attachments.isEmpty ? [nextMessage] : []
+        let maximumInFlightReceipts = 1
         let inFlightForDestination = pendingReceipts.values.count { $0.destinationHash == conversation.destinationHash }
         let availableReceiptSlots = max(0, maximumInFlightReceipts - inFlightForDestination)
         let forceDirectLink = directLinkFallbackDestinations.contains(conversation.destinationHash)
         var requiresLink = !attachmentMessages.isEmpty || forceDirectLink
         for item in forceDirectLink ? [] : Array(remainingQueued.prefix(availableReceiptSlots)) {
             do {
+                let deliveryEpoch = deliveryConnectionEpoch
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)
                 let raw = try lxmf.opportunisticPacket(recipientIdentity: recipient, ratchet: discovery.ratchet)
@@ -4145,6 +4174,12 @@ public final class SidebandStore {
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .opportunistic, destinationHash: conversation.destinationHash)
                 recordDeliveryAttempt(item.id, mode: .opportunistic)
                 try await transmitDestinationPacket(raw, destinationHash: destination)
+                guard deliveryEpoch == deliveryConnectionEpoch else {
+                    removePendingReceipts(for: item.id)
+                    updateMessage(item.id, state: .queued)
+                    deliveryPassRerunRequested.insert(conversationID)
+                    continue
+                }
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
             } catch {
@@ -4154,15 +4189,16 @@ public final class SidebandStore {
             }
         }
         guard requiresLink else { return }
-        if !activeLinkHashes.contains(conversation.destinationHash) {
+        if outboundSession(to: conversation.destinationHash) == nil {
             if !pendingLinkHashes.contains(conversation.destinationHash) { await requestLink(to: conversation.destinationHash) }
             return
         }
-        guard let session = activeSession(to: conversation.destinationHash) else { return }
+        guard let session = outboundSession(to: conversation.destinationHash) else { return }
         let directSlots = max(0, maximumInFlightReceipts - pendingReceipts.values.count { $0.destinationHash == conversation.destinationHash })
-        for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && $0.attachments.isEmpty && ownsOutbox($0) }).prefix(directSlots) {
+        for item in remainingQueued.prefix(directSlots) {
             guard item.attachments.isEmpty else { continue }
             do {
+                let deliveryEpoch = deliveryConnectionEpoch
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)
                 if lxmf.packed.count > 400 {
@@ -4174,6 +4210,12 @@ public final class SidebandStore {
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .direct, destinationHash: conversation.destinationHash)
                 recordDeliveryAttempt(item.id, mode: .directLink)
                 try await transmitLinkPacket(raw, session: session)
+                guard deliveryEpoch == deliveryConnectionEpoch else {
+                    removePendingReceipts(for: item.id)
+                    updateMessage(item.id, state: .queued)
+                    deliveryPassRerunRequested.insert(conversationID)
+                    continue
+                }
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
             } catch {
@@ -4187,11 +4229,7 @@ public final class SidebandStore {
         // entire backlog at once causes otherwise-valid transfers to be
         // rejected during reconnect bursts. The next resource is started from
         // receiveResourceProof() after this one is durably accepted.
-        let hasActiveResourceForConversation = outgoingResources.values.contains { resource in
-            messages.first(where: { $0.id == resource.messageID })?.conversationID == conversationID
-        }
-        if !hasActiveResourceForConversation,
-           let nextAttachmentMessage = attachmentMessages.first(where: { message in
+        if let nextAttachmentMessage = attachmentMessages.first(where: { message in
                message.attachments.contains(where: { $0.state == .local || $0.state == .queued })
            }) {
             await advertiseAttachments(for: nextAttachmentMessage, session: session)
@@ -4202,8 +4240,10 @@ public final class SidebandStore {
         let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         let sourceHash = ReticulumIdentity.truncatedHash(nameHash + messagingIdentity.hash)
         guard let attachment = message.attachments.first(where: { $0.state == .local || $0.state == .queued }) else { return }
+        let deliveryEpoch = deliveryConnectionEpoch
         do {
             let data = try await attachmentStore.read(attachment)
+            guard deliveryEpoch == deliveryConnectionEpoch else { return }
             var encodedFields = lxmfEncodedFields(for: message)
             if attachment.mimeType?.lowercased().hasPrefix("image/") == true {
                 let ext = URL(fileURLWithPath: attachment.filename).pathExtension.lowercased()
@@ -4236,13 +4276,25 @@ public final class SidebandStore {
                 try session.resourceAdvertisementPacket(first.advertisement),
                 session: session
             )
+            guard deliveryEpoch == deliveryConnectionEpoch else {
+                outgoingResources.removeValue(forKey: first.manifest.resourceHash.hex)
+                updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .queued, progress: 0)
+                updateMessage(message.id, state: .queued)
+                return
+            }
         } catch {
+            if deliveryEpoch != deliveryConnectionEpoch {
+                updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .queued, progress: 0)
+                updateMessage(message.id, state: .queued)
+                return
+            }
             recordDeliveryFailure(message.id, reason: "Attachment transfer could not start.")
             updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .failed, progress: 0)
         }
     }
 
     private func advertiseLXMFResource(_ packed: Data, messageID: UUID, session: ReticulumLinkSession) async throws {
+        let deliveryEpoch = deliveryConnectionEpoch
         let segments = try ReticulumResourceSegmentPlanner.prepare(data: packed, session: session, hasMetadata: false)
         guard let first = segments.first else { return }
         registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: messageID, attachmentID: nil, session: session)
@@ -4252,6 +4304,11 @@ public final class SidebandStore {
             try session.resourceAdvertisementPacket(first.advertisement),
             session: session
         )
+        guard deliveryEpoch == deliveryConnectionEpoch else {
+            outgoingResources.removeValue(forKey: first.manifest.resourceHash.hex)
+            updateMessage(messageID, state: .queued)
+            return
+        }
     }
 
     private func registerOutgoingSegment(_ segment: ReticulumPreparedResourceSegment, remaining: [ReticulumPreparedResourceSegment], messageID: UUID, attachmentID: UUID?, session: ReticulumLinkSession) {
@@ -4370,11 +4427,22 @@ public final class SidebandStore {
                   partCount: advertisement.partCount,
                   segments: advertisement.totalSegments,
                   segmentIndex: advertisement.segmentIndex,
-                  advertisedPartHashCount: advertisement.partHashes.count
+                  advertisedPartHashCount: advertisement.partHashes.count,
+                  sdu: session.resourceSDU
               ),
               !receivedResourceHashes.contains(advertisement.resourceHash.hex),
-              let manifest = try? ReticulumResourceManifest(advertisement: advertisement) else {
-            deliveryDebugTrace("RX rejected resource advertisement \(advertisement.resourceHash.hex), incoming=\(incomingResources.count), parts=\(advertisement.partCount), bytes=\(advertisement.dataSize)")
+              let manifest = try? ReticulumResourceManifest(advertisement: advertisement, sdu: session.resourceSDU) else {
+            let expectedParts = advertisement.transferSize == 0
+                ? 0
+                : (advertisement.transferSize + session.resourceSDU - 1) / session.resourceSDU
+            deliveryDebugTrace(
+                "RX rejected resource advertisement \(advertisement.resourceHash.hex), " +
+                "incoming=\(incomingResources.count), flags=\(advertisement.flags), " +
+                "data=\(advertisement.dataSize), transfer=\(advertisement.transferSize), " +
+                "parts=\(advertisement.partCount)/\(expectedParts), hashes=\(advertisement.partHashes.count), " +
+                "segment=\(advertisement.segmentIndex)/\(advertisement.totalSegments), " +
+                "alreadyReceived=\(receivedResourceHashes.contains(advertisement.resourceHash.hex))"
+            )
             return
         }
         deliveryDebugTrace("RX resource advertisement \(advertisement.resourceHash.hex) on link \(session.linkID.hex), \(advertisement.partCount) parts")
@@ -4433,8 +4501,16 @@ public final class SidebandStore {
     private func finishIncomingResource(resourceHash: String) async {
         guard let incoming = incomingResources.removeValue(forKey: resourceHash),
               let encrypted = try? incoming.receiver.assemble(),
-              let data = try? incoming.session.decryptResourcePayload(encrypted),
-              incoming.receiver.manifest.validate(data: data) else {
+              let transferData = try? incoming.session.decryptResourcePayload(encrypted),
+              let data = try? (
+                  incoming.advertisement.flags & 0x02 == 0x02
+                      ? BZip2.decompress(transferData, maximumOutputBytes: incoming.advertisement.dataSize)
+                      : transferData
+              ),
+              incoming.receiver.manifest.validateHash(data: data),
+              incoming.advertisement.totalSegments == 1
+                  ? data.count == incoming.advertisement.dataSize
+                  : (data.count > 0 && data.count <= ReticulumResourceSegmentPlanner.maximumEfficientSize) else {
             deliveryDebugTrace("RX resource \(resourceHash) failed reassembly or validation")
             return
         }
@@ -4810,6 +4886,7 @@ public final class SidebandStore {
         let sourceHash = ReticulumIdentity.truncatedHash(sourceNameHash + messagingIdentity.hash)
         for item in messages.filter({ $0.conversationID == conversationID && $0.direction == .outgoing && $0.state == .queued && ($0.scheduledFor ?? .distantPast) <= .now && $0.attachments.isEmpty && ownsOutbox($0) }) {
             do {
+                let deliveryEpoch = deliveryConnectionEpoch
                 let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
                 recordLXMFID(lxmf.messageID, for: item.id)
                 let envelope = try lxmf.propagatedEnvelope(recipientIdentity: recipient, ratchet: discovery.ratchet)
@@ -4818,6 +4895,11 @@ public final class SidebandStore {
                 pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .propagation, destinationHash: propagationNodeHash)
                 recordDeliveryAttempt(item.id, mode: .propagation)
                 try await transmitLinkPacket(raw, session: propagationSession)
+                guard deliveryEpoch == deliveryConnectionEpoch else {
+                    removePendingReceipts(for: item.id)
+                    updateMessage(item.id, state: .queued)
+                    continue
+                }
                 updateMessage(item.id, state: .sent)
                 scheduleReceiptTimeout(packetHash)
             } catch {

@@ -13,9 +13,11 @@ public enum ReticulumResourceLimits {
         partCount: Int,
         segments: Int,
         segmentIndex: Int,
-        advertisedPartHashCount: Int
+        advertisedPartHashCount: Int,
+        sdu: Int = ReticulumResourceManifest.defaultSDU
     ) -> Bool {
-        guard dataSize >= 0, dataSize <= maximumAttachmentBytes + 65_536,
+        guard (ReticulumResourceManifest.defaultSDU...(0x1f_ffff - 36)).contains(sdu),
+              dataSize >= 0, dataSize <= maximumAttachmentBytes + 65_536,
               transferSize >= 0, transferSize <= maximumTransferBytes,
               (0...maximumPartCount).contains(partCount),
               (1...maximumSegments).contains(segments),
@@ -23,7 +25,7 @@ public enum ReticulumResourceLimits {
               advertisedPartHashCount >= 0 else { return false }
         // Validate untrusted ranges before adding the SDU rounding value so a
         // hostile Int.max transfer claim cannot trap the receiver process.
-        let expectedParts = transferSize == 0 ? 0 : (transferSize + ReticulumResourceManifest.defaultSDU - 1) / ReticulumResourceManifest.defaultSDU
+        let expectedParts = transferSize == 0 ? 0 : (transferSize + sdu - 1) / sdu
         return partCount == expectedParts &&
             advertisedPartHashCount == min(partCount, ReticulumResourceAdvertisement.hashMapMaximumEntries)
     }

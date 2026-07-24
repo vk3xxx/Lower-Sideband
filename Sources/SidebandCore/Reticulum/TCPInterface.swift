@@ -53,6 +53,7 @@ public actor ReticulumTCPInterface {
         guard let connection, state == .ready else { throw InterfaceError.notConnected }
         let outbound = try ifac?.protect(rawPacket) ?? rawPacket
         let framed = HDLC.frame(outbound)
+        trace("TX raw=\(rawPacket.count) protected=\(outbound.count) framed=\(framed.count) header=\(rawPacket.prefix(2).traceHex)")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: framed, completion: .contentProcessed { error in
                 if let error { continuation.resume(throwing: error) } else { continuation.resume() }
@@ -73,10 +74,23 @@ public actor ReticulumTCPInterface {
     }
 
     private func consume(_ data: Data) async {
-        for frame in decoder.consume(data) {
-            guard let raw = try? ifac?.unprotect(frame) ?? frame else { continue }
-            if let packet = try? ReticulumPacket(raw: raw) { await packetHandler(packet) }
+        let frames = decoder.consume(data)
+        trace("RX chunk=\(data.count) frames=\(frames.count)")
+        for frame in frames {
+            do {
+                let raw = try ifac?.unprotect(frame) ?? frame
+                let packet = try ReticulumPacket(raw: raw)
+                trace("RX packet raw=\(raw.count) header=\(raw.prefix(2).traceHex) destination=\(packet.destinationHash.traceHex) context=\(packet.context) base64=\(raw.base64EncodedString())")
+                await packetHandler(packet)
+            } catch {
+                trace("RX rejected frame=\(frame.count) prefix=\(frame.prefix(16).traceHex) error=\(error)")
+            }
         }
+    }
+
+    private func trace(_ message: @autoclosure () -> String) {
+        guard ProcessInfo.processInfo.environment["SIDEBAND_SOAK_NETWORK_MODE"] != nil else { return }
+        print("SIDEBAND_TCP_TRACE \(message())")
     }
 
     private func handle(_ newState: NWConnection.State) async {
@@ -107,4 +121,8 @@ public actor ReticulumTCPInterface {
     }
 
     public enum InterfaceError: Error { case notConnected }
+}
+
+private extension DataProtocol {
+    var traceHex: String { map { String(format: "%02x", $0) }.joined() }
 }

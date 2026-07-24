@@ -27,7 +27,7 @@ public enum ReticulumResourceSegmentPlanner {
         for slice in slices {
             let encrypted = try session.encryptResourcePayload(slice)
             let randomHash = Data((0..<4).map { _ in UInt8.random(in: .min ... .max) })
-            let manifest = try ReticulumResourceManifest(data: slice, transferData: encrypted, randomHash: randomHash)
+            let manifest = try ReticulumResourceManifest(data: slice, transferData: encrypted, sdu: session.resourceSDU, randomHash: randomHash)
             prepared.append((manifest, try manifest.parts(from: encrypted), ReticulumIdentity.fullHash(slice + manifest.resourceHash)))
         }
         guard let originalHash = prepared.first?.manifest.resourceHash else { throw ResourceError.invalidManifest }

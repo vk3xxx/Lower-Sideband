@@ -1,7 +1,9 @@
 import Foundation
 
 public struct ReticulumResourceAdvertisement: Equatable, Sendable {
-    public static let hashMapMaximumEntries = 82
+    /// `floor((RNS.Link.MDU - ResourceAdvertisement.OVERHEAD) / 4)` for the
+    /// standard 500-byte Reticulum link MTU: floor((431 - 134) / 4).
+    public static let hashMapMaximumEntries = 74
     public let transferSize: Int
     public let dataSize: Int
     public let partCount: Int
