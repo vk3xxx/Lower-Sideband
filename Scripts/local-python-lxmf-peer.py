@@ -239,6 +239,15 @@ class Peer:
 
     def mark_failed(self, sequence, message):
         with self.lock:
+            # A watchdog-cancelled attempt can report failure after its
+            # replacement has already been scheduled. Ignore that stale
+            # callback so it cannot consume a second application retry.
+            active_id = self.reply_active_message_ids.get(sequence)
+            if active_id is None or active_id != message.message_id:
+                return
+            self.reply_last_sent.pop(sequence, None)
+            self.reply_active_message_ids.pop(sequence, None)
+            self.reply_watchdog_cancelled.discard(sequence)
             retries = self.reply_retry_counts.get(sequence, 0)
             if retries < self.args.application_retries:
                 retries += 1
@@ -322,6 +331,32 @@ class Peer:
                     flush=True,
                 )
                 self.router.cancel_outbound(message_id)
+                # LXMRouter.cancel_outbound() is intentionally silent and does
+                # not invoke the message's failed callback. Schedule the
+                # bounded application retry here instead of leaving this
+                # sequence permanently absent from both delivered and failed.
+                with self.lock:
+                    if (
+                        sequence not in self.delivered
+                        and self.reply_active_message_ids.get(sequence) == message_id
+                    ):
+                        self.reply_last_sent.pop(sequence, None)
+                        self.reply_active_message_ids.pop(sequence, None)
+                        retries = self.reply_retry_counts.get(sequence, 0)
+                        if retries < self.args.application_retries:
+                            retries += 1
+                            self.reply_retry_counts[sequence] = retries
+                            self.reply_retry_due[sequence] = (
+                                time.monotonic() + min(5.0, 0.5 * retries)
+                            )
+                        else:
+                            self.failed[sequence] = {
+                                "message_id": message_id.hex(),
+                                "failed_at": time.time(),
+                                "attempts": "watchdog",
+                                "application_retries": retries,
+                            }
+                self.write_report("running")
             candidates = list(RNS.Transport.interfaces)
             for interface in list(candidates):
                 candidates.extend(getattr(interface, "spawned_interfaces", None) or [])
