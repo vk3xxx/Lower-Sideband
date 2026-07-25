@@ -4310,7 +4310,12 @@ public final class SidebandStore {
             await propagateQueued(for: conversationID)
         }
         let remainingQueued = nextMessage.attachments.isEmpty ? [nextMessage] : []
-        let maximumInFlightReceipts = 1
+        // Keep a small proof window open on high-latency public routes. A
+        // single receipt serialises an entire conversation behind the public
+        // round-trip time and can turn a healthy 100-message queue into a
+        // multi-hour drain. Four matches the bounded upstream LXMF router
+        // window while attachments remain strictly serialised below.
+        let maximumInFlightReceipts = 4
         let inFlightForDestination = pendingReceipts.values.count { $0.destinationHash == conversation.destinationHash }
         let availableReceiptSlots = max(0, maximumInFlightReceipts - inFlightForDestination)
         // Follow stock LXMF delivery selection on every network type. Ordinary
