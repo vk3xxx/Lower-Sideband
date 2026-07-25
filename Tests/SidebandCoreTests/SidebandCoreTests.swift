@@ -3271,6 +3271,49 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(routed.packetHash == normal.packetHash)
 }
 
+@MainActor
+@Test func linkRequestIsRegisteredBeforeTransportCanReturnAProof() async throws {
+    var registered = false
+    var rolledBack = false
+
+    try await SidebandStore.transmitRegisteredLinkRequest {
+        registered = true
+    } transmit: {
+        // Models a fast peer delivering its proof while the asynchronous TCP
+        // send is still on the stack.
+        #expect(registered)
+        await Task.yield()
+        #expect(registered)
+    } rollback: {
+        rolledBack = true
+    }
+
+    #expect(registered)
+    #expect(!rolledBack)
+}
+
+@MainActor
+@Test func failedLinkTransmissionRollsBackPendingRegistration() async {
+    enum ExpectedFailure: Error { case send }
+    var registered = false
+    var rolledBack = false
+
+    await #expect(throws: ExpectedFailure.self) {
+        try await SidebandStore.transmitRegisteredLinkRequest {
+            registered = true
+        } transmit: {
+            #expect(registered)
+            throw ExpectedFailure.send
+        } rollback: {
+            rolledBack = true
+            registered = false
+        }
+    }
+
+    #expect(rolledBack)
+    #expect(!registered)
+}
+
 @Test func validatesPythonLinkProofAndActivatesSession() throws {
     let destination = Data(hex: "fae321c442e3c9bdcd7a3e79d850e03c")
     let request = try ReticulumLinkRequest(destinationHash: destination, keyAgreementPrivateKey: Data(0..<32), signingPrivateKey: Data(32..<64))

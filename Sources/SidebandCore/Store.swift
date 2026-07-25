@@ -2453,6 +2453,26 @@ public final class SidebandStore {
     public var pendingLinkCount: Int { pendingLinkHashes.count }
     public var activeLinkCount: Int { activeLinkHashes.count }
 
+    /// Installs the request state before any bytes leave the process.
+    ///
+    /// A TCP send can yield long enough for a fast peer's link proof to arrive.
+    /// Registering after `transmit` therefore loses valid proofs as "unknown"
+    /// and leaves attachment delivery waiting for a link that was already
+    /// accepted remotely.
+    static func transmitRegisteredLinkRequest(
+        register: () -> Void,
+        transmit: () async throws -> Void,
+        rollback: () -> Void
+    ) async throws {
+        register()
+        do {
+            try await transmit()
+        } catch {
+            rollback()
+            throw error
+        }
+    }
+
     public func requestLink(to destinationHash: String) async {
         let normalized = destinationHash.lowercased()
         guard let target = Data(hexadecimal: normalized) else {
@@ -2460,7 +2480,9 @@ public final class SidebandStore {
             return
         }
         guard hasPath(to: normalized) else {
-            await requestPath(to: normalized, surfaceErrors: false)
+            if !isPathPending(to: normalized) {
+                await requestPath(to: normalized, surfaceErrors: false)
+            }
             deferLinkRequest(to: normalized)
             return
         }
@@ -2478,13 +2500,34 @@ public final class SidebandStore {
         do {
             clearPendingLinks(to: normalized)
             let request = try ReticulumLinkRequest(destinationHash: target)
-            try await transmitDestinationPacket(request.rawPacket, destinationHash: target)
             let linkID = request.linkID.hex
             let timeoutToken = UUID()
-            pendingLinks[linkID] = request
-            pendingLinkTimeoutTokens[linkID] = timeoutToken
-            pendingLinkHashes.insert(normalized)
-            UserDefaults.standard.set(linkID, forKey: "reticulumLastPendingLink")
+            try await Self.transmitRegisteredLinkRequest {
+                pendingLinks[linkID] = request
+                pendingLinkTimeoutTokens[linkID] = timeoutToken
+                pendingLinkHashes.insert(normalized)
+                UserDefaults.standard.set(linkID, forKey: "reticulumLastPendingLink")
+                deliveryDebugTrace("TX link request \(linkID) registered for \(normalized)")
+            } transmit: {
+                // A peer may be reachable through more than one independent
+                // public reticule. The proof binds the link to whichever route
+                // actually succeeds, after which encrypted traffic uses only
+                // that interface.
+                try await transmitDestinationPacket(
+                    request.rawPacket,
+                    destinationHash: target,
+                    redundantRoutes: true
+                )
+            } rollback: {
+                pendingLinks.removeValue(forKey: linkID)
+                pendingLinkTimeoutTokens.removeValue(forKey: linkID)
+                if !pendingLinks.values.contains(where: { $0.destinationHash == target }) {
+                    pendingLinkHashes.remove(normalized)
+                }
+                if UserDefaults.standard.string(forKey: "reticulumLastPendingLink") == linkID {
+                    UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
+                }
+            }
             scheduleLinkTimeout(linkID: linkID, destinationHash: normalized, token: timeoutToken)
         } catch {
             // iOS can replace a TCP connection while a still-valid route is
@@ -2495,7 +2538,9 @@ public final class SidebandStore {
     }
 
     private func deferLinkRequest(to destinationHash: String) {
-        guard outboundSession(to: destinationHash) == nil else { return }
+        guard outboundSession(to: destinationHash) == nil,
+              !pendingLinks.values.contains(where: { $0.destinationHash.hex == destinationHash })
+        else { return }
         let token = UUID()
         deferredLinkRetryTokens[destinationHash] = token
         pendingLinkHashes.insert(destinationHash)
@@ -2544,6 +2589,11 @@ public final class SidebandStore {
             await refreshPathState()
         }
         await requestPath(to: destinationHash, surfaceErrors: false)
+        // Route refresh is asynchronous. Keep the durable attachment moving
+        // even if the next announce arrives outside a foreground delivery
+        // pass; deferLinkRequest coalesces retries and requestLink suppresses
+        // duplicate path broadcasts while discovery is pending.
+        deferLinkRequest(to: destinationHash)
     }
 
     private func clearPendingLinks(to destinationHash: String) {
@@ -3360,7 +3410,10 @@ public final class SidebandStore {
                 return
             }
             if packet.context == 0x06 || packet.context == 0x07 {
-                cancelResource(hash: plaintext.hex)
+                cancelResource(
+                    hash: plaintext.hex,
+                    initiatedBySender: packet.context == 0x06
+                )
                 return
             }
             if packet.context == 0x00 || packet.context == 0xfb || packet.context == 0xfe {
@@ -4335,8 +4388,13 @@ public final class SidebandStore {
                 await scheduleReceiptTimeout(packetHash)
             } catch {
                 removePendingReceipts(for: item.id)
-                recordDeliveryFailure(item.id, reason: "Encrypted-link delivery failed.")
-                lastError = "LXMF delivery failed: \(error.localizedDescription)"
+                await recoverLinkTransmission(
+                    messageID: item.id,
+                    attachmentID: nil,
+                    session: session,
+                    error: error
+                )
+                break
             }
         }
         // Serialize attachment resources per conversation. Reticulum resource
@@ -4387,10 +4445,21 @@ public final class SidebandStore {
             recordDeliveryAttempt(message.id, mode: .resource)
             updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .transferring, progress: 0)
             deliveryDebugTrace("TX attachment resource \(first.manifest.resourceHash.hex) on link \(session.linkID.hex), \(first.parts.count) parts")
-            try await transmitLinkPacket(
-                try session.resourceAdvertisementPacket(first.advertisement),
-                session: session
-            )
+            do {
+                try await transmitLinkPacket(
+                    try session.resourceAdvertisementPacket(first.advertisement),
+                    session: session
+                )
+            } catch {
+                outgoingResources.removeValue(forKey: first.manifest.resourceHash.hex)
+                await recoverLinkTransmission(
+                    messageID: message.id,
+                    attachmentID: attachment.id,
+                    session: session,
+                    error: error
+                )
+                return
+            }
             guard deliveryEpoch == deliveryConnectionEpoch else {
                 outgoingResources.removeValue(forKey: first.manifest.resourceHash.hex)
                 updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .queued, progress: 0)
@@ -4406,6 +4475,37 @@ public final class SidebandStore {
             recordDeliveryFailure(message.id, reason: "Attachment transfer could not start.")
             updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .failed, progress: 0)
         }
+    }
+
+    /// A link is bound to the interface that returned its proof. Public
+    /// Reticulum pools can replace that interface immediately afterwards as a
+    /// discovered route supersedes a bootstrap socket. Losing that interface
+    /// is a recoverable network transition, not a permanent message failure.
+    private func recoverLinkTransmission(
+        messageID: UUID,
+        attachmentID: UUID?,
+        session: ReticulumLinkSession,
+        error: Error
+    ) async {
+        guard let message = messages.first(where: { $0.id == messageID }),
+              let conversation = conversations.first(where: { $0.id == message.conversationID })
+        else { return }
+        deliveryDebugTrace(
+            "TX link \(session.linkID.hex) became unavailable for \(conversation.destinationHash): \(error.localizedDescription); retrying"
+        )
+        let resourceHashes = outgoingResources.compactMap {
+            $0.value.messageID == messageID ? $0.key : nil
+        }
+        for hash in resourceHashes { outgoingResources.removeValue(forKey: hash) }
+        removePendingReceipts(for: messageID)
+        if let attachmentID {
+            updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .queued, progress: 0)
+        }
+        updateMessage(messageID, state: .queued)
+        recordDeliveryFailure(messageID, reason: "Secure route changed; retrying automatically.")
+        removeLink(session.linkID.hex)
+        await requestLink(to: conversation.destinationHash)
+        deliveryPassRerunRequested.insert(conversation.id)
     }
 
     private func advertiseLXMFResource(_ packed: Data, messageID: UUID, session: ReticulumLinkSession) async throws {
@@ -4845,8 +4945,13 @@ public final class SidebandStore {
         }
     }
 
-    private func cancelResource(hash: String) {
+    private func cancelResource(hash: String, initiatedBySender: Bool) {
         if let outgoing = outgoingResources.removeValue(forKey: hash) {
+            let reason = initiatedBySender
+                ? "Attachment transfer was cancelled."
+                : "The recipient declined this attachment. Its receive-size policy may be lower than the file size."
+            deliveryDebugTrace("RX resource cancel \(hash), sender initiated: \(initiatedBySender)")
+            recordDeliveryFailure(outgoing.messageID, reason: reason)
             if let attachmentID = outgoing.attachmentID {
                 updateAttachment(messageID: outgoing.messageID, attachmentID: attachmentID, state: .failed, progress: 0)
             } else { updateMessage(outgoing.messageID, state: .failed) }
