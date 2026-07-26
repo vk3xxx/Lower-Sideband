@@ -2151,6 +2151,26 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     ))
 }
 
+@MainActor @Test func outboundLinkCannotDeliverUntilIdentityActivationCompletes() {
+    let destination = "0123456789abcdef0123456789abcdef"
+    let remotes = ["activating": destination, "ready": destination, "inbound": destination]
+
+    #expect(SidebandStore.deliveryReadyOutboundLinkID(
+        destinationHash: destination,
+        activeLinkIDs: Set(remotes.keys),
+        readyLinkIDs: [],
+        inboundLinkIDs: [],
+        remoteDestinations: remotes
+    ) == nil)
+    #expect(SidebandStore.deliveryReadyOutboundLinkID(
+        destinationHash: destination,
+        activeLinkIDs: Set(remotes.keys),
+        readyLinkIDs: ["ready", "inbound"],
+        inboundLinkIDs: ["inbound"],
+        remoteDestinations: remotes
+    ) == "ready")
+}
+
 @MainActor @Test func propagationDeliveryRemainsExplicitlyOptIn() {
     #expect(!SidebandStore.shouldUsePropagation(.automatic))
     #expect(SidebandStore.shouldUsePropagation(.propagationPreferred))

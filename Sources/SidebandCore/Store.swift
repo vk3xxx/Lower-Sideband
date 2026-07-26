@@ -191,6 +191,11 @@ public final class SidebandStore {
     private var pendingLinkTimeoutTokens: [String: UUID] = [:]
     private var deferredLinkRetryTokens: [String: UUID] = [:]
     private var activeLinks: [String: ReticulumLinkSession] = [:]
+    /// Outbound links are cryptographically active as soon as their proof is
+    /// validated, but LXMF delivery must wait until our fresh announce and
+    /// LINKIDENTIFY exchange have been handed to the transport.
+    private var activatingOutboundLinkIDs: Set<String> = []
+    private var deliveryReadyOutboundLinkIDs: Set<String> = []
     private var linkRemoteDestinations: [String: String] = [:]
     private var linkInterfaceIDs: [String: String] = [:]
     private enum ReceiptKind: Hashable { case direct, opportunistic, propagation }
@@ -2492,6 +2497,7 @@ public final class SidebandStore {
             return
         }
         guard outboundSession(to: normalized) == nil,
+              !activatingOutboundLinkIDs.contains(where: { linkRemoteDestinations[$0] == normalized }),
               !pendingLinks.values.contains(where: { $0.destinationHash == target }) else {
             return
         }
@@ -2539,6 +2545,7 @@ public final class SidebandStore {
 
     private func deferLinkRequest(to destinationHash: String) {
         guard outboundSession(to: destinationHash) == nil,
+              !activatingOutboundLinkIDs.contains(where: { linkRemoteDestinations[$0] == destinationHash }),
               !pendingLinks.values.contains(where: { $0.destinationHash.hex == destinationHash })
         else { return }
         let token = UUID()
@@ -2576,10 +2583,9 @@ public final class SidebandStore {
         guard pendingLinkTimeoutTokens[linkID] == token, pendingLinks.removeValue(forKey: linkID) != nil else { return }
         pendingLinkTimeoutTokens.removeValue(forKey: linkID)
         pendingLinkHashes.remove(destinationHash)
-        // A direct-link attempt can fail on public Reticulum routes even when
-        // ordinary opportunistic packets remain viable. Return small messages
-        // to the stock LXMF delivery method instead of waiting exclusively for
-        // another link that may follow the same broken route.
+        // A direct-link attempt can fail when a public route becomes stale.
+        // Refresh the path and negotiate a new authenticated link; stock LXMF
+        // keeps ordinary automatic delivery direct throughout this lifecycle.
         if UserDefaults.standard.string(forKey: "reticulumLastPendingLink") == linkID {
             UserDefaults.standard.removeObject(forKey: "reticulumLastPendingLink")
         }
@@ -2647,6 +2653,8 @@ public final class SidebandStore {
         pendingLinks.removeAll()
         pendingLinkTimeoutTokens.removeAll()
         activeLinks.removeAll()
+        activatingOutboundLinkIDs.removeAll()
+        deliveryReadyOutboundLinkIDs.removeAll()
         linkRemoteDestinations.removeAll()
         linkInterfaceIDs.removeAll()
         pendingLinkHashes.removeAll()
@@ -3348,6 +3356,7 @@ public final class SidebandStore {
         }
         if destination == propagationNodeHash { Task { await activateAndRequestPropagation(on: session) } }
         else if let conversation = conversations.first(where: { $0.destinationHash == destination }) {
+            activatingOutboundLinkIDs.insert(linkID)
             Task { await activateDirectLink(session, conversationID: conversation.id) }
         }
     }
@@ -3668,6 +3677,8 @@ public final class SidebandStore {
     private func removeLink(_ linkID: String) {
         let remote = linkRemoteDestinations.removeValue(forKey: linkID)
         activeLinks.removeValue(forKey: linkID)
+        activatingOutboundLinkIDs.remove(linkID)
+        deliveryReadyOutboundLinkIDs.remove(linkID)
         inboundLinkIDs.remove(linkID)
         inboundRemoteIdentities.removeValue(forKey: linkID)
         linkInterfaceIDs.removeValue(forKey: linkID)
@@ -3735,9 +3746,28 @@ public final class SidebandStore {
     /// initiating end of that link, so it must not replace our independently
     /// initiated outbound delivery channel.
     private func outboundSession(to destinationHash: String) -> ReticulumLinkSession? {
-        activeLinks.first {
-            !inboundLinkIDs.contains($0.key) && linkRemoteDestinations[$0.key] == destinationHash
-        }.map(\.value)
+        guard let linkID = Self.deliveryReadyOutboundLinkID(
+            destinationHash: destinationHash,
+            activeLinkIDs: Set(activeLinks.keys),
+            readyLinkIDs: deliveryReadyOutboundLinkIDs,
+            inboundLinkIDs: inboundLinkIDs,
+            remoteDestinations: linkRemoteDestinations
+        ) else { return nil }
+        return activeLinks[linkID]
+    }
+
+    static func deliveryReadyOutboundLinkID(
+        destinationHash: String,
+        activeLinkIDs: Set<String>,
+        readyLinkIDs: Set<String>,
+        inboundLinkIDs: Set<String>,
+        remoteDestinations: [String: String]
+    ) -> String? {
+        activeLinkIDs.sorted().first {
+            readyLinkIDs.contains($0)
+                && !inboundLinkIDs.contains($0)
+                && remoteDestinations[$0] == destinationHash
+        }
     }
 
     private func receiveOpportunisticPacket(_ packet: ReticulumPacket, interfaceID: String?) {
@@ -3905,10 +3935,24 @@ public final class SidebandStore {
             )
             try await identify(session)
             try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                activatingOutboundLinkIDs.remove(session.linkID.hex)
+                return
+            }
+            guard activeLinks[session.linkID.hex] != nil else { return }
+            activatingOutboundLinkIDs.remove(session.linkID.hex)
+            deliveryReadyOutboundLinkIDs.insert(session.linkID.hex)
             await attemptDelivery(for: conversationID)
             await sendKeepalive(on: session)
-        } catch { lastError = "Direct link activation failed: \(error.localizedDescription)" }
+        } catch {
+            activatingOutboundLinkIDs.remove(session.linkID.hex)
+            deliveryReadyOutboundLinkIDs.remove(session.linkID.hex)
+            lastError = "Direct link activation failed: \(error.localizedDescription)"
+            removeLink(session.linkID.hex)
+            if let conversation = conversations.first(where: { $0.id == conversationID }) {
+                deferLinkRequest(to: conversation.destinationHash)
+            }
+        }
     }
 
     private func prepareLocalIdentityForDirectDelivery() async -> Bool {
@@ -4294,7 +4338,7 @@ public final class SidebandStore {
         guard let destination = Data(hexadecimal: conversation.destinationHash),
               let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated }),
               let publicKey = discovery.publicKey,
-              let recipient = try? ReticulumIdentity(publicKey: publicKey) else {
+              (try? ReticulumIdentity(publicKey: publicKey)) != nil else {
             if !isPathPending(to: conversation.destinationHash) { await requestPath(to: conversation.destinationHash, surfaceErrors: false) }
             return
         }
@@ -4302,10 +4346,8 @@ public final class SidebandStore {
             if !isPathPending(to: conversation.destinationHash) {
                 await requestPath(to: conversation.destinationHash, surfaceErrors: false)
             }
-            // Stock LXMF defers opportunistic delivery until Reticulum has a
-            // route. Broadcasting an encrypted packet to every public
-            // boundary while a path request is pending cannot reach a
-            // multi-hop destination and only creates false proof timeouts.
+            // Direct LXMF delivery needs a validated Reticulum route before
+            // link negotiation can begin.
             return
         }
         let sourceNameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
@@ -4327,47 +4369,12 @@ public final class SidebandStore {
         // multi-hour drain. Four matches the bounded upstream LXMF router
         // window while attachments remain strictly serialised below.
         let maximumInFlightReceipts = 4
-        let inFlightForDestination = pendingReceipts.values.count { $0.destinationHash == conversation.destinationHash }
-        let availableReceiptSlots = max(0, maximumInFlightReceipts - inFlightForDestination)
-        // Follow stock LXMF delivery selection on every network type. Ordinary
-        // messages remain opportunistic across retries; a lost proof must not
-        // silently change their delivery method to an end-to-end link. Public
-        // transports often carry ordinary packets when a multi-hop link cannot
-        // remain stable. Attachments and oversized payloads still use the
-        // encrypted link/resource path below.
-        var requiresLink = !attachmentMessages.isEmpty
-        for item in Array(remainingQueued.prefix(availableReceiptSlots)) {
-            do {
-                let deliveryEpoch = deliveryConnectionEpoch
-                let lxmf = try LXMFMessage(destinationHash: destination, sourceHash: sourceHash, sourceIdentity: messagingIdentity, timestamp: item.timestamp.timeIntervalSince1970, content: Data(item.body.utf8), fields: lxmfFields(for: item), encodedFields: lxmfEncodedFields(for: item))
-                recordLXMFID(lxmf.messageID, for: item.id)
-                let raw = try lxmf.opportunisticPacket(recipientIdentity: recipient, ratchet: discovery.ratchet)
-                guard raw.count <= 500 else { requiresLink = true; continue }
-                let packetHash = try ReticulumPacket(raw: raw).packetHash.hex
-                pendingReceipts[packetHash] = PendingReceipt(messageID: item.id, kind: .opportunistic, destinationHash: conversation.destinationHash)
-                recordDeliveryAttempt(item.id, mode: .opportunistic)
-                // Match Reticulum's normal packet forwarding semantics: send
-                // over the single best validated route. Racing identical
-                // packets over several public transports can make the
-                // receiver deduplicate later copies after the first copy
-                // established proof return state on a stale path.
-                try await transmitDestinationPacket(raw, destinationHash: destination)
-                guard deliveryEpoch == deliveryConnectionEpoch else {
-                    removePendingReceipts(for: item.id)
-                    updateMessage(item.id, state: .queued)
-                    deliveryPassRerunRequested.insert(conversationID)
-                    continue
-                }
-                updateMessage(item.id, state: .sent)
-                await scheduleReceiptTimeout(packetHash)
-            } catch {
-                removePendingReceipts(for: item.id)
-                recordDeliveryFailure(item.id, reason: "Opportunistic send failed; rediscovering the route.")
-                pendingReceiptRetryKinds[conversation.destinationHash, default: []].insert(.opportunistic)
-                scheduleReceiptRetry(for: conversation.destinationHash)
-            }
-        }
-        guard requiresLink else { return }
+        // Match stock LXMF exactly: when no delivery method is explicitly
+        // requested, LXMessage selects DIRECT. Opportunistic delivery is an
+        // explicit opt-in in upstream LXMF and is not a reliable substitute
+        // for a direct link across multi-hop public routes. Keeping automatic
+        // messages on the authenticated link also gives every send the same
+        // proof and retry semantics as attachments.
         if outboundSession(to: conversation.destinationHash) == nil {
             if !pendingLinkHashes.contains(conversation.destinationHash) { await requestLink(to: conversation.destinationHash) }
             return
