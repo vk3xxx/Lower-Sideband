@@ -4309,7 +4309,13 @@ public final class SidebandStore {
            activeLinks.values.contains(where: { $0.destinationHash.hex == propagationNodeHash }) {
             await propagateQueued(for: conversationID)
         }
-        let remainingQueued = nextMessage.attachments.isEmpty ? [nextMessage] : []
+        // Supply the receipt window with consecutive text messages, stopping
+        // at the first attachment so no later packet can overtake a resource
+        // transfer. Previously this array contained only `nextMessage`, which
+        // silently reduced the four-receipt public window back to one.
+        let remainingQueued = nextMessage.attachments.isEmpty
+            ? Array(pending.prefix { $0.attachments.isEmpty })
+            : []
         // Keep a small proof window open on high-latency public routes. A
         // single receipt serialises an entire conversation behind the public
         // round-trip time and can turn a healthy 100-message queue into a
