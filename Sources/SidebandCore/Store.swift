@@ -4284,7 +4284,12 @@ public final class SidebandStore {
         let hasResourceInFlight = outgoingResources.values.contains { resource in
             messages.first(where: { $0.id == resource.messageID })?.conversationID == conversationID
         }
-        guard !hasReceiptInFlight, !hasResourceInFlight, let nextMessage = pending.first else { return }
+        guard let nextMessage = pending.first,
+              Self.deliveryPassCanAdvance(
+                  hasReceiptInFlight: hasReceiptInFlight,
+                  hasResourceInFlight: hasResourceInFlight,
+                  nextMessageHasAttachments: !nextMessage.attachments.isEmpty
+              ) else { return }
         let attachmentMessages = nextMessage.attachments.isEmpty ? [] : [nextMessage]
         guard let destination = Data(hexadecimal: conversation.destinationHash),
               let discovery = discoveries.first(where: { $0.destinationHash == conversation.destinationHash && $0.isValidated }),
@@ -5050,6 +5055,17 @@ public final class SidebandStore {
         // existing 30-second floor for normal Internet jitter and cap stale
         // routes so the durable outbox always makes progress.
         min(180, max(30, 6 + (Double(hops ?? 0) * 6)))
+    }
+
+    static func deliveryPassCanAdvance(
+        hasReceiptInFlight: Bool,
+        hasResourceInFlight: Bool,
+        nextMessageHasAttachments: Bool
+    ) -> Bool {
+        // Text receipts use a sliding bounded window. An attachment at the
+        // head of the queue waits for every earlier text proof, and no new
+        // delivery may start while a resource is already transferring.
+        !hasResourceInFlight && !(hasReceiptInFlight && nextMessageHasAttachments)
     }
 
     static func deliveryTrackingIsStale(lastAttemptAt: Date?, now: Date = .now) -> Bool {

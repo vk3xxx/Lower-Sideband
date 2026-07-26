@@ -2133,6 +2133,24 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(SidebandStore.deliveryTrackingIsStale(lastAttemptAt: nil, now: now))
 }
 
+@MainActor @Test func deliveryWindowSlidesForTextAndStopsBeforeAttachments() {
+    #expect(SidebandStore.deliveryPassCanAdvance(
+        hasReceiptInFlight: true,
+        hasResourceInFlight: false,
+        nextMessageHasAttachments: false
+    ))
+    #expect(!SidebandStore.deliveryPassCanAdvance(
+        hasReceiptInFlight: true,
+        hasResourceInFlight: false,
+        nextMessageHasAttachments: true
+    ))
+    #expect(!SidebandStore.deliveryPassCanAdvance(
+        hasReceiptInFlight: false,
+        hasResourceInFlight: true,
+        nextMessageHasAttachments: false
+    ))
+}
+
 @MainActor @Test func propagationDeliveryRemainsExplicitlyOptIn() {
     #expect(!SidebandStore.shouldUsePropagation(.automatic))
     #expect(SidebandStore.shouldUsePropagation(.propagationPreferred))
