@@ -18,6 +18,7 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 - Automatic local-first gateway discovery with public Internet fallback, IPv6 preference, and IPv4 fallback
 - Concurrent TCP, AutoInterface, RNode, serial, Bluetooth LE, Wi-Fi, and generic KISS interfaces
 - Native RNode configuration, diagnostics, beaconing, framebuffer, ROM inspection, signed firmware catalogues, and verified update packages
+- Standalone `ReticulumKit` framework with production-gated RNode TCP/KISS framing, configuration, telemetry, bounded flow control, and reconnect handling
 - Encrypted text, images, files, voice notes, voice calls, replies, reactions, and scheduled messages
 - Unified online/offline situation map, package validation, trails, and extended interoperable telemetry history
 - Contact fingerprints, QR/contact links, trust pinning, blocking, and user-reviewed safety reports
@@ -34,6 +35,11 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 | iPadOS | 17 | `SidebandIOS` | Adaptive split-view interface |
 
 The app is built with Swift 6 and SwiftUI. Runtime code uses Apple platform frameworks, the pinned `Ed25519` Swift package, and the official native Codec2 1.2.0 library. Python is used only by optional developer interoperability checks and is not included in application bundles.
+
+The RNode TCP host path is covered by deterministic protocol vectors, fuzzing,
+real Network.framework loopback tests, and a 2,500-packet flow-control soak.
+Physical RNode testing is still required before BLE, USB serial, radio, power,
+and firmware-update behaviour can be considered hardware-certified.
 
 ## Quick start
 

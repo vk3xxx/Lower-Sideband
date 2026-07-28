@@ -1,5 +1,6 @@
 import SwiftUI
 import SidebandCore
+import ReticulumKit
 
 struct RNodeEditorView: View {
     @State private var draft: RNodeConfiguration

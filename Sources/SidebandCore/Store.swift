@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import CryptoKit
+import ReticulumKit
 
 public enum NetworkConnectionMode: String, CaseIterable, Sendable {
     case automatic
@@ -420,7 +421,8 @@ public final class SidebandStore {
             lastError = "Secure Keychain data is temporarily unavailable. Lower Sideband will remain offline and will not read or overwrite encrypted data. Unlock the device and reopen the app."
         }
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receiveFromInterface(packet, interfaceID: "auto") }
-        rnodeManager.setHandlers { [weak self] interfaceID, packet in
+        rnodeManager.setHandlers { [weak self] interfaceID, raw in
+            guard let packet = try? ReticulumPacket(raw: raw) else { return }
             await self?.receiveFromInterface(packet, interfaceID: interfaceID)
         } state: { [weak self] in
             self?.refreshAggregateNetworkState()

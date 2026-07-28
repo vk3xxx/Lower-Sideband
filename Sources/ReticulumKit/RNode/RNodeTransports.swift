@@ -29,6 +29,7 @@ public actor RNodeTCPTransport: RNodeByteTransport {
     private var receiveHandler: (@Sendable (Data) async -> Void)?
     private var stateHandler: (@Sendable (RNodeByteTransportState) async -> Void)?
     private var isReady = false
+    private var generation = UUID()
 
     public init(host: String, port: UInt16 = 7_633) {
         self.host = NWEndpoint.Host(host)
@@ -39,6 +40,8 @@ public actor RNodeTCPTransport: RNodeByteTransport {
         guard connection == nil else { return }
         receiveHandler = receive
         stateHandler = state
+        generation = UUID()
+        let token = generation
         await state(.connecting)
         let options = NWProtocolTCP.Options()
         options.noDelay = true
@@ -48,11 +51,15 @@ public actor RNodeTCPTransport: RNodeByteTransport {
         options.connectionTimeout = 5
         let connection = NWConnection(host: host, port: port, using: NWParameters(tls: nil, tcp: options))
         self.connection = connection
-        connection.stateUpdateHandler = { [weak self] value in Task { await self?.update(value) } }
+        connection.stateUpdateHandler = { [weak self, weak connection] value in
+            guard let connection else { return }
+            Task { await self?.update(value, for: connection, generation: token) }
+        }
         connection.start(queue: queue)
     }
 
     public func stop() async {
+        generation = UUID()
         connection?.cancel()
         connection = nil
         isReady = false
@@ -69,15 +76,16 @@ public actor RNodeTCPTransport: RNodeByteTransport {
         }
     }
 
-    private func update(_ state: NWConnection.State) async {
+    private func update(_ state: NWConnection.State, for connection: NWConnection, generation expected: UUID) async {
+        guard generation == expected, self.connection === connection else { return }
         switch state {
         case .ready:
             isReady = true
             await stateHandler?(.ready)
-            if let connection { receiveNext(connection) }
+            receiveNext(connection, generation: expected)
         case .failed(let error):
             isReady = false
-            connection = nil
+            self.connection = nil
             await stateHandler?(.failed(error.localizedDescription))
         case .cancelled:
             isReady = false
@@ -86,22 +94,27 @@ public actor RNodeTCPTransport: RNodeByteTransport {
         }
     }
 
-    private func receiveNext(_ connection: NWConnection) {
+    private func receiveNext(_ connection: NWConnection, generation expected: UUID) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 32_768) { [weak self] data, _, complete, error in
             Task {
                 guard let self else { return }
+                guard await self.isCurrent(connection, generation: expected) else { return }
                 if let data, !data.isEmpty { await self.deliver(data) }
-                if let error { await self.update(.failed(error)) }
-                else if complete { await self.remoteClosed() }
-                else { await self.receiveNext(connection) }
+                if let error { await self.update(.failed(error), for: connection, generation: expected) }
+                else if complete { await self.remoteClosed(connection, generation: expected) }
+                else { await self.receiveNext(connection, generation: expected) }
             }
         }
     }
 
     private func deliver(_ data: Data) async { await receiveHandler?(data) }
-    private func remoteClosed() async {
+    private func isCurrent(_ connection: NWConnection, generation expected: UUID) -> Bool {
+        generation == expected && self.connection === connection
+    }
+    private func remoteClosed(_ connection: NWConnection, generation expected: UUID) async {
+        guard isCurrent(connection, generation: expected) else { return }
         isReady = false
-        connection = nil
+        self.connection = nil
         await stateHandler?(.failed("RNode closed the TCP connection."))
     }
 }
@@ -367,14 +380,32 @@ public actor SimulatedRNodeTransport: RNodeByteTransport {
     private var stateHandler: (@Sendable (RNodeByteTransportState) async -> Void)?
     private var started = false
     private var firmware: (UInt8, UInt8)
+    private var readyDenialsRemaining: Int
     private var framebuffer = Data(repeating: 0, count: 512)
     private var rom = Data((0..<256).map { UInt8($0) })
     public private(set) var transmittedPackets: [Data] = []
 
-    public init(loopbackPackets: Bool = true, responseChunkSize: Int = 7, firmware: (UInt8, UInt8) = (1, 80)) {
+    public init(
+        loopbackPackets: Bool = true,
+        responseChunkSize: Int = 7,
+        firmware: (UInt8, UInt8) = (1, 80)
+    ) {
         self.loopbackPackets = loopbackPackets
         self.responseChunkSize = max(1, responseChunkSize)
         self.firmware = firmware
+        readyDenialsRemaining = 0
+    }
+
+    public init(
+        loopbackPackets: Bool,
+        responseChunkSize: Int,
+        firmware: (UInt8, UInt8),
+        readyDenials: Int
+    ) {
+        self.loopbackPackets = loopbackPackets
+        self.responseChunkSize = max(1, responseChunkSize)
+        self.firmware = firmware
+        readyDenialsRemaining = max(0, readyDenials)
     }
 
     public func start(receive: @escaping @Sendable (Data) async -> Void, state: @escaping @Sendable (RNodeByteTransportState) async -> Void) async {
@@ -403,6 +434,13 @@ public actor SimulatedRNodeTransport: RNodeByteTransport {
             case .data:
                 transmittedPackets.append(frame.payload)
                 if loopbackPackets { await respond(.data, frame.payload) }
+            case .ready:
+                if readyDenialsRemaining > 0 {
+                    readyDenialsRemaining -= 1
+                    await respond(.ready, Data([0x00]))
+                } else {
+                    await respond(.ready, Data([0x01]))
+                }
             case .blink: await respond(.ready, Data([0x01]))
             case .externalFramebuffer: await respond(.externalFramebuffer, frame.payload)
             case .framebufferWrite where frame.payload.count == 9:

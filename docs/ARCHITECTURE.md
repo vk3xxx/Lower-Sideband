@@ -28,6 +28,10 @@ LXMF                                   Reticulum
 
 ## Targets
 
+### `ReticulumKit`
+
+`Sources/ReticulumKit` is a standalone Swift framework and Swift Package library for reusable Reticulum networking. Its first completed subsystem is the RNode host runtime: official KISS command framing, incremental stream decoding, radio configuration and telemetry, bounded `CMD_READY` flow control, lifecycle-safe Network.framework TCP, and shared transport contracts. It has no dependency on `SidebandCore` or Python.
+
 ### `SidebandCore`
 
 `Sources/SidebandCore` contains platform-neutral models and native protocol implementations:
@@ -37,7 +41,7 @@ LXMF                                   Reticulum
 - encrypted persistence, attachment storage, CloudKit merge models, notifications, and background coordination;
 - plugin manifests, permissions, service lifecycle, telemetry providers, execution limits, and audit records.
 
-The Xcode project creates separate iOS and macOS framework targets from the same source tree.
+The Xcode project creates separate iOS and macOS framework targets from the same source tree and links the platform-specific `ReticulumKit` framework.
 
 ### Shared SwiftUI application
 

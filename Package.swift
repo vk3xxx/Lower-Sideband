@@ -5,6 +5,7 @@ let package = Package(
     name: "SidebandSwift",
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
+        .library(name: "ReticulumKit", targets: ["ReticulumKit"]),
         .library(name: "SidebandCore", targets: ["SidebandCore"]),
         .executable(name: "SidebandMac", targets: ["SidebandMac"])
     ],
@@ -13,12 +14,14 @@ let package = Package(
     ],
     targets: [
         .binaryTarget(name: "CCodec2", path: "Vendor/Codec2.xcframework"),
+        .target(name: "ReticulumKit"),
         .target(
             name: "SidebandCore",
-            dependencies: ["CCodec2", .product(name: "Ed25519", package: "ed25519")],
+            dependencies: ["ReticulumKit", "CCodec2", .product(name: "Ed25519", package: "ed25519")],
             linkerSettings: [.linkedLibrary("sqlite3"), .linkedLibrary("bz2")]
         ),
         .executableTarget(name: "SidebandMac", dependencies: ["SidebandCore"]),
-        .testTarget(name: "SidebandCoreTests", dependencies: ["SidebandCore"])
+        .testTarget(name: "SidebandCoreTests", dependencies: ["SidebandCore"]),
+        .testTarget(name: "ReticulumKitTests", dependencies: ["ReticulumKit"])
     ]
 )

@@ -1,5 +1,6 @@
 import SwiftUI
 import SidebandCore
+import ReticulumKit
 
 #if os(macOS)
 import AppKit

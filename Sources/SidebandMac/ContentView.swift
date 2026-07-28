@@ -4,6 +4,7 @@ private extension Data {
     var sidebandHex: String { map { String(format: "%02x", $0) }.joined() }
 }
 import SidebandCore
+import ReticulumKit
 import UniformTypeIdentifiers
 import ImageIO
 import QuickLook

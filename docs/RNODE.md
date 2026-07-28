@@ -1,24 +1,32 @@
 # RNode and radio interfaces
 
-Lower Sideband can run Reticulum directly over compatible [RNode](https://unsigned.io/rnode/) hardware without a Python bridge.
+Lower Sideband can run Reticulum directly over compatible [RNode](https://unsigned.io/rnode/) hardware without a Python bridge. The host implementation is the first production subsystem in the standalone `ReticulumKit` Swift module.
 
 ## Supported transports
 
-- Bluetooth LE on macOS, iPhone, and iPad
-- Wi-Fi/TCP on macOS, iPhone, and iPad
-- USB serial on macOS
+- Wi-Fi/TCP on macOS, iPhone, and iPad — automated production acceptance complete
+- Bluetooth LE on macOS, iPhone, and iPad — implemented; physical-device acceptance pending
+- USB serial on macOS — implemented; physical-device acceptance pending
 - Deterministic simulated transport on developer builds/tests
 
 Multiple radio and IP interfaces can remain active concurrently so the path table can select independent routes.
 
 ## Protocol support
 
+The conformance baseline for this milestone is:
+
+- pinned Reticulum source `de0f399a1696895dcb95ad1efa19f3b21a7886ab`;
+- official RNode Firmware source `d39339f8f233324416e4e82a9d798c976d78aaea`;
+- firmware wire version 1.86, with the upstream minimum-compatible rule of 1.52.
+
 The native implementation includes:
 
-- upstream KISS framing and stream decoding;
+- the complete command-byte map from official RNode Firmware `Framing.h`;
+- upstream KISS framing and incremental decoding across arbitrary TCP chunks;
 - detection and reconnect handshakes;
 - frequency, bandwidth, spreading factor, coding rate, power, airtime, and flow-control configuration;
-- RSSI, SNR, battery, temperature, airtime, and channel-load metrics;
+- explicit `CMD_READY` radio-queue polling and a bounded 128-packet host queue;
+- RSSI, SNR, battery, temperature, airtime, channel-load, physical-modem, CSMA, lock, and randomness metrics;
 - station/callsign beacon scheduling;
 - 64 × 64 one-bit framebuffer writes and display snapshots;
 - ROM reads and board/platform/firmware metadata;
@@ -45,7 +53,7 @@ Network Status provides regional starting presets and advanced manual radio sett
 
 ## Testing without hardware
 
-Focused protocol and 100-packet simulated-radio tests:
+Focused protocol conformance, real local TCP socket, lifecycle, fuzz, and 2,500-packet simulated-radio tests:
 
 ```sh
 Scripts/test-rnode.sh protocol
@@ -59,13 +67,17 @@ Scripts/test-rnode.sh all
 
 ## Physical acceptance test
 
-1. Add or discover the RNode in Network Status.
+Physical-device validation is intentionally still required before the overall RNode implementation, BLE, or USB serial is described as certified. The automated milestone validates TCP/KISS host behavior, but it cannot prove RF hardware, antennas, power transitions, vendor bootloaders, BLE restoration, or serial-driver behavior.
+
+1. Connect a current official-firmware RNode over Wi-Fi/TCP and add it in Network Status.
 2. Confirm detection, firmware, platform, board, and radio metrics.
 3. Use **Blink** to verify the selected physical device.
 4. Confirm the intended radio configuration was accepted.
 5. Exchange packets with another compatible node and watch RX/TX counters.
 6. Test reconnect after radio power loss and application foreground/background transitions.
 7. Repeat with TCP/public interfaces active to confirm independent routes remain stable.
-8. For every supported board, flash a signed catalogue image, reboot, verify the reported version and run the 100-packet loopback.
+8. Run sustained bidirectional traffic through a second physical Reticulum node and verify packet ordering, no queue overflow, and recovery after Wi-Fi interruption.
+9. Repeat the acceptance matrix separately for BLE and macOS USB serial.
+10. For every supported board, flash a signed catalogue image, reboot, verify the reported version and repeat the traffic test.
 
 Hardware tests must not transmit outside authorised spectrum or power limits.

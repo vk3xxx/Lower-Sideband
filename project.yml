@@ -15,6 +15,33 @@ packages:
     url: https://github.com/AndrewBarba/ed25519.git
     from: 1.1.0
 targets:
+  ReticulumKit:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Sources/ReticulumKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.ReticulumKit
+        PRODUCT_MODULE_NAME: ReticulumKit
+        MARKETING_VERSION: 1.3.49
+        CURRENT_PROJECT_VERSION: 87
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+  ReticulumKitMac:
+    type: framework
+    platform: macOS
+    sources:
+      - path: Sources/ReticulumKit
+    settings:
+      base:
+        PRODUCT_NAME: ReticulumKit
+        PRODUCT_MODULE_NAME: ReticulumKit
+        PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.ReticulumKit.mac
+        MARKETING_VERSION: 1.3.49
+        CURRENT_PROJECT_VERSION: 87
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
   SidebandCore:
     type: framework
     platform: iOS
@@ -23,6 +50,7 @@ targets:
       - path: Support/PrivacyInfo.xcprivacy
         buildPhase: resources
     dependencies:
+      - target: ReticulumKit
       - package: Ed25519
       - framework: Vendor/Codec2.xcframework
       - sdk: libsqlite3.tbd
@@ -30,8 +58,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core
-        MARKETING_VERSION: 1.3.46
-        CURRENT_PROJECT_VERSION: 84
+        MARKETING_VERSION: 1.3.49
+        CURRENT_PROJECT_VERSION: 87
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandIOS:
@@ -44,12 +72,13 @@ targets:
         buildPhase: resources
     dependencies:
       - target: SidebandCore
+      - target: ReticulumKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Sideband
-        MARKETING_VERSION: 1.3.46
-        CURRENT_PROJECT_VERSION: 84
+        MARKETING_VERSION: 1.3.49
+        CURRENT_PROJECT_VERSION: 87
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-iOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -66,6 +95,7 @@ targets:
       - path: Support/PrivacyInfo.xcprivacy
         buildPhase: resources
     dependencies:
+      - target: ReticulumKitMac
       - package: Ed25519
       - framework: Vendor/Codec2.xcframework
       - sdk: libsqlite3.tbd
@@ -75,8 +105,8 @@ targets:
         PRODUCT_NAME: SidebandCore
         PRODUCT_MODULE_NAME: SidebandCore
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core.mac
-        MARKETING_VERSION: 1.3.46
-        CURRENT_PROJECT_VERSION: 84
+        MARKETING_VERSION: 1.3.49
+        CURRENT_PROJECT_VERSION: 87
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandMac:
@@ -89,12 +119,13 @@ targets:
         buildPhase: resources
     dependencies:
       - target: SidebandCoreMac
+      - target: ReticulumKitMac
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Lower Sideband
-        MARKETING_VERSION: 1.3.46
-        CURRENT_PROJECT_VERSION: 84
+        MARKETING_VERSION: 1.3.49
+        CURRENT_PROJECT_VERSION: 87
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-macOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

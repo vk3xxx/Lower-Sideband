@@ -33,9 +33,11 @@ public actor RNodeInterface {
     private var lastPacketAt: Date?
     private var lastError: String?
     private var pendingPackets: [Data] = []
+    private var awaitingRadioReady = false
     private var detectionTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var beaconTask: Task<Void, Never>?
+    private var readinessPollTask: Task<Void, Never>?
     private var generation = UUID()
     private var framebuffer: Data?
     private var displaySnapshot: Data?
@@ -64,6 +66,7 @@ public actor RNodeInterface {
             let currentGeneration = generation
             let transport = try transportFactory(configuration)
             self.transport = transport
+            awaitingRadioReady = false
             state = transport.kind == .bluetoothLE ? .searching : .connecting
             lastError = nil
             await publish()
@@ -81,12 +84,14 @@ public actor RNodeInterface {
         reconnectTask?.cancel(); reconnectTask = nil
         detectionTask?.cancel(); detectionTask = nil
         beaconTask?.cancel(); beaconTask = nil
+        readinessPollTask?.cancel(); readinessPollTask = nil
         generation = UUID()
         if state == .ready { try? await transport?.write(engine.leaveCommand()) }
         await transport?.stop()
         transport = nil
         state = .stopped
         pendingPackets.removeAll()
+        awaitingRadioReady = false
         await publish()
     }
 
@@ -97,11 +102,15 @@ public actor RNodeInterface {
     }
 
     public func send(rawPacket: Data) async throws {
-        guard state == .ready, let transport else {
+        guard state == .ready, transport != nil else {
             if pendingPackets.count < 128 { pendingPackets.append(rawPacket) }
             throw RNodeError.notConnected
         }
-        try await transport.write(try engine.packetFrame(rawPacket))
+        guard pendingPackets.count < 128 else {
+            throw RNodeError.transport("The RNode outbound queue is full.")
+        }
+        pendingPackets.append(rawPacket)
+        try await pumpOutboundQueue()
     }
 
     public func blink() async throws {
@@ -184,17 +193,24 @@ public actor RNodeInterface {
             switch event {
             case .packet(let raw):
                 lastPacketAt = .now
-                if let packet = try? ReticulumPacket(raw: raw) { await packetHandler(packet.raw) }
+                await packetHandler(raw)
             case .detected:
                 state = .configuring
                 await publish()
                 do { try await transport?.write(engine.configurationCommands(configuration)) }
                 catch { await fail(error.localizedDescription) }
-            case .ready: break
+            case .ready(let available):
+                if available {
+                    readinessPollTask?.cancel(); readinessPollTask = nil
+                    awaitingRadioReady = false
+                    do { try await pumpOutboundQueue() }
+                    catch { await fail(error.localizedDescription) }
+                } else {
+                    scheduleReadinessPoll()
+                }
             case .metrics(let metrics):
                 if let major = metrics.firmwareMajor, let minor = metrics.firmwareMinor,
-                   major < RNodeProtocolEngine.minimumFirmware.major ||
-                   (major == RNodeProtocolEngine.minimumFirmware.major && minor < RNodeProtocolEngine.minimumFirmware.minor) {
+                   !RNodeProtocolEngine.firmwareIsSupported(major: major, minor: minor) {
                     await fail(RNodeError.incompatibleFirmware(major, minor).localizedDescription)
                     return
                 }
@@ -215,15 +231,56 @@ public actor RNodeInterface {
     }
 
     private func flushQueue() async {
-        let queued = pendingPackets
-        pendingPackets.removeAll()
-        for packet in queued { try? await send(rawPacket: packet) }
+        do { try await pumpOutboundQueue() }
+        catch { await fail(error.localizedDescription) }
+    }
+
+    /// RNode firmware answers CMD_READY with its queue state. Polling after
+    /// each packet provides a one-packet transmit window without assuming the
+    /// firmware will emit unsolicited readiness notifications.
+    private func pumpOutboundQueue() async throws {
+        guard state == .ready, !awaitingRadioReady, let transport,
+              let packet = pendingPackets.first else { return }
+        let frame = try engine.packetFrame(packet)
+        pendingPackets.removeFirst()
+        do {
+            try await transport.write(frame)
+        } catch {
+            pendingPackets.insert(packet, at: 0)
+            throw error
+        }
+        awaitingRadioReady = true
+        do {
+            try await transport.write(engine.readyQueryCommand())
+        } catch {
+            awaitingRadioReady = false
+            throw error
+        }
+    }
+
+    private func scheduleReadinessPoll() {
+        guard readinessPollTask == nil else { return }
+        let token = generation
+        readinessPollTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            await self?.pollReadiness(generation: token)
+        }
+    }
+
+    private func pollReadiness(generation expected: UUID) async {
+        guard generation == expected, awaitingRadioReady, let transport else { return }
+        readinessPollTask = nil
+        do { try await transport.write(engine.readyQueryCommand()) }
+        catch { await fail(error.localizedDescription) }
     }
 
     private func fail(_ reason: String) async {
         detectionTask?.cancel(); detectionTask = nil
         beaconTask?.cancel(); beaconTask = nil
+        readinessPollTask?.cancel(); readinessPollTask = nil
         state = .failed(reason)
+        awaitingRadioReady = false
         lastError = reason
         await publish()
         guard configuration.enabled, configuration.automaticallyReconnects, reconnectTask == nil else { return }
@@ -257,9 +314,9 @@ public actor RNodeInterface {
     }
 
     private func transmitBeacon(_ payload: Data) async {
-        guard state == .ready, let transport else { return }
+        guard state == .ready else { return }
         do {
-            try await transport.write(try engine.packetFrame(payload))
+            try await send(rawPacket: payload)
             lastBeaconAt = .now
             await publish()
         } catch { lastError = error.localizedDescription; await publish() }
@@ -300,7 +357,7 @@ public final class RNodeManager {
     public private(set) var selfTestResult: String?
     public var automaticDiscoveryEnabled: Bool
     private var interfaces: [UUID: RNodeInterface] = [:]
-    private var packetHandler: (@Sendable (String, ReticulumPacket) async -> Void)?
+    private var packetHandler: (@Sendable (String, Data) async -> Void)?
     private var stateHandler: (@MainActor @Sendable () -> Void)?
     private let defaults: UserDefaults
     private let configurationsKey = "rnodeConfigurations"
@@ -321,7 +378,7 @@ public final class RNodeManager {
     public var readyInterfaceIDs: [UUID] { snapshots.filter { $0.state == .ready }.map(\.id) }
 
     public func setHandlers(
-        packet: @escaping @Sendable (String, ReticulumPacket) async -> Void,
+        packet: @escaping @Sendable (String, Data) async -> Void,
         state: @escaping @MainActor @Sendable () -> Void = {}
     ) {
         packetHandler = packet
@@ -425,8 +482,7 @@ public final class RNodeManager {
         guard interfaces[configuration.id] == nil else { return }
         let id = configuration.id
         let interface = RNodeInterface(configuration: configuration) { [weak self] raw in
-            guard let packet = try? ReticulumPacket(raw: raw) else { return }
-            await self?.packetHandler?("rnode:\(id.uuidString)", packet)
+            await self?.packetHandler?("rnode:\(id.uuidString)", raw)
         } snapshotHandler: { [weak self] snapshot in
             await self?.update(snapshot)
         }

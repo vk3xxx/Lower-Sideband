@@ -3,6 +3,7 @@ import CryptoKit
 import SQLite3
 import Testing
 @testable import SidebandCore
+@testable import ReticulumKit
 
 @Test func lxmfStampsTicketsAndStampedPayloadsAreInteroperable() async throws {
     let material = Data(repeating: 0x42, count: 32)

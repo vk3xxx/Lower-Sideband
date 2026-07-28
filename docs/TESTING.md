@@ -67,7 +67,7 @@ Scripts/test-rnode.sh apps
 Scripts/test-rnode.sh all
 ```
 
-The simulated transport supports handshake, fragmented streams, packet loopback, framebuffer/display/ROM behaviour, firmware metadata, and repeatable high-volume packet checks. Physical hardware acceptance remains necessary for BLE restoration, serial quirks, RF performance, and real firmware bootloaders.
+The dedicated `ReticulumKitTests` suite verifies every official RNode command byte, exhaustive KISS escaping, arbitrary TCP fragmentation, exact configuration vectors, firmware comparison, the 508-byte MTU, all reference telemetry, 10,000 deterministic fuzz cases, real local Network.framework TCP reconnects, radio-busy polling, and 2,500 flow-controlled packet loopbacks. Physical hardware acceptance remains necessary for RF performance, power-cycle behaviour, BLE restoration, serial quirks, and real firmware bootloaders.
 
 ## Delivery acceptance
 

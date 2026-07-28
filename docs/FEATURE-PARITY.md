@@ -35,9 +35,9 @@ The detailed upstream comparison and exact pinned versions are in
 | WebSocket server | — | Profile only | — | Not implemented |
 | HTTP tunnel client | macOS/iOS | URL override and portable profile | MeshChatX-compatible HDLC POST/poll tests | Complete |
 | HTTP tunnel server | — | Profile only | — | Not implemented |
-| RNode BLE | macOS/iOS | Yes | Protocol simulator and loopback | Complete |
-| RNode TCP/Wi-Fi | macOS/iOS | Yes | Protocol simulator and loopback | Complete |
-| RNode serial | macOS | Yes | Protocol simulator and loopback | Complete |
+| RNode BLE | macOS/iOS | Yes via ReticulumKit | Protocol conformance; physical device pending | Implemented, not hardware-certified |
+| RNode TCP/Wi-Fi | macOS/iOS | Yes via ReticulumKit | Official vectors, TCP lifecycle, 10k fuzz, 2.5k flow-control soak | Automated production gate complete |
+| RNode serial | macOS | Yes via ReticulumKit | Protocol conformance; physical device pending | Implemented, not hardware-certified |
 | RNodeMulti virtual ports | — | Profile only | Reference protocol audited | Not implemented |
 | Generic KISS / AX.25 KISS | macOS | Core API | Framing, commands and chunk tests | Complete core; advanced UI pending |
 | Pipe | macOS | Core API | Process lifecycle and HDLC tests | Complete core; settings UI pending |

@@ -8,8 +8,10 @@ MODE="${1:-all}"
 cd "$ROOT"
 
 run_protocol_tests() {
-    swift test --filter rnode
-    swift test --filter RNode
+    swift test --no-parallel --filter RNodeConformanceTests
+    swift test --no-parallel --filter RNodeTCPRuntimeTests
+    swift test --no-parallel --filter simulatedRNode
+    swift test --no-parallel --filter chunkedRNode
 }
 
 build_apps() {

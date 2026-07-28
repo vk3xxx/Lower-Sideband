@@ -18,9 +18,11 @@ public enum RNodeKISS {
         case radioState = 0x06
         case radioLock = 0x07
         case detect = 0x08
+        case implicit = 0x09
         case leave = 0x0A
         case shortTermAirtimeLock = 0x0B
         case longTermAirtimeLock = 0x0C
+        case promiscuous = 0x0E
         case ready = 0x0F
         case receivedBytes = 0x21
         case transmittedBytes = 0x22
@@ -61,8 +63,21 @@ public enum RNodeKISS {
         case displayRead = 0x66
         case displayRotation = 0x67
         case displayRecondition = 0x68
+        case displayInterfaceAccess = 0x69
+        case wifiMode = 0x6A
+        case wifiSSID = 0x6B
+        case wifiPSK = 0x6C
+        case configurationRead = 0x6D
+        case wifiChannel = 0x6E
         case bluetoothUnpair = 0x70
+        case log = 0x80
+        case time = 0x81
+        case muxChain = 0x82
+        case muxDiscover = 0x83
+        case wifiIP = 0x84
+        case wifiNetmask = 0x85
         case error = 0x90
+        case unknown = 0xFE
     }
 
     public static func frame(command: Command, payload: Data = Data()) -> Data {
@@ -240,6 +255,9 @@ public struct RNodeMetrics: Codable, Equatable, Sendable {
     public var spreadingFactor: UInt8?
     public var codingRate: UInt8?
     public var radioEnabled: Bool?
+    public var radioLocked: Bool?
+    public var shortTermAirtimeLimit: Double?
+    public var longTermAirtimeLimit: Double?
     public var firmwareMajor: UInt8?
     public var firmwareMinor: UInt8?
     public var platform: UInt8?
@@ -259,6 +277,16 @@ public struct RNodeMetrics: Codable, Equatable, Sendable {
     public var channelLoadLong: Double?
     public var noiseFloor: Int?
     public var interference: Int?
+    public var symbolTimeMilliseconds: Double?
+    public var symbolRate: UInt16?
+    public var preambleSymbols: UInt16?
+    public var preambleTimeMilliseconds: UInt16?
+    public var csmaSlotTimeMilliseconds: UInt16?
+    public var csmaDIFSMilliseconds: UInt16?
+    public var csmaContentionWindowBand: UInt8?
+    public var csmaContentionWindowMinimum: UInt8?
+    public var csmaContentionWindowMaximum: UInt8?
+    public var randomByte: UInt8?
     public var batteryState: RNodeBatteryState
     public var batteryPercent: UInt8?
     public var temperature: Int?
@@ -270,7 +298,7 @@ public struct RNodeMetrics: Codable, Equatable, Sendable {
 public enum RNodeEvent: Equatable, Sendable {
     case packet(Data)
     case detected
-    case ready
+    case ready(Bool)
     case metrics(RNodeMetrics)
     case framebuffer(Data)
     case display(Data)
@@ -317,6 +345,10 @@ public struct RNodeProtocolEngine: Sendable {
 
     public init() {}
 
+    public static func firmwareIsSupported(major: UInt8, minor: UInt8) -> Bool {
+        major > minimumFirmware.major || (major == minimumFirmware.major && minor >= minimumFirmware.minor)
+    }
+
     public mutating func consume(_ bytes: Data) -> [RNodeEvent] {
         decoder.consume(bytes).flatMap { interpret($0) }
     }
@@ -353,6 +385,7 @@ public struct RNodeProtocolEngine: Sendable {
     }
 
     public func leaveCommand() -> Data { RNodeKISS.frame(command: .leave, payload: Data([0xFF])) }
+    public func readyQueryCommand() -> Data { RNodeKISS.frame(command: .ready, payload: Data([0x01])) }
     public func blinkCommand() -> Data { RNodeKISS.frame(command: .blink, payload: Data([0x01])) }
     public func resetCommand() -> Data { RNodeKISS.frame(command: .reset, payload: Data([0xF8])) }
     public func firmwareUpdateCommand() -> Data { RNodeKISS.frame(command: .firmwareUpdate, payload: Data([0x01])) }
@@ -393,6 +426,11 @@ public struct RNodeProtocolEngine: Sendable {
         case .spreadingFactor: metrics.spreadingFactor = p.first
         case .codingRate: metrics.codingRate = p.first
         case .radioState: metrics.radioEnabled = p.first.map { $0 != 0 }
+        case .radioLock: metrics.radioLocked = p.first.map { $0 != 0 }
+        case .shortTermAirtimeLock where p.count >= 2:
+            metrics.shortTermAirtimeLimit = Double(uint16(p, 0)) / 100
+        case .longTermAirtimeLock where p.count >= 2:
+            metrics.longTermAirtimeLimit = Double(uint16(p, 0)) / 100
         case .firmwareVersion where p.count >= 2:
             metrics.firmwareMajor = p[0]; metrics.firmwareMinor = p[1]
         case .platform: metrics.platform = p.first
@@ -418,16 +456,28 @@ public struct RNodeProtocolEngine: Sendable {
             metrics.rssi = Int(p[8]) - Self.rssiOffset
             metrics.noiseFloor = Int(p[9]) - Self.rssiOffset
             metrics.interference = p[10] == 0xFF ? nil : Int(p[10]) - Self.rssiOffset
+        case .physicalMetrics where p.count >= 12:
+            metrics.symbolTimeMilliseconds = Double(uint16(p, 0)) / 1_000
+            metrics.symbolRate = uint16(p, 2)
+            metrics.preambleSymbols = uint16(p, 4)
+            metrics.preambleTimeMilliseconds = uint16(p, 6)
+            metrics.csmaSlotTimeMilliseconds = uint16(p, 8)
+            metrics.csmaDIFSMilliseconds = uint16(p, 10)
+        case .csma where p.count >= 3:
+            metrics.csmaContentionWindowBand = p[0]
+            metrics.csmaContentionWindowMinimum = p[1]
+            metrics.csmaContentionWindowMaximum = p[2]
         case .battery where p.count >= 2:
             metrics.batteryState = RNodeBatteryState(rawValue: p[0]) ?? .unknown
             metrics.batteryPercent = min(100, p[1])
         case .temperature where !p.isEmpty:
             let value = Int(p[0]) - 120
             metrics.temperature = (-30...90).contains(value) ? value : nil
+        case .random where !p.isEmpty: metrics.randomByte = p[0]
         case .framebufferRead where p.count == 512: events.append(.framebuffer(p))
         case .displayRead where p.count == 1024: events.append(.display(p))
         case .romRead where !p.isEmpty: events.append(.rom(p))
-        case .ready: events.append(.ready)
+        case .ready: events.append(.ready(p.first == 0x01))
         case .error where !p.isEmpty:
             events.append(.hardwareError(p[0], hardwareErrorDescription(p[0])))
         default: break
