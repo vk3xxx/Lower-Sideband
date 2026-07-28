@@ -14,6 +14,20 @@ public enum NetworkConnectionMode: String, CaseIterable, Sendable {
     }
 }
 
+public struct ConnectedRoute: Equatable, Sendable {
+    public let interfaceName: String
+    public let endpoint: String?
+    public let hops: UInt8
+    public let updatedAt: Date
+
+    public init(interfaceName: String, endpoint: String?, hops: UInt8, updatedAt: Date) {
+        self.interfaceName = interfaceName
+        self.endpoint = endpoint
+        self.hops = hops
+        self.updatedAt = updatedAt
+    }
+}
+
 public enum PaperMessageImportResult: Equatable, Sendable {
     case imported(conversationID: UUID)
     case duplicate
@@ -50,6 +64,7 @@ public final class SidebandStore {
     public private(set) var receivedPacketCount = 0
     public private(set) var discoveries: [DiscoveredDestination] = []
     public private(set) var knownPathHashes: Set<String> = []
+    public private(set) var connectedRoutes: [String: ConnectedRoute] = [:]
     public private(set) var pendingPathHashes: Set<String> = []
     public private(set) var pendingLinkHashes: Set<String> = []
     public private(set) var activeLinkHashes: Set<String> = []
@@ -2493,6 +2508,9 @@ public final class SidebandStore {
     }
 
     public func hasPath(to destinationHash: String) -> Bool { knownPathHashes.contains(destinationHash.lowercased()) }
+    public func connectedRoute(to destinationHash: String) -> ConnectedRoute? {
+        connectedRoutes[destinationHash.lowercased()]
+    }
     public func isPathPending(to destinationHash: String) -> Bool { pendingPathHashes.contains(destinationHash.lowercased()) }
     public var validatedDiscoveryCount: Int { discoveries.count(where: \.isValidated) }
     public func hasValidatedDiscovery(to destinationHash: String) -> Bool {
@@ -5302,6 +5320,45 @@ public final class SidebandStore {
         let paths = await pathTable.all()
         let currentPaths = Set(paths.map { $0.destinationHash.hex })
         if currentPaths != knownPathHashes { knownPathHashes = currentPaths }
+        var preferredPaths: [String: ReticulumPath] = [:]
+        for path in paths {
+            let hash = path.destinationHash.hex
+            guard let current = preferredPaths[hash] else {
+                preferredPaths[hash] = path
+                continue
+            }
+            if path.hops < current.hops || (path.hops == current.hops && path.updatedAt > current.updatedAt) {
+                preferredPaths[hash] = path
+            }
+        }
+        let routes = preferredPaths.mapValues { path in
+            let interfaceID = path.interfaceID
+            let tcpInterface = interfaceID.flatMap { id in networkInterfaces.first(where: { $0.id == id }) }
+            let rnodeInterface = interfaceID.flatMap { id in
+                rnodeManager.snapshots.first(where: { "rnode:\($0.id.uuidString)" == id })
+            }
+            let interfaceName: String
+            if let tcpInterface {
+                interfaceName = tcpInterface.name
+            } else if interfaceID == "auto" {
+                interfaceName = "AutoInterface"
+            } else if let rnodeInterface {
+                interfaceName = rnodeInterface.name
+            } else {
+                interfaceName = "Reticulum"
+            }
+            let endpoint = tcpInterface.flatMap { snapshot -> String? in
+                guard let host = snapshot.host else { return nil }
+                return snapshot.port.map { "\(host):\($0)" } ?? host
+            }
+            return ConnectedRoute(
+                interfaceName: interfaceName,
+                endpoint: endpoint,
+                hops: path.hops,
+                updatedAt: path.updatedAt
+            )
+        }
+        if routes != connectedRoutes { connectedRoutes = routes }
         let resolvedPending = pendingPathHashes.intersection(currentPaths)
         if !resolvedPending.isEmpty { pendingPathHashes.subtract(resolvedPending) }
     }

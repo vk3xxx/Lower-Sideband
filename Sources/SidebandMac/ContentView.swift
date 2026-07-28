@@ -2159,6 +2159,12 @@ private struct ConversationView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .accessibilityLabel("Routing status: \(routingStatus)")
                     .help(routingHelp)
+                Label(connectedRouteText, systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(connectedRouteHelp)
+                    .accessibilityLabel("Current route: \(connectedRouteHelp)")
                 }.padding()
             }
             Divider()
@@ -2611,12 +2617,17 @@ private struct ConversationView: View {
                         }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Label(routingStatus, systemImage: routingIcon)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .accessibilityLabel("Routing status: \(routingStatus)")
+                VStack(alignment: .trailing, spacing: 3) {
+                    Label(routingStatus, systemImage: routingIcon)
+                        .accessibilityLabel("Routing status: \(routingStatus)")
+                    Label(connectedRouteText, systemImage: "point.3.connected.trianglepath.dotted")
+                        .help(connectedRouteHelp)
+                        .accessibilityLabel("Current route: \(connectedRouteHelp)")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             }
 
             HStack(spacing: 12) {
@@ -3076,6 +3087,45 @@ private struct ConversationView: View {
         if store.isPathPending(to: conversation.destinationHash) { return "Reticulum is currently searching all active interfaces for a path to \(conversation.displayName)." }
         if store.hasPath(to: conversation.destinationHash) { return "A Reticulum route to \(conversation.displayName) is available; messages can be sent." }
         return store.networkState == .ready ? "The network is ready, but no route to \(conversation.displayName) is known yet." : "The app is connecting to Reticulum before it can find this contact."
+    }
+    private var connectedRouteText: String {
+        if let route = store.connectedRoute(to: conversation.destinationHash) {
+            let hopText = route.hops == 1 ? "1 hop" : "\(route.hops) hops"
+            return "Via \(route.interfaceName) · \(hopText)"
+        }
+        let readyInterfaces = store.networkInterfaces.filter { $0.state == .ready }
+        if readyInterfaces.count == 1, let interface = readyInterfaces.first {
+            return "Connected: \(interface.name)"
+        }
+        if readyInterfaces.count > 1 {
+            return "Connected: \(readyInterfaces.count) routes"
+        }
+        if store.autoInterfaceEnabled, !store.autoInterfaceDiscovery.peers.isEmpty {
+            return "Connected: AutoInterface"
+        }
+        if store.rnodeManager.hasReadyInterface {
+            return "Connected: RNode"
+        }
+        return store.networkState == .ready ? "Route pending" : "No active route"
+    }
+    private var connectedRouteHelp: String {
+        if let route = store.connectedRoute(to: conversation.destinationHash) {
+            let hopText = route.hops == 1 ? "1 Reticulum hop" : "\(route.hops) Reticulum hops"
+            let endpointText = route.endpoint.map { " at \($0)" } ?? ""
+            return "Messages to \(conversation.displayName) currently use \(route.interfaceName)\(endpointText), \(hopText)."
+        }
+        let readyInterfaces = store.networkInterfaces.filter { $0.state == .ready }
+        if !readyInterfaces.isEmpty {
+            let names = readyInterfaces.map(\.name).joined(separator: ", ")
+            return "Connected interfaces: \(names). A destination-specific route has not been discovered yet."
+        }
+        if store.autoInterfaceEnabled, !store.autoInterfaceDiscovery.peers.isEmpty {
+            return "Connected to nearby Reticulum peers through AutoInterface; a destination-specific route is pending."
+        }
+        if store.rnodeManager.hasReadyInterface {
+            return "Connected through an RNode radio; a destination-specific route is pending."
+        }
+        return "No Reticulum route is currently connected."
     }
     private var sendButtonHelp: String {
         if voiceRecorder.isRecording { return "Finish or cancel the voice recording before sending" }
