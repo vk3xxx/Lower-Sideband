@@ -4202,8 +4202,40 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     ])
 
     let filtered = NetworkMapFilter(query: "alice", maximumHops: 4, showOffline: false).apply(to: snapshot)
-    #expect(Set(filtered.nodes.map(\.id)) == ["local", "interface", "transport", "alice"])
-    #expect(filtered.edges.count == 3)
+    #expect(Set(filtered.nodes.filter { $0.kind != .unidentifiedRelay }.map(\.id)) == ["local", "interface", "transport", "alice"])
+    #expect(filtered.nodes.filter { $0.kind == .unidentifiedRelay }.count == 2)
+    #expect(filtered.nodes.contains {
+        $0.label == "Unidentified relay 2" &&
+        $0.detail.contains("identity not exposed by Reticulum")
+    })
+    #expect(filtered.nodes.contains { $0.label == "Unidentified relay 3" })
+    #expect(filtered.edges.count == 5)
+    #expect(!filtered.edges.contains { $0.sourceID == "transport" && $0.targetID == "alice" })
+    #expect(filtered.edges.contains {
+        $0.sourceID == "unidentified-relay:alice:3" && $0.targetID == "alice"
+    })
+
+    let distantSearch = NetworkMapFilter(
+        query: "bob",
+        maximumHops: 4,
+        showOffline: false
+    ).apply(to: snapshot)
+    #expect(distantSearch.nodes.contains { $0.id == "bob" })
+}
+
+@Test func networkMapFilteringDoesNotInventRelayIdentitiesForDirectPaths() {
+    let local = NetworkMapNode(id: "local", kind: .local, label: "Local")
+    let interface = NetworkMapNode(id: "interface", kind: .interface, label: "LAN")
+    let alice = NetworkMapNode(id: "alice", kind: .destination, label: "Alice", hops: 1)
+    let snapshot = NetworkMapSnapshot(nodes: [local, interface, alice], edges: [
+        .init(sourceID: "local", targetID: "interface", kind: .interface),
+        .init(sourceID: "interface", targetID: "alice", kind: .direct, hops: 1)
+    ])
+
+    let filtered = NetworkMapFilter(query: "alice", maximumHops: nil).apply(to: snapshot)
+    #expect(filtered.nodes.count == 3)
+    #expect(filtered.nodes.allSatisfy { $0.kind != .unidentifiedRelay })
+    #expect(filtered.edges.count == 2)
 }
 
 @Test func networkMapFilteringCanHideIndividualDestinationsWithoutHidingInfrastructure() {
@@ -4223,6 +4255,14 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(Set(filtered.nodes.map(\.id)) == ["local", "interface", "transport", "propagation"])
     #expect(!filtered.edges.contains { $0.sourceID == "alice" || $0.targetID == "alice" })
     #expect(filtered.edges.contains { $0.targetID == "propagation" })
+
+    let searched = NetworkMapFilter(
+        query: "alice",
+        maximumHops: nil,
+        showOffline: true,
+        showDestinations: false
+    ).apply(to: snapshot)
+    #expect(searched.nodes.contains { $0.id == "alice" })
 }
 
 @Test func networkMapLayoutIsDeterministicFiniteAndBoundedForLargeGraphs() {

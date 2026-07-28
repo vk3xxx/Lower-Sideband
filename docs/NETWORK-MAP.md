@@ -35,6 +35,11 @@ not attached to a fabricated route.
 ## Interaction
 
 - Search by display name, destination hash, route or interface.
+- Searching a multi-hop destination expands its observed route into the local
+  interface, known next-hop transport, every remaining hop position, and the
+  destination. Reticulum does not reveal the identities of intermediate
+  transports, so these positions are explicitly labelled **Unidentified
+  relay** instead of presenting guessed nodes as fact.
 - Limit the visible graph by hop count or show every observed hop count.
 - Include or hide unavailable historical destinations.
 - Enable five-second automatic refresh or refresh manually.

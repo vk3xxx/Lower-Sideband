@@ -45,7 +45,7 @@ struct NetworkMapView: View {
 
     private var selectedNode: NetworkMapNode? {
         guard let selectedNodeID else { return nil }
-        return snapshot.nodes.first { $0.id == selectedNodeID }
+        return filteredSnapshot.nodes.first { $0.id == selectedNodeID }
     }
 
     var body: some View {
@@ -59,7 +59,7 @@ struct NetworkMapView: View {
                     if let selectedNode {
                         nodeInspector(selectedNode, availableWidth: proxy.size.width)
                     }
-                    if let hoveredNode = hoveredNodeID.flatMap({ id in snapshot.nodes.first { $0.id == id } }),
+                    if let hoveredNode = hoveredNodeID.flatMap({ id in filteredSnapshot.nodes.first { $0.id == id } }),
                        selectedNodeID != hoveredNode.id {
                         hoverCard(hoveredNode)
                     }
@@ -146,9 +146,18 @@ struct NetworkMapView: View {
             }
         }
         .onChange(of: searchQuery) {
-            selectedNodeID = filteredSnapshot.nodes.first(where: {
-                $0.kind == .destination || $0.kind == .propagationNode || $0.kind == .transport
-            })?.id
+            let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if query.isEmpty {
+                selectedNodeID = nil
+            } else {
+                selectedNodeID = filteredSnapshot.nodes.first(where: { node in
+                    guard node.kind == .destination || node.kind == .propagationNode else { return false }
+                    return [node.label, node.detail, node.destinationHash ?? ""]
+                        .joined(separator: " ")
+                        .lowercased()
+                        .contains(query)
+                })?.id
+            }
         }
         .onChange(of: showDestinations) {
             clearHiddenSelection()
@@ -286,6 +295,18 @@ struct NetworkMapView: View {
                         TextField("Search nodes or destination IDs", text: $searchQuery)
                             .textFieldStyle(.roundedBorder)
 
+                        if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Label {
+                                Text("Reticulum reveals the next hop and total distance. Question-mark nodes are relay positions whose identities are not exposed.")
+                            } icon: {
+                                Image(systemName: "info.circle.fill")
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(9)
+                            .background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                        }
+
                         HStack(spacing: 8) {
                             metric(title: "Nodes", value: filteredSnapshot.nodes.count, color: .blue)
                             metric(title: "Links", value: filteredSnapshot.edges.count, color: .green)
@@ -369,6 +390,15 @@ struct NetworkMapView: View {
                     LabeledContent("Type", value: node.kind.displayName)
                     LabeledContent("State", value: node.status.displayName)
                     if let hops = node.hops { LabeledContent("Observed path", value: "\(hops) hop\(hops == 1 ? "" : "s")") }
+                    if (node.kind == .destination || node.kind == .propagationNode), let hops = node.hops {
+                        let unidentified = max(Int(hops) - 2, 0)
+                        if unidentified > 0 {
+                            LabeledContent(
+                                "Intermediate identities",
+                                value: "\(unidentified) not exposed by Reticulum"
+                            )
+                        }
+                    }
                     if !node.detail.isEmpty { LabeledContent("Route", value: node.detail) }
                     if node.packetCount > 0 { LabeledContent("Packets observed", value: "\(node.packetCount)") }
                     if let lastSeen = node.lastSeen {
@@ -547,6 +577,7 @@ private extension NetworkMapNode {
         case .local: .indigo
         case .interface: status == .online ? .green : (status == .connecting ? .orange : .red)
         case .transport: .teal
+        case .unidentifiedRelay: .gray
         case .destination: status == .offline ? .gray : .blue
         case .propagationNode: .purple
         }
@@ -557,6 +588,7 @@ private extension NetworkMapNode {
         case .local: "network"
         case .interface: "arrow.left.arrow.right"
         case .transport: "point.3.connected.trianglepath.dotted"
+        case .unidentifiedRelay: "questionmark"
         case .destination: "person.fill"
         case .propagationNode: "server.rack"
         }
@@ -569,6 +601,7 @@ private extension NetworkMapNode.Kind {
         case .local: "This Reticulum node"
         case .interface: "Network interface"
         case .transport: "Next-hop transport"
+        case .unidentifiedRelay: "Unidentified relay position"
         case .destination: "LXMF destination"
         case .propagationNode: "LXMF propagation node"
         }

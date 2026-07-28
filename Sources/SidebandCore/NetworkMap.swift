@@ -28,6 +28,7 @@ public struct NetworkMapNode: Identifiable, Equatable, Hashable, Sendable {
         case local
         case interface
         case transport
+        case unidentifiedRelay
         case destination
         case propagationNode
     }
@@ -277,7 +278,10 @@ public enum NetworkMapBuilder {
     }
 
     private static func nodeOrder(_ lhs: NetworkMapNode, _ rhs: NetworkMapNode) -> Bool {
-        let order: [NetworkMapNode.Kind: Int] = [.local: 0, .interface: 1, .transport: 2, .propagationNode: 3, .destination: 4]
+        let order: [NetworkMapNode.Kind: Int] = [
+            .local: 0, .interface: 1, .transport: 2, .unidentifiedRelay: 3,
+            .propagationNode: 4, .destination: 5
+        ]
         let left = order[lhs.kind, default: 9], right = order[rhs.kind, default: 9]
         if left != right { return left < right }
         return lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
@@ -305,9 +309,12 @@ public struct NetworkMapFilter: Equatable, Sendable {
     public func apply(to snapshot: NetworkMapSnapshot) -> NetworkMapSnapshot {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var retained = Set(snapshot.nodes.compactMap { node -> String? in
-            if !showDestinations && node.kind == .destination { return nil }
-            if !showOffline && node.status == .offline { return nil }
-            if let maximumHops, let hops = node.hops, hops > maximumHops { return nil }
+            // An explicit search is a deliberate request to reveal a matching
+            // destination even when the uncluttered infrastructure-only map is
+            // the user's normal preference.
+            if normalizedQuery.isEmpty && !showDestinations && node.kind == .destination { return nil }
+            if normalizedQuery.isEmpty && !showOffline && node.status == .offline { return nil }
+            if normalizedQuery.isEmpty, let maximumHops, let hops = node.hops, hops > maximumHops { return nil }
             if normalizedQuery.isEmpty {
                 return node.id
             } else {
@@ -330,6 +337,71 @@ public struct NetworkMapFilter: Equatable, Sendable {
         }
         let nodes = snapshot.nodes.filter { retained.contains($0.id) }
         let edges = snapshot.edges.filter { retained.contains($0.sourceID) && retained.contains($0.targetID) }
+        let filtered = NetworkMapSnapshot(nodes: nodes, edges: edges, generatedAt: snapshot.generatedAt)
+        return normalizedQuery.isEmpty
+            ? filtered
+            : expandedObservedPaths(in: filtered, matchingNodeIDs: retained)
+    }
+
+    /// Reticulum intentionally exposes only the next hop and total hop count,
+    /// not an ordered list of every transport identity. During search, make
+    /// those undisclosed positions visible without fabricating identities.
+    private func expandedObservedPaths(
+        in snapshot: NetworkMapSnapshot,
+        matchingNodeIDs: Set<String>
+    ) -> NetworkMapSnapshot {
+        var nodes = snapshot.nodes
+        var edges = snapshot.edges
+        let nodesByID = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+
+        for destination in snapshot.nodes where
+            matchingNodeIDs.contains(destination.id) &&
+            (destination.kind == .destination || destination.kind == .propagationNode)
+        {
+            guard
+                let routeEdgeIndex = edges.firstIndex(where: {
+                    $0.targetID == destination.id && $0.kind == .multiHop
+                }),
+                let source = nodesByID[edges[routeEdgeIndex].sourceID],
+                source.kind == .transport,
+                edges[routeEdgeIndex].hops > 2
+            else { continue }
+
+            let routeEdge = edges.remove(at: routeEdgeIndex)
+            let undisclosedCount = Int(routeEdge.hops) - 2
+            var previousID = routeEdge.sourceID
+
+            for index in 0..<undisclosedCount {
+                let hopNumber = index + 2
+                let relayID = "unidentified-relay:\(destination.id):\(hopNumber)"
+                nodes.append(NetworkMapNode(
+                    id: relayID,
+                    kind: .unidentifiedRelay,
+                    label: "Unidentified relay \(hopNumber)",
+                    detail: "Hop \(hopNumber) of \(routeEdge.hops) · identity not exposed by Reticulum",
+                    status: destination.status,
+                    hops: UInt8(hopNumber),
+                    lastSeen: routeEdge.lastSeen
+                ))
+                edges.append(.init(
+                    sourceID: previousID,
+                    targetID: relayID,
+                    kind: .multiHop,
+                    hops: routeEdge.hops,
+                    lastSeen: routeEdge.lastSeen
+                ))
+                previousID = relayID
+            }
+
+            edges.append(.init(
+                sourceID: previousID,
+                targetID: routeEdge.targetID,
+                kind: .multiHop,
+                hops: routeEdge.hops,
+                lastSeen: routeEdge.lastSeen
+            ))
+        }
+
         return .init(nodes: nodes, edges: edges, generatedAt: snapshot.generatedAt)
     }
 }
@@ -362,6 +434,23 @@ public enum NetworkMapLayout {
             result[transport.id] = polar(center: parent, radius: 0.19, angle: angle)
         }
 
+        // Searched multi-hop paths include explicit placeholders for relay
+        // positions whose identities Reticulum does not reveal. Lay them out
+        // sequentially from the known next hop.
+        let unidentifiedRelays = snapshot.nodes
+            .filter { $0.kind == .unidentifiedRelay }
+            .sorted {
+                if $0.hops != $1.hops { return ($0.hops ?? 0) < ($1.hops ?? 0) }
+                return $0.id < $1.id
+            }
+        for relay in unidentifiedRelays {
+            let parent = parentByTarget[relay.id].flatMap { result[$0] } ?? .init(x: 0.5, y: 0.5)
+            let angle = angleFromCenter(parent)
+            let totalHops = snapshot.edges.first(where: { $0.targetID == relay.id })?.hops ?? 2
+            let step = min(0.12, 0.42 / Double(max(Int(totalHops) - 1, 1)))
+            result[relay.id] = clamped(polar(center: parent, radius: step, angle: angle))
+        }
+
         let destinations = snapshot.nodes.filter { $0.kind == .destination || $0.kind == .propagationNode }
         let groups = Dictionary(grouping: destinations) { parentByTarget[$0.id] ?? local?.id ?? "" }
         for parentID in groups.keys.sorted() {
@@ -384,7 +473,12 @@ public enum NetworkMapLayout {
                         count: children.count,
                         width: min(2.2, 0.18 * Double(max(children.count - 1, 1)))
                     )
-                    radius = parentID.hasPrefix("transport:") ? 0.16 : 0.27
+                    if parentID.hasPrefix("unidentified-relay:") {
+                        let totalHops = snapshot.edges.first(where: { $0.targetID == child.id })?.hops ?? 2
+                        radius = min(0.12, 0.42 / Double(max(Int(totalHops) - 1, 1)))
+                    } else {
+                        radius = parentID.hasPrefix("transport:") ? 0.12 : 0.27
+                    }
                 }
                 result[child.id] = clamped(polar(center: parent, radius: radius, angle: angle))
             }

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.54 (92) - 2026-07-29
+
+- Expanded searched multi-hop destinations into a complete hop-position view:
+  local interface, known next-hop transport, unidentified relay positions and
+  the requested destination.
+- Clearly identify intermediate relay positions whose identities Reticulum
+  intentionally does not expose, instead of fabricating a traceroute.
+- Explicit searches now reveal matching distant, unavailable and individual
+  destinations regardless of the normal map decluttering filters.
+
 ## 1.3.53 (91) - 2026-07-29
 
 - Restored a genuinely full-window Network Map in the TestFlight iPhone/iPad
