@@ -1634,7 +1634,7 @@ private struct NetworkView: View {
                 TextField("Optional configured IPv6 gateway", text: $store.networkIPv6Host)
             }
             compactSetting("Internet override") {
-                TextField("Optional public IPv6 or DNS hostname", text: $store.networkInternetHost)
+                TextField("Optional TCP host, WebSocket or HTTP URL", text: $store.networkInternetHost)
             }
             compactSetting("Internet port") {
                 TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never))
@@ -1696,7 +1696,7 @@ private struct NetworkView: View {
             }
             GridRow { Text("Host"); TextField("Optional configured IPv4 or DNS hostname", text: $store.networkHost) }
             GridRow { Text("IPv6 host"); TextField("Optional configured IPv6 gateway", text: $store.networkIPv6Host) }
-            GridRow { Text("Internet override"); TextField("Optional public IPv6 or DNS hostname", text: $store.networkInternetHost) }
+            GridRow { Text("Internet override"); TextField("Optional TCP host, WebSocket or HTTP URL", text: $store.networkInternetHost) }
             GridRow { Text("Internet port"); TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never)) }
             GridRow { Text("Port"); TextField("4242", value: $store.networkPort, format: .number.grouping(.never)) }
             GridRow {
@@ -1791,7 +1791,7 @@ private struct NetworkView: View {
         case "Local name": "The display name included in your signed LXMF announce."
         case "Host": "Optional configured IPv4 address or DNS hostname. Automatic mode can discover local gateways without this."
         case "IPv6 host": "Optional configured IPv6 Reticulum gateway, preferred when IPv6 is available."
-        case "Internet override": "Optional public Reticulum gateway used before built-in public fallbacks."
+        case "Internet override": "Optional public Reticulum TCP host, WebSocket URL or HTTP tunnel URL used before built-in public fallbacks."
         case "Internet port", "Port": "TCP port used by the configured Reticulum server; port formatting never changes its numeric value."
         case "Connection mode": "Automatic discovers local interfaces first and then uses public fallbacks; Configured prioritises entered addresses."
         case "Addressing": "Prefer native IPv6 where reachable and fall back to IPv4 automatically."

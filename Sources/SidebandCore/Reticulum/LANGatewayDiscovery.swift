@@ -188,12 +188,23 @@ public enum PublicReticulumGateways {
         InternetGateway(name: "MobileFabrik", host: "phantom.mobilefabrik.com", port: 4_242)
     ]
 
-    public static func ordered(customHost: String?, customPort: Int, preferredID: String?, excluding attemptedIDs: Set<String> = [], health: [String: GatewayHealthRecord] = [:], now: Date = .now) -> [InternetGateway] {
+    public static func ordered(
+        customHost: String?,
+        customPort: Int,
+        preferredID: String?,
+        communityGateways: [InternetGateway] = [],
+        excluding attemptedIDs: Set<String> = [],
+        health: [String: GatewayHealthRecord] = [:],
+        now: Date = .now
+    ) -> [InternetGateway] {
         var gateways: [InternetGateway] = []
         let normalizedHost = customHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !normalizedHost.isEmpty, let port = UInt16(exactly: customPort), port > 0 {
             gateways.append(InternetGateway(name: "Configured internet gateway", host: normalizedHost, port: port))
         }
+        // MeshChatX selects three community nodes. Applying the same bound
+        // prevents malformed directory data from opening excessive sockets.
+        gateways.append(contentsOf: communityGateways.prefix(3))
         gateways.append(contentsOf: defaults)
         var seen: Set<String> = []
         let unique = gateways.filter { seen.insert($0.id).inserted && !attemptedIDs.contains($0.id) }

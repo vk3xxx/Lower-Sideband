@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		001100000000000000000001 /* CommunityInterfaceDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001100000000000000000101 /* CommunityInterfaceDirectory.swift */; };
+		001100000000000000000002 /* CommunityInterfaceDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001100000000000000000101 /* CommunityInterfaceDirectory.swift */; };
+		001100000000000000000003 /* ReticulumHTTPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001100000000000000000102 /* ReticulumHTTPInterface.swift */; };
+		001100000000000000000004 /* ReticulumHTTPInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001100000000000000000102 /* ReticulumHTTPInterface.swift */; };
+		001100000000000000000005 /* ReticulumInterfaceProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001100000000000000000103 /* ReticulumInterfaceProfile.swift */; };
+		001100000000000000000006 /* ReticulumInterfaceProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001100000000000000000103 /* ReticulumInterfaceProfile.swift */; };
+		001100000000000000000007 /* ReticulumWebSocketInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001100000000000000000104 /* ReticulumWebSocketInterface.swift */; };
+		001100000000000000000008 /* ReticulumWebSocketInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 001100000000000000000104 /* ReticulumWebSocketInterface.swift */; };
 		01E564776CA9E776B55ED75B /* ReticulumIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6461148AD48D9FFA18294BC5 /* ReticulumIdentity.swift */; };
 		026DAF6778C7172BBEB38D1D /* VoiceMessageAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59439F9438760DD48AD116BC /* VoiceMessageAudio.swift */; };
 		03301265781053B5497105C0 /* SidebandContactLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85FA0FB64246F9D480A6650 /* SidebandContactLink.swift */; };
@@ -230,6 +238,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		001100000000000000000101 /* CommunityInterfaceDirectory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommunityInterfaceDirectory.swift; sourceTree = "<group>"; };
+		001100000000000000000102 /* ReticulumHTTPInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumHTTPInterface.swift; sourceTree = "<group>"; };
+		001100000000000000000103 /* ReticulumInterfaceProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumInterfaceProfile.swift; sourceTree = "<group>"; };
+		001100000000000000000104 /* ReticulumWebSocketInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumWebSocketInterface.swift; sourceTree = "<group>"; };
 		0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumPathTable.swift; sourceTree = "<group>"; };
 		0B2BCD6E2070FCA732E1F07B /* ConversationExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationExport.swift; sourceTree = "<group>"; };
 		0DC0420D7057B71E2BD3E115 /* ReticulumResource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReticulumResource.swift; sourceTree = "<group>"; };
@@ -377,6 +389,7 @@
 			children = (
 				E5DF5C1B40489424F54A1262 /* AutoInterfaceDiscovery.swift */,
 				8E5686B7BC1932EC147437B7 /* BZip2.swift */,
+				001100000000000000000101 /* CommunityInterfaceDirectory.swift */,
 				6800FA947758CF319790C30A /* HDLC.swift */,
 				B289E47B824A1753E96BDBEA /* KISSModem.swift */,
 				2F13B8BEBEA5AFB84C7EA08E /* LANGatewayDiscovery.swift */,
@@ -388,6 +401,8 @@
 				AD7FABDE7A557094A4769F8D /* ReticulumInterface.swift */,
 				6F4AAB0397E43618F7B00EA0 /* ReticulumInterfaceDiscovery.swift */,
 				EC2818AF3B4BA06893305F90 /* ReticulumLink.swift */,
+				001100000000000000000102 /* ReticulumHTTPInterface.swift */,
+				001100000000000000000103 /* ReticulumInterfaceProfile.swift */,
 				725EA44E32E1C66EF4A45829 /* ReticulumPacket.swift */,
 				C93625631542290E7226AC8E /* ReticulumPathRequest.swift */,
 				0541CBDCE4DD630EEDF30A84 /* ReticulumPathTable.swift */,
@@ -405,6 +420,7 @@
 				F3263ACF1C1FB68CD178CAB2 /* ReticulumToken.swift */,
 				546846B355A27886CD8C4190 /* ReticulumTransportInstance.swift */,
 				DFBD9C012C8D0FDE911C5510 /* ReticulumTunnel.swift */,
+				001100000000000000000104 /* ReticulumWebSocketInterface.swift */,
 				1155E55F2BD49206A47EBF66 /* RNodeFirmwareCatalog.swift */,
 				29F06FE04204B350441EF617 /* RNodeHardwareSupport.swift */,
 				EF5D37E4ADF7D1606A72D2A8 /* RNodeInterface.swift */,
@@ -707,6 +723,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				001100000000000000000001 /* CommunityInterfaceDirectory.swift in Sources */,
 				046FAAE4F5A84EB7639357D2 /* AttachmentStore.swift in Sources */,
 				48EB119C7D1716383DA637A8 /* AutoInterfaceDiscovery.swift in Sources */,
 				97DF0B98AF03D989395DDBC8 /* BZip2.swift in Sources */,
@@ -749,6 +766,8 @@
 				ABB92F5EE86F97F500711D5D /* ReticulumAnnounceBuilder.swift in Sources */,
 				01E564776CA9E776B55ED75B /* ReticulumIdentity.swift in Sources */,
 				E5F714452E3668C34249E5A9 /* ReticulumInterface.swift in Sources */,
+				001100000000000000000003 /* ReticulumHTTPInterface.swift in Sources */,
+				001100000000000000000005 /* ReticulumInterfaceProfile.swift in Sources */,
 				BA2BD538FEDAF72815F69195 /* ReticulumInterfaceDiscovery.swift in Sources */,
 				9E76355F8F75B02C6F1CDE91 /* ReticulumLink.swift in Sources */,
 				59F1229EDE718AE45B3B46C3 /* ReticulumPacket.swift in Sources */,
@@ -768,6 +787,7 @@
 				E9D36E42A6F69176E3AC96C0 /* ReticulumToken.swift in Sources */,
 				DC0567E769164DAA1176748F /* ReticulumTransportInstance.swift in Sources */,
 				B31676CD7B03C14A3D71B4C9 /* ReticulumTunnel.swift in Sources */,
+				001100000000000000000007 /* ReticulumWebSocketInterface.swift in Sources */,
 				84CCB13F933A41272401A454 /* RichTextRenderer.swift in Sources */,
 				8A8D8FF5BE98ED1266B54F78 /* RuntimeHealth.swift in Sources */,
 				106CDA6E4EDEC8C4298FA6DF /* SecureIdentityStore.swift in Sources */,
@@ -816,6 +836,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				001100000000000000000002 /* CommunityInterfaceDirectory.swift in Sources */,
 				98C2C3D02CE6C20EDFA20EA6 /* AttachmentStore.swift in Sources */,
 				2C5914900748A5C63010085D /* AutoInterfaceDiscovery.swift in Sources */,
 				9BB8F51F27A73C6DB675FDD3 /* BZip2.swift in Sources */,
@@ -858,6 +879,8 @@
 				5D51EEAE800511140DAE506D /* ReticulumAnnounceBuilder.swift in Sources */,
 				546ACC976EBECA0507AB7E61 /* ReticulumIdentity.swift in Sources */,
 				835289D83CF313530F765C46 /* ReticulumInterface.swift in Sources */,
+				001100000000000000000004 /* ReticulumHTTPInterface.swift in Sources */,
+				001100000000000000000006 /* ReticulumInterfaceProfile.swift in Sources */,
 				87A9BD2E46DBF8A5543767B6 /* ReticulumInterfaceDiscovery.swift in Sources */,
 				DEB899191F6F97302FEDF1CF /* ReticulumLink.swift in Sources */,
 				CC91D3028934158569A65B56 /* ReticulumPacket.swift in Sources */,
@@ -877,6 +900,7 @@
 				F0D00FF1478FFB4A9AACB9DB /* ReticulumToken.swift in Sources */,
 				7D870237B0FEC695204B1D62 /* ReticulumTransportInstance.swift in Sources */,
 				358AD96A7FC9FB6A9EC12703 /* ReticulumTunnel.swift in Sources */,
+				001100000000000000000008 /* ReticulumWebSocketInterface.swift in Sources */,
 				0378FADF3D7BDC30B93DAB21 /* RichTextRenderer.swift in Sources */,
 				1F2D1A71448044D4DFD2E363 /* RuntimeHealth.swift in Sources */,
 				4C6D92567B29F2299CA5A83F /* SecureIdentityStore.swift in Sources */,
@@ -915,7 +939,7 @@
 				CODE_SIGN_ENTITLEMENTS = Support/Sideband.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 85;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Support/Sideband-macOS-Info.plist";
@@ -923,7 +947,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.3.46;
+				MARKETING_VERSION = 1.3.47;
 				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband;
 				PRODUCT_NAME = "Lower Sideband";
 				SDKROOT = macosx;
@@ -938,14 +962,14 @@
 				CODE_SIGN_ENTITLEMENTS = "Support/Sideband-iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 85;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Support/Sideband-iOS-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.46;
+				MARKETING_VERSION = 1.3.47;
 				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband;
 				PRODUCT_NAME = Sideband;
 				SDKROOT = iphoneos;
@@ -959,7 +983,7 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 85;
 				DEFINES_MODULE = YES;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
@@ -974,7 +998,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.3.46;
+				MARKETING_VERSION = 1.3.47;
 				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband.Core.mac;
 				PRODUCT_MODULE_NAME = SidebandCore;
 				PRODUCT_NAME = SidebandCore;
@@ -988,7 +1012,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 85;
 				DEFINES_MODULE = YES;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
@@ -1003,7 +1027,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.46;
+				MARKETING_VERSION = 1.3.47;
 				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband.Core;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -1020,7 +1044,7 @@
 				CODE_SIGN_ENTITLEMENTS = Support/Sideband.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 85;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Support/Sideband-macOS-Info.plist";
@@ -1028,7 +1052,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.3.46;
+				MARKETING_VERSION = 1.3.47;
 				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband;
 				PRODUCT_NAME = "Lower Sideband";
 				SDKROOT = macosx;
@@ -1039,7 +1063,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 85;
 				DEFINES_MODULE = YES;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
@@ -1054,7 +1078,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.46;
+				MARKETING_VERSION = 1.3.47;
 				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband.Core;
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -1128,14 +1152,14 @@
 				CODE_SIGN_ENTITLEMENTS = "Support/Sideband-iOS.entitlements";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 85;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Support/Sideband-iOS-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3.46;
+				MARKETING_VERSION = 1.3.47;
 				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband;
 				PRODUCT_NAME = Sideband;
 				SDKROOT = iphoneos;
@@ -1149,7 +1173,7 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "";
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 84;
+				CURRENT_PROJECT_VERSION = 85;
 				DEFINES_MODULE = YES;
 				DYLIB_COMPATIBILITY_VERSION = 1;
 				DYLIB_CURRENT_VERSION = 1;
@@ -1164,7 +1188,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.3.46;
+				MARKETING_VERSION = 1.3.47;
 				PRODUCT_BUNDLE_IDENTIFIER = com.supes.MacSideband.Core.mac;
 				PRODUCT_MODULE_NAME = SidebandCore;
 				PRODUCT_NAME = SidebandCore;

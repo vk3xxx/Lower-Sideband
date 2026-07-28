@@ -391,7 +391,7 @@ struct SidebandSettingsView: View {
             }
 
             Section {
-                SettingsTextFieldRow(title: "Preferred host", prompt: "Optional public IPv6 or hostname", text: $store.networkInternetHost)
+                SettingsTextFieldRow(title: "Preferred interface", prompt: "TCP host, WebSocket or HTTP URL", text: $store.networkInternetHost)
                 LabeledContent("Port") {
                     TextField("4242", value: $store.networkInternetPort, format: .number.grouping(.never))
                         .labelsHidden()

@@ -25,6 +25,116 @@ import Testing
     #expect(received.validate(with: source))
 }
 
+@Test func reticulumInterfaceProfilesValidateMeshChatTransportRequirements() throws {
+    let websocket = ReticulumInterfaceProfile(
+        name: "WebSocket",
+        kind: .webSocketClient,
+        url: URL(string: "wss://example.net/rns")
+    )
+    #expect(try websocket.validated() == websocket)
+
+    let http = ReticulumInterfaceProfile(
+        name: "HTTP/2 tunnel",
+        kind: .httpClient,
+        url: URL(string: "https://example.net/"),
+        fixedMTU: 4_096,
+        pollInterval: 0.1
+    )
+    #expect(try http.validated() == http)
+
+    let invalidWebSocket = ReticulumInterfaceProfile(
+        name: "Wrong scheme",
+        kind: .webSocketClient,
+        url: URL(string: "https://example.net/")
+    )
+    #expect(throws: ReticulumInterfaceProfile.ValidationError.invalidURL) {
+        try invalidWebSocket.validated()
+    }
+
+    let missingSerialDevice = ReticulumInterfaceProfile(name: "KISS", kind: .kiss)
+    #expect(throws: ReticulumInterfaceProfile.ValidationError.missingDevice) {
+        try missingSerialDevice.validated()
+    }
+}
+
+@Test func reticulumInterfacePreflightFindsSharedTCPListenerPorts() {
+    let tcp = ReticulumInterfaceProfile(name: "TCP", kind: .tcpServer, port: 4_242)
+    let websocket = ReticulumInterfaceProfile(name: "WebSocket", kind: .webSocketServer, port: 4_242)
+    let udp = ReticulumInterfaceProfile(name: "UDP", kind: .udp, port: 4_242)
+    let conflicts = ReticulumInterfacePreflight.conflictingProfileIDs(in: [tcp, websocket, udp])
+    #expect(conflicts == Set([tcp.id, websocket.id]))
+}
+
+@Test func reticulumHTTPInterfaceRejectsInvalidURLsWithoutStarting() async {
+    let interface = ReticulumHTTPInterface(url: URL(string: "ftp://example.net/rns")!) { _ in }
+    await interface.start()
+    let state = await interface.state
+    guard case .failed = state else {
+        Issue.record("Expected an invalid HTTP URL to fail")
+        return
+    }
+}
+
+@Test func reticulumWebSocketInterfaceRejectsInvalidURLsWithoutStarting() async {
+    let interface = ReticulumWebSocketInterface(url: URL(string: "https://example.net/rns")!) { _ in }
+    await interface.start()
+    let state = await interface.state
+    guard case .failed = state else {
+        Issue.record("Expected an invalid WebSocket URL to fail")
+        return
+    }
+}
+
+@Test func communityDirectoryParsesOnlySafeTCPInterfacesAndDeduplicates() {
+    let rows: [Any] = [
+        ["name": "Good TCP", "type": "TCPClientInterface", "host": "rns.example.net", "port": 4242],
+        ["name": "Duplicate", "typeName": "BackboneInterface", "address": "rns.example.net", "port": "4242"],
+        ["name": "Disabled", "type": "TCPClientInterface", "host": "off.example", "port": 4242, "enabled": false],
+        ["name": "RNode", "type": "RNodeInterface", "host": "radio.example", "port": 4242],
+        ["name": "Unsafe", "type": "TCPClientInterface", "host": "example.net/path", "port": 4242],
+        ["name": "Nested", "config": ["type": "TCPClientInterface", "target_host": "nested.example", "target_port": 7822]],
+        ["name": "Config text", "type": "tcp", "port": 4242, "config": "type = TCPClientInterface\ntarget_host = text.example"],
+        ["name": "Authenticated Backbone", "type": "backbone", "host": "backbone.example", "port": 4242, "transportId": "0123456789abcdef"]
+    ]
+    let gateways = CommunityInterfaceDirectory.parseGateways(from: rows)
+    #expect(gateways.count == 3)
+    #expect(gateways[0].id == "rns.example.net:4242")
+    #expect(gateways[1].id == "nested.example:7822")
+    #expect(gateways[2].id == "text.example:4242")
+}
+
+@MainActor @Test func configuredInternetOverrideSelectsTCPWebSocketAndHTTPTransports() throws {
+    let tcp = try #require(SidebandStore.networkPoolEndpoint(
+        for: InternetGateway(name: "TCP", host: "rns.example.net", port: 4_242),
+        isBootstrap: true
+    ))
+    if case .tcp = tcp.transport {} else {
+        Issue.record("Expected a TCP transport")
+    }
+
+    let websocket = try #require(SidebandStore.networkPoolEndpoint(
+        for: InternetGateway(name: "WebSocket", host: "wss://rns.example.net/ws", port: 4_242),
+        isBootstrap: true
+    ))
+    if case let .webSocket(url) = websocket.transport {
+        #expect(url.absoluteString == "wss://rns.example.net/ws")
+    } else {
+        Issue.record("Expected a WebSocket transport")
+    }
+
+    let http = try #require(SidebandStore.networkPoolEndpoint(
+        for: InternetGateway(name: "HTTP", host: "https://rns.example.net/tunnel", port: 4_242),
+        isBootstrap: true
+    ))
+    if case let .http(url, pollInterval, mtu) = http.transport {
+        #expect(url.absoluteString == "https://rns.example.net/tunnel")
+        #expect(pollInterval == 0.1)
+        #expect(mtu == 4_096)
+    } else {
+        Issue.record("Expected an HTTP transport")
+    }
+}
+
 @Test func destinationRatchetsRotateAdvertiseAndDecrypt() throws {
     let identity = ReticulumIdentity()
     var ratchets = ReticulumRatchetState(retentionCount: 2, rotationInterval: 60, now: Date(timeIntervalSince1970: 0))

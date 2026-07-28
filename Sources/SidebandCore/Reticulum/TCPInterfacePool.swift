@@ -9,9 +9,15 @@ import Network
 /// discover and use paths on every healthy entrypoint concurrently.
 public actor ReticulumTCPInterfacePool {
     public struct Endpoint: Identifiable, @unchecked Sendable {
+        public enum Transport: @unchecked Sendable {
+            case tcp(NWEndpoint)
+            case webSocket(URL)
+            case http(URL, pollInterval: TimeInterval, mtu: Int)
+        }
+
         public let id: String
         public let name: String
-        public let endpoint: NWEndpoint
+        public let transport: Transport
         public let host: String?
         public let port: UInt16?
         public let isBootstrap: Bool
@@ -21,7 +27,7 @@ public actor ReticulumTCPInterfacePool {
         public init(id: String, name: String, host: String, port: UInt16, isBootstrap: Bool = false, interfaceMode: ReticulumInterfaceMode = .full, ifac: ReticulumIFAC? = nil) {
             self.id = id
             self.name = name
-            self.endpoint = .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
+            transport = .tcp(.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!))
             self.host = host
             self.port = port
             self.isBootstrap = isBootstrap
@@ -32,7 +38,7 @@ public actor ReticulumTCPInterfacePool {
         public init(id: String, name: String, endpoint: NWEndpoint, isBootstrap: Bool = false, interfaceMode: ReticulumInterfaceMode = .full, ifac: ReticulumIFAC? = nil) {
             self.id = id
             self.name = name
-            self.endpoint = endpoint
+            transport = .tcp(endpoint)
             if case let .hostPort(host, port) = endpoint {
                 self.host = "\(host)"
                 self.port = port.rawValue
@@ -40,6 +46,28 @@ public actor ReticulumTCPInterfacePool {
                 self.host = nil
                 self.port = nil
             }
+            self.isBootstrap = isBootstrap
+            self.interfaceMode = interfaceMode
+            self.ifac = ifac
+        }
+
+        public init(id: String, name: String, webSocketURL: URL, isBootstrap: Bool = false, interfaceMode: ReticulumInterfaceMode = .full, ifac: ReticulumIFAC? = nil) {
+            self.id = id
+            self.name = name
+            transport = .webSocket(webSocketURL)
+            host = webSocketURL.host
+            port = webSocketURL.port.flatMap(UInt16.init(exactly:))
+            self.isBootstrap = isBootstrap
+            self.interfaceMode = interfaceMode
+            self.ifac = ifac
+        }
+
+        public init(id: String, name: String, httpURL: URL, pollInterval: TimeInterval = 0.1, mtu: Int = ReticulumHTTPInterface.defaultMTU, isBootstrap: Bool = false, interfaceMode: ReticulumInterfaceMode = .full, ifac: ReticulumIFAC? = nil) {
+            self.id = id
+            self.name = name
+            transport = .http(httpURL, pollInterval: pollInterval, mtu: mtu)
+            host = httpURL.host
+            port = httpURL.port.flatMap(UInt16.init(exactly:))
             self.isBootstrap = isBootstrap
             self.interfaceMode = interfaceMode
             self.ifac = ifac
@@ -61,12 +89,45 @@ public actor ReticulumTCPInterfacePool {
 
     private struct Entry {
         let endpoint: Endpoint
-        let interface: ReticulumTCPInterface
+        let interface: InterfaceDriver
         var state: ReticulumTCPInterface.State = .stopped
         var connectedAt: Date?
         var lastPacketAt: Date?
         var reconnectAttempt = 0
         var reconnectToken: UUID?
+    }
+
+    private enum InterfaceDriver {
+        case tcp(ReticulumTCPInterface)
+        case webSocket(ReticulumWebSocketInterface)
+        case http(ReticulumHTTPInterface)
+
+        func start() async {
+            switch self {
+            case let .tcp(interface): await interface.start()
+            case let .webSocket(interface): await interface.start()
+            case let .http(interface): await interface.start()
+            }
+        }
+
+        func stop() async {
+            switch self {
+            case let .tcp(interface): await interface.stop()
+            case let .webSocket(interface): await interface.stop()
+            case let .http(interface): await interface.stop()
+            }
+        }
+
+        func send(rawPacket: Data) async throws {
+            switch self {
+            case let .tcp(interface):
+                try await interface.send(rawPacket: rawPacket)
+            case let .webSocket(interface):
+                try await interface.send(rawPacket: rawPacket)
+            case let .http(interface):
+                try await interface.send(rawPacket: rawPacket)
+            }
+        }
     }
 
     private var entries: [String: Entry] = [:]
@@ -188,12 +249,46 @@ public actor ReticulumTCPInterfacePool {
     }
 
     private func insert(_ endpoint: Endpoint) {
-        let interface = ReticulumTCPInterface(endpoint: endpoint.endpoint, ifac: endpoint.ifac) { [weak self] packet in
-            await self?.received(packet, on: endpoint.id)
-        } stateHandler: { [weak self] state in
-            await self?.stateChanged(state, on: endpoint.id)
+        let interface: InterfaceDriver
+        switch endpoint.transport {
+        case let .tcp(networkEndpoint):
+            interface = .tcp(ReticulumTCPInterface(endpoint: networkEndpoint, ifac: endpoint.ifac) { [weak self] packet in
+                await self?.received(packet, on: endpoint.id)
+            } stateHandler: { [weak self] state in
+                await self?.stateChanged(state, on: endpoint.id)
+            })
+        case let .webSocket(url):
+            interface = .webSocket(ReticulumWebSocketInterface(url: url, ifac: endpoint.ifac) { [weak self] packet in
+                await self?.received(packet, on: endpoint.id)
+            } stateHandler: { [weak self] state in
+                await self?.stateChanged(Self.poolState(state), on: endpoint.id)
+            })
+        case let .http(url, pollInterval, mtu):
+            interface = .http(ReticulumHTTPInterface(url: url, pollInterval: pollInterval, mtu: mtu, ifac: endpoint.ifac) { [weak self] packet in
+                await self?.received(packet, on: endpoint.id)
+            } stateHandler: { [weak self] state in
+                await self?.stateChanged(Self.poolState(state), on: endpoint.id)
+            })
         }
         entries[endpoint.id] = Entry(endpoint: endpoint, interface: interface, state: .connecting)
+    }
+
+    private static func poolState(_ state: ReticulumWebSocketInterface.State) -> ReticulumTCPInterface.State {
+        switch state {
+        case .stopped: .stopped
+        case .connecting: .connecting
+        case .ready: .ready
+        case let .failed(reason): .failed(reason)
+        }
+    }
+
+    private static func poolState(_ state: ReticulumHTTPInterface.State) -> ReticulumTCPInterface.State {
+        switch state {
+        case .stopped: .stopped
+        case .connecting: .connecting
+        case .ready: .ready
+        case let .failed(reason): .failed(reason)
+        }
     }
 
     private func publishState(force: Bool = false) async {

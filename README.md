@@ -70,6 +70,7 @@ Scripts/test-rnode.sh protocol
 - [Testing and interoperability](docs/TESTING.md)
 - [Porting status and known gaps](PORTING.md)
 - [Native feature parity](docs/FEATURE-PARITY.md)
+- [Pinned Sideband / MeshChatX transport audit](docs/UPSTREAM-PARITY-AUDIT-2026-07-28.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Privacy policy](PRIVACY.md)
 - [Support](SUPPORT.md)

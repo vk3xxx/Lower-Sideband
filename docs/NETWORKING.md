@@ -13,7 +13,8 @@ Automatic mode is the default on macOS, iOS, and iPadOS:
    - `_rns._tcp`
    - `_sideband._tcp`
 4. Authenticated Reticulum interface-discovery announces
-5. Built-in public bootstrap endpoints and an optional public override
+5. Validated community directory endpoints, then built-in public bootstrap
+   endpoints and an optional public override
 
 IPv6 is preferred when available and IPv4 remains a fallback. Hostname resolution is delegated to Network.framework; the application does not alter system DNS configuration.
 
@@ -35,13 +36,21 @@ Reticulum is delay tolerant. Offline destinations, expired paths, radio duty-cyc
 | Interface | macOS | iOS/iPadOS | Purpose |
 | --- | :---: | :---: | --- |
 | TCP client | Yes | Yes | Local or Internet Reticulum gateway |
+| WebSocket client | Yes | Yes | Raw Reticulum packets over `ws`/`wss` |
+| HTTP tunnel client | Yes | Yes | HDLC packets over HTTP POST/poll |
 | Bonjour discovery | Yes | Yes | Local TCP gateway discovery |
 | AutoInterface | Yes | Limited | Authenticated local multicast/UDP peers |
 | RNode Bluetooth LE | Yes | Yes | Direct LoRa radio |
 | RNode Wi-Fi/TCP | Yes | Yes | Network-connected RNode |
 | USB serial RNode | Yes | No | Direct macOS serial radio |
 | Generic serial/KISS | Yes | No | Compatible modem interfaces |
+| UDP client | Yes | Yes | Datagram interface with optional IFAC |
+| Pipe | Yes | No | External packet process |
 | Transport Instance | Yes | No | Forward routes between active Mac interfaces |
+
+I2P, Backbone identity semantics, RNodeMulti virtual ports, Weave runtime,
+WebSocket server and HTTP tunnel server are tracked gaps, not silently mapped
+to ordinary TCP.
 
 Physical iOS multicast behaviour requires Apple's restricted multicast entitlement. The distributed app does not claim unsupported entitlement access.
 
@@ -51,7 +60,12 @@ Reticulum interface modes control forwarding boundaries between access, gateway,
 
 ## Public infrastructure
 
-Public endpoints are bootstrap infrastructure, not a central account service. Availability and policy are controlled by their independent operators. The app maintains endpoint health, cooldown, and latency history, but no public endpoint is guaranteed.
+Public endpoints are bootstrap infrastructure, not a central account service.
+Lower Sideband can read the same submitted/discovered community directory used
+by MeshChatX. Directory results are constrained to the expected HTTPS service,
+validated, deduplicated and limited to three live candidates. Known endpoints
+remain as fallback. Availability and policy are controlled by independent
+operators, and no public endpoint is guaranteed.
 
 For reliable mobile operation, propagation nodes provide store-and-forward delivery while iOS is suspended. Silent APNs wake hints can improve sync latency but still require an operator-controlled APNs provider and remain subject to Apple's scheduling.
 

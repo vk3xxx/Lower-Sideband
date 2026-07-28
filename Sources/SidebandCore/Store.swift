@@ -247,6 +247,7 @@ public final class SidebandStore {
     private var attemptedGatewayIDs: Set<String> = []
     private var attemptedConfiguredGatewayIDs: Set<String> = []
     private var attemptedInternetGatewayIDs: Set<String> = []
+    private var didRefreshCommunityGateways = false
     private var observedLANDiscoveryGrace = false
     private var activeGatewayID: String?
     private var activeInternetGatewayID: String?
@@ -254,12 +255,14 @@ public final class SidebandStore {
     private var preferredGatewayID: String?
     private var preferredInternetGatewayID: String?
     public private(set) var gatewayHealth: [String: GatewayHealthRecord] = [:]
+    public private(set) var communityInternetGateways: [InternetGateway] = []
     private var networkConnectionStartedAt: Date?
     private var deferredPathRequests: Set<String> = []
     private var answeredLocalPathRequestTags: [Data: Date] = [:]
     private var intentionallyDisconnected = false
     private var reconnectAttempt = 0
     private let transportIdentity: ReticulumIdentity
+    @ObservationIgnored private let communityInterfaceDirectory = CommunityInterfaceDirectory()
     private let tcpInterfaceHash: Data
     private var messagingIdentity: ReticulumIdentity
     @ObservationIgnored private lazy var transportInstance = ReticulumTransportInstance(identityHash: transportIdentity.hash)
@@ -1724,6 +1727,7 @@ public final class SidebandStore {
                 customHost: networkInternetHost,
                 customPort: networkInternetPort,
                 preferredID: internetGatewayID,
+                communityGateways: communityInternetGateways,
                 health: gatewayHealth
             )
             // Keep every configured public entrypoint live. Remote transports
@@ -1731,20 +1735,61 @@ public final class SidebandStore {
             // announced for up to seven days. Rotating a three-gateway subset
             // made the client unreachable through a previously advertised
             // entrypoint even though its remaining sockets were healthy.
-            endpoints = publicGateways.map {
-                ReticulumTCPInterfacePool.Endpoint(id: $0.id, name: $0.name, host: $0.host, port: $0.port, isBootstrap: true)
+            endpoints = publicGateways.compactMap {
+                Self.networkPoolEndpoint(for: $0, isBootstrap: true)
             }
             activeNetworkHost = "\(endpoints.count) public gateways"
             activeNetworkPort = nil
         } else {
-            let id = "\(selectedHost.lowercased()):\(port)"
-            endpoints = [ReticulumTCPInterfacePool.Endpoint(id: id, name: selectedHost, host: selectedHost, port: port)]
+            let gateway = InternetGateway(name: selectedHost, host: selectedHost, port: port)
+            guard let endpoint = Self.networkPoolEndpoint(for: gateway, isBootstrap: false) else {
+                lastError = "Enter a valid TCP host, WebSocket URL or HTTP tunnel URL."
+                tcpNetworkState = .failed(lastError ?? "Invalid interface")
+                refreshAggregateNetworkState()
+                return
+            }
+            endpoints = [endpoint]
             activeNetworkHost = selectedHost
             activeNetworkPort = Int(port)
         }
         let pool = makeInterfacePool(generation: generation)
         networkInterfacePool = pool
         await pool.start(endpoints)
+    }
+
+    static func networkPoolEndpoint(
+        for gateway: InternetGateway,
+        isBootstrap: Bool
+    ) -> ReticulumTCPInterfacePool.Endpoint? {
+        let value = gateway.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: value), let scheme = url.scheme?.lowercased(), url.host != nil {
+            switch scheme {
+            case "ws", "wss":
+                return ReticulumTCPInterfacePool.Endpoint(
+                    id: gateway.id,
+                    name: gateway.name,
+                    webSocketURL: url,
+                    isBootstrap: isBootstrap
+                )
+            case "http", "https":
+                return ReticulumTCPInterfacePool.Endpoint(
+                    id: gateway.id,
+                    name: gateway.name,
+                    httpURL: url,
+                    isBootstrap: isBootstrap
+                )
+            default:
+                break
+            }
+        }
+        guard !value.isEmpty, gateway.port > 0 else { return nil }
+        return ReticulumTCPInterfacePool.Endpoint(
+            id: gateway.id,
+            name: gateway.name,
+            host: value,
+            port: gateway.port,
+            isBootstrap: isBootstrap
+        )
     }
 
     public func disconnectNetwork() async {
@@ -2026,6 +2071,7 @@ public final class SidebandStore {
         attemptedConfiguredGatewayIDs.removeAll()
         attemptedGatewayIDs.removeAll()
         attemptedInternetGatewayIDs.removeAll()
+        didRefreshCommunityGateways = false
         if autoConnectEnabled { Task { await reconnectNetwork() } }
     }
 
@@ -2846,6 +2892,7 @@ public final class SidebandStore {
         attemptedGatewayIDs.removeAll()
         attemptedConfiguredGatewayIDs.removeAll()
         attemptedInternetGatewayIDs.removeAll()
+        didRefreshCommunityGateways = false
         observedLANDiscoveryGrace = false
         automaticConnectionDescription = connectionMode == .automatic
             ? "Discovering Reticulum gateways automatically"
@@ -2900,10 +2947,15 @@ public final class SidebandStore {
             }
         }
 
+        if !didRefreshCommunityGateways {
+            didRefreshCommunityGateways = true
+            communityInternetGateways = await communityInterfaceDirectory.gateways()
+        }
         let internetCandidates = PublicReticulumGateways.ordered(
             customHost: networkInternetHost,
             customPort: networkInternetPort,
             preferredID: preferredInternetGatewayID,
+            communityGateways: communityInternetGateways,
             excluding: attemptedInternetGatewayIDs,
             health: gatewayHealth
         )

@@ -38,7 +38,9 @@ Status labels:
 | AutoInterface | Authenticated beacon and UDP data plane | Native; iOS entitlement-limited |
 | IFAC and interface modes | Native KISS/interface configuration and forwarding policy | Native |
 | macOS Transport Instance | Validated routes, forwarding, reverse/link routes, loop suppression | Native |
-| UDP, TCP server, I2P SAM, Weave, shared instance and specialised interfaces | Native service/interface types | Native; live matrices ongoing |
+| UDP, TCP server and shared instance | Native service/interface types | Native core; settings/live matrices ongoing |
+| WebSocket and HTTP tunnel clients | Native MeshChatX-compatible transports | Native and unit tested |
+| I2P, Backbone, RNodeMulti, Weave and server extensions | Portable profiles or framing helpers | Partial; see `docs/FEATURE-PARITY.md` |
 
 ## LXMF and Sideband workflows
 
