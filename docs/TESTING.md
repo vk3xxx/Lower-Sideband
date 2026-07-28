@@ -11,6 +11,10 @@ swift test
 
 The Swift Testing suite covers persistence migrations, cryptographic vectors, packet framing, announces, links, tokens, tunnels, Resources, LXMF, telemetry, plugins, Opus/Codec2 voice, RNode, transport forwarding, outbox recovery, CloudKit merges, and UI-facing store behaviour.
 
+Network-map tests verify direct and multi-hop graph construction without
+invented links, ancestor-preserving search filters, and deterministic finite
+layout for 1,500 observed destinations.
+
 Run a focused test by name:
 
 ```sh

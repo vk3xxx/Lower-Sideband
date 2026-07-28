@@ -20,17 +20,17 @@ build_versions=$(awk '/CURRENT_PROJECT_VERSION:/ { print $2 }' project.yml | sor
     fail "project.yml contains inconsistent marketing versions"
 [ "$(printf '%s\n' "$build_versions" | sed '/^$/d' | wc -l | tr -d ' ')" = "1" ] || \
     fail "project.yml contains inconsistent build versions"
-[ "$(grep -c 'MARKETING_VERSION:' project.yml)" = "4" ] || \
-    fail "all four targets must declare MARKETING_VERSION"
-[ "$(grep -c 'CURRENT_PROJECT_VERSION:' project.yml)" = "4" ] || \
-    fail "all four targets must declare CURRENT_PROJECT_VERSION"
+[ "$(grep -c 'MARKETING_VERSION:' project.yml)" = "6" ] || \
+    fail "all six distributed targets must declare MARKETING_VERSION"
+[ "$(grep -c 'CURRENT_PROJECT_VERSION:' project.yml)" = "6" ] || \
+    fail "all six distributed targets must declare CURRENT_PROJECT_VERSION"
 [ "$(grep -c 'DEVELOPMENT_TEAM: DLV44BUBE7' project.yml)" = "1" ] || \
     fail "project.yml must use the configured personal development team"
 
 for required in \
     README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md \
     PRIVACY.md SUPPORT.md PORTING.md \
-    docs/ARCHITECTURE.md docs/BUILDING.md docs/NETWORKING.md \
+    docs/ARCHITECTURE.md docs/BUILDING.md docs/NETWORKING.md docs/NETWORK-MAP.md \
     docs/RNODE.md docs/TESTING.md docs/ROADMAP.md; do
     [ -s "$required" ] || fail "missing required documentation: $required"
 done

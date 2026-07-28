@@ -21,6 +21,7 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 - Standalone `ReticulumKit` framework with production-gated RNode TCP/KISS framing, configuration, telemetry, bounded flow control, and reconnect handling
 - Encrypted text, images, files, voice notes, voice calls, replies, reactions, and scheduled messages
 - Unified online/offline situation map, package validation, trails, and extended interoperable telemetry history
+- Interactive Reticulum network map with live interfaces, next-hop transports, direct and multi-hop paths, search, filtering, and destination actions
 - Contact fingerprints, QR/contact links, trust pinning, blocking, and user-reviewed safety reports
 - Encrypted local persistence and optional encrypted private CloudKit synchronisation
 - macOS Reticulum Transport Instance mode with route learning and loop suppression
@@ -72,6 +73,7 @@ Scripts/test-rnode.sh protocol
 - [Building and running](docs/BUILDING.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Networking and automatic discovery](docs/NETWORKING.md)
+- [Reticulum network map](docs/NETWORK-MAP.md)
 - [RNode and radio interfaces](docs/RNODE.md)
 - [Testing and interoperability](docs/TESTING.md)
 - [Porting status and known gaps](PORTING.md)

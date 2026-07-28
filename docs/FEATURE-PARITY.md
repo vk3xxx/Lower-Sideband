@@ -18,6 +18,7 @@ The detailed upstream comparison and exact pinned versions are in
 | Voice | Complete | Codec2/Opus voice messages and LXST calls with call history and jitter buffering |
 | Identity and contacts | Complete | Keychain identity, contact links/QR, verification, encrypted import/export and conversation naming |
 | Telemetry and maps | Complete | Canonical and unknown sensors, collector streams, trails, geospatial calculations and validated offline tiles |
+| Reticulum network map | Complete | Live interfaces, observed next-hop transports, direct/multi-hop routes, propagation nodes, route search/filtering and destination actions |
 | Sync and migration | Complete with platform limits | End-to-end encrypted CloudKit snapshots, assets, tombstones and read-only Python Sideband SQLite import |
 | Plugins | Deliberately different | App-Store-safe native/declarative, permission-scoped plugins replace downloaded executable Python |
 | Background reception | Platform-limited | Content-free CloudKit wakes and bounded refresh; arbitrary immediate Reticulum ingress still depends on iOS scheduling or an operator wake service |

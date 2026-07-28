@@ -40,6 +40,7 @@ LXMF                                   Reticulum
 - LXMF packing, signing, direct/opportunistic/propagation delivery, commands, telemetry, attachments, and voice payloads;
 - encrypted persistence, attachment storage, CloudKit merge models, notifications, and background coordination;
 - plugin manifests, permissions, service lifecycle, telemetry providers, execution limits, and audit records.
+- observed-topology graph construction, filtering, and deterministic layout for the Reticulum network map.
 
 The Xcode project creates separate iOS and macOS framework targets from the same source tree and links the platform-specific `ReticulumKit` framework.
 
@@ -56,6 +57,14 @@ The Xcode project creates separate iOS and macOS framework targets from the same
 5. Destination packets are dispatched to link, proof, path, Resource, propagation, or LXMF handlers.
 6. Outgoing LXMF delivery chooses an authenticated direct link, opportunistic packet, or propagation node according to route state and policy.
 7. Delivery state advances only after valid protocol evidence; connectivity alone is not reported as message delivery.
+
+The network map is a read-only projection of this live pipeline. It joins the
+local identity, active interfaces, validated path-table entries, next-hop
+transport identities, discovered destinations, conversations, and the selected
+propagation node. It never claims to show unobserved portions of the global
+Reticulum network. Graph construction, filtering, and layout live in
+`SidebandCore`; SwiftUI Canvas supplies platform-native rendering and
+interaction on Mac, iPhone, and iPad.
 
 On macOS, optional Transport Instance mode can forward validated routes between active interfaces. It applies hop/header rewriting, reverse-path and link-route tracking, interface-mode boundaries, and packet-hash loop suppression. iOS remains an endpoint.
 

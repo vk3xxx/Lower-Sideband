@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.50 (88) - 2026-07-28
+
+- Added an interactive Reticulum network map for macOS, iPhone and iPad.
+- Visualised the local node, live interfaces, observed next-hop transports,
+  direct destinations, multi-hop destinations and the selected LXMF
+  propagation node without claiming unobserved global topology.
+- Added search, hop filtering, unavailable-node visibility, automatic refresh,
+  deterministic layout, pan/zoom, route details, path requests, contact sharing
+  and direct conversation actions.
+- Added graph correctness, filtering and 1,500-node layout regression coverage.
+
 ## 1.3.15 (53) - 2026-07-23
 
 - Accept authenticated explicit Reticulum delivery proofs addressed to a secure link ID, preventing valid Linux LXMF proofs from timing out on Mac.

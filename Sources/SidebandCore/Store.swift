@@ -18,12 +18,23 @@ public enum NetworkConnectionMode: String, CaseIterable, Sendable {
 public struct ConnectedRoute: Equatable, Sendable {
     public let interfaceName: String
     public let endpoint: String?
+    public let interfaceID: String?
+    public let nextHopHash: String?
     public let hops: UInt8
     public let updatedAt: Date
 
-    public init(interfaceName: String, endpoint: String?, hops: UInt8, updatedAt: Date) {
+    public init(
+        interfaceName: String,
+        endpoint: String?,
+        interfaceID: String? = nil,
+        nextHopHash: String? = nil,
+        hops: UInt8,
+        updatedAt: Date
+    ) {
         self.interfaceName = interfaceName
         self.endpoint = endpoint
+        self.interfaceID = interfaceID
+        self.nextHopHash = nextHopHash
         self.hops = hops
         self.updatedAt = updatedAt
     }
@@ -2523,6 +2534,75 @@ public final class SidebandStore {
     public var pendingPathCount: Int { pendingPathHashes.count }
     public var pendingLinkCount: Int { pendingLinkHashes.count }
     public var activeLinkCount: Int { activeLinkHashes.count }
+
+    public func networkMapSnapshot(now: Date = .now) async -> NetworkMapSnapshot {
+        var interfaces = networkInterfaces.map { snapshot in
+            NetworkMapInterface(
+                id: snapshot.id,
+                name: snapshot.name,
+                detail: [snapshot.host, snapshot.port.map(String.init)].compactMap(\.self).joined(separator: ":"),
+                status: Self.networkMapStatus(snapshot.state),
+                lastSeen: snapshot.lastPacketAt ?? snapshot.connectedAt
+            )
+        }
+        if autoInterfaceEnabled || autoInterfaceDiscovery.isListening || !autoInterfaceDiscovery.peers.isEmpty {
+            let peerSummary = autoInterfaceDiscovery.peers.isEmpty
+                ? "IPv6 multicast peer discovery"
+                : "\(autoInterfaceDiscovery.peers.count) active peer\(autoInterfaceDiscovery.peers.count == 1 ? "" : "s")"
+            interfaces.append(.init(
+                id: "auto",
+                name: "AutoInterface",
+                detail: peerSummary,
+                status: autoInterfaceDiscovery.isListening ? .online : (autoInterfaceEnabled ? .connecting : .offline),
+                lastSeen: autoInterfaceDiscovery.peers.map(\.lastSeen).max()
+            ))
+        }
+        for snapshot in rnodeManager.snapshots {
+            interfaces.append(.init(
+                id: "rnode:\(snapshot.id.uuidString)",
+                name: snapshot.name,
+                detail: "\(snapshot.transport.title) · \(snapshot.target.isEmpty ? "automatic" : snapshot.target)",
+                status: Self.networkMapStatus(snapshot.state),
+                lastSeen: snapshot.lastPacketAt ?? snapshot.connectedAt
+            ))
+        }
+
+        let routes = await pathTable.all(now: now).map {
+            NetworkMapRoute(
+                destinationHash: $0.destinationHash.hex,
+                interfaceID: $0.interfaceID,
+                nextHopHash: $0.nextHop?.hex,
+                hops: $0.hops,
+                updatedAt: $0.updatedAt
+            )
+        }
+        return NetworkMapBuilder.build(
+            localHash: localDeliveryHash,
+            localName: localDisplayName,
+            interfaces: interfaces,
+            routes: routes,
+            discoveries: discoveries,
+            conversations: conversations,
+            propagationNodeHash: propagationNodeHash,
+            generatedAt: now
+        )
+    }
+
+    private static func networkMapStatus(_ state: ReticulumTCPInterface.State) -> NetworkMapNode.Status {
+        switch state {
+        case .ready: .online
+        case .connecting: .connecting
+        case .stopped, .failed: .offline
+        }
+    }
+
+    private static func networkMapStatus(_ state: RNodeInterface.State) -> NetworkMapNode.Status {
+        switch state {
+        case .ready: .online
+        case .searching, .connecting, .detecting, .configuring: .connecting
+        case .stopped, .failed: .offline
+        }
+    }
 
     /// Installs the request state before any bytes leave the process.
     ///
@@ -5356,6 +5436,8 @@ public final class SidebandStore {
             return ConnectedRoute(
                 interfaceName: interfaceName,
                 endpoint: endpoint,
+                interfaceID: interfaceID,
+                nextHopHash: path.nextHop?.hex,
                 hops: path.hops,
                 updatedAt: path.updatedAt
             )

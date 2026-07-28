@@ -4154,6 +4154,81 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(zip(values, values.dropFirst()).allSatisfy { $0 <= $1 })
 }
 
+@Test func networkMapBuildsDirectAndMultiHopTopologyWithoutInventingLinks() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let directHash = String(repeating: "11", count: 16)
+    let routedHash = String(repeating: "22", count: 16)
+    let nextHop = String(repeating: "33", count: 16)
+    let localHash = String(repeating: "aa", count: 16)
+    let interfaces = [
+        NetworkMapInterface(id: "tcp-a", name: "Public IPv6", detail: "[2001:db8::1]:4242", status: .online, lastSeen: now)
+    ]
+    let routes = [
+        NetworkMapRoute(destinationHash: directHash, interfaceID: "tcp-a", nextHopHash: nil, hops: 1, updatedAt: now),
+        NetworkMapRoute(destinationHash: routedHash, interfaceID: "tcp-a", nextHopHash: nextHop, hops: 4, updatedAt: now)
+    ]
+    let conversations = [
+        Conversation(destinationHash: directHash, displayName: "Direct peer"),
+        Conversation(destinationHash: routedHash, displayName: "Remote peer")
+    ]
+
+    let snapshot = NetworkMapBuilder.build(
+        localHash: localHash, localName: "This node", interfaces: interfaces, routes: routes,
+        discoveries: [], conversations: conversations, propagationNodeHash: nil, generatedAt: now
+    )
+
+    #expect(snapshot.nodes.contains { $0.id == "local:\(localHash)" && $0.kind == .local })
+    #expect(snapshot.nodes.contains { $0.id == "interface:tcp-a" && $0.status == .online })
+    #expect(snapshot.nodes.contains { $0.id == "transport:\(nextHop)" && $0.kind == .transport })
+    #expect(snapshot.nodes.contains { $0.destinationHash == directHash && $0.label == "Direct peer" && $0.hops == 1 })
+    #expect(snapshot.nodes.contains { $0.destinationHash == routedHash && $0.label == "Remote peer" && $0.hops == 4 })
+    #expect(snapshot.edges.contains { $0.sourceID == "interface:tcp-a" && $0.targetID == "destination:\(directHash)" && $0.kind == .direct })
+    #expect(snapshot.edges.contains { $0.sourceID == "interface:tcp-a" && $0.targetID == "transport:\(nextHop)" && $0.kind == .multiHop })
+    #expect(snapshot.edges.contains { $0.sourceID == "transport:\(nextHop)" && $0.targetID == "destination:\(routedHash)" && $0.kind == .multiHop })
+    #expect(!snapshot.edges.contains { $0.sourceID == "local:\(localHash)" && $0.targetID == "destination:\(routedHash)" })
+}
+
+@Test func networkMapFilteringPreservesOnlyTheAncestorsOfSearchMatches() {
+    let local = NetworkMapNode(id: "local", kind: .local, label: "Local")
+    let interface = NetworkMapNode(id: "interface", kind: .interface, label: "Dismail")
+    let transport = NetworkMapNode(id: "transport", kind: .transport, label: "Transport")
+    let alice = NetworkMapNode(id: "alice", kind: .destination, label: "Alice", destinationHash: String(repeating: "a", count: 32), hops: 4)
+    let bob = NetworkMapNode(id: "bob", kind: .destination, label: "Bob", destinationHash: String(repeating: "b", count: 32), status: .offline, hops: 8)
+    let snapshot = NetworkMapSnapshot(nodes: [local, interface, transport, alice, bob], edges: [
+        .init(sourceID: "local", targetID: "interface", kind: .interface),
+        .init(sourceID: "interface", targetID: "transport", kind: .multiHop, hops: 4),
+        .init(sourceID: "transport", targetID: "alice", kind: .multiHop, hops: 4),
+        .init(sourceID: "interface", targetID: "bob", kind: .multiHop, hops: 8)
+    ])
+
+    let filtered = NetworkMapFilter(query: "alice", maximumHops: 4, showOffline: false).apply(to: snapshot)
+    #expect(Set(filtered.nodes.map(\.id)) == ["local", "interface", "transport", "alice"])
+    #expect(filtered.edges.count == 3)
+}
+
+@Test func networkMapLayoutIsDeterministicFiniteAndBoundedForLargeGraphs() {
+    var nodes = [
+        NetworkMapNode(id: "local", kind: .local, label: "Local"),
+        NetworkMapNode(id: "interface", kind: .interface, label: "Interface")
+    ]
+    var edges = [NetworkMapEdge(sourceID: "local", targetID: "interface", kind: .interface)]
+    for index in 0..<1_500 {
+        let id = "destination-\(index)"
+        nodes.append(.init(id: id, kind: .destination, label: id, hops: UInt8(index % 16 + 1)))
+        edges.append(.init(sourceID: "interface", targetID: id, kind: index.isMultiple(of: 2) ? .direct : .multiHop))
+    }
+    let snapshot = NetworkMapSnapshot(nodes: nodes, edges: edges)
+    let first = NetworkMapLayout.positions(for: snapshot)
+    let second = NetworkMapLayout.positions(for: snapshot)
+    #expect(first == second)
+    #expect(first.count == nodes.count)
+    #expect(first.values.allSatisfy { $0.x.isFinite && $0.y.isFinite && (0...1).contains($0.x) && (0...1).contains($0.y) })
+    let distinctDestinationPositions = Set(first.filter { $0.key.hasPrefix("destination-") }.map {
+        "\(Int($0.value.x * 10_000)):\(Int($0.value.y * 10_000))"
+    })
+    #expect(distinctDestinationPositions.count > 1_400)
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }

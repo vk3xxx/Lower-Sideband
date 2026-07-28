@@ -96,6 +96,7 @@ struct ContentView: View {
     @State private var showingNewConversation = false
     @State private var showingNetwork = false
     @State private var showingCallHistory = false
+    @State private var showingNetworkMap = false
     @State private var showingSituationMap = false
     @State private var conversationSearch = ""
     @State private var showingArchived = false
@@ -167,6 +168,10 @@ struct ContentView: View {
                     Button { showingSituationMap = true } label: {
                         Label("Situation map", systemImage: "map")
                     }.help("Show the latest trusted telemetry from every contact and any installed offline GeoJSON overlay")
+                    Button { showingNetworkMap = true } label: {
+                        Label("Network map", systemImage: "point.3.connected.trianglepath.dotted")
+                    }
+                    .help("Visualise this Reticulum node, active interfaces, next-hop transports and observed destinations")
                     #if os(macOS)
                     Button { showingArchived.toggle() } label: {
                         Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")
@@ -270,6 +275,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
         .sheet(isPresented: $showingNetwork) { SidebandSettingsView(store: store, showsCloseButton: true) }
         .sheet(isPresented: $showingCallHistory) { CallHistoryView(store: store) }
+        .sheet(isPresented: $showingNetworkMap) { NetworkMapView(store: store) }
         .sheet(isPresented: $showingSituationMap) { SituationMapView(store: store) }
         .sheet(isPresented: Binding(
             get: { store.voiceCall != nil },
