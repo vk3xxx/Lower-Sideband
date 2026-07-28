@@ -15,6 +15,7 @@ struct NetworkMapView: View {
     @State private var maximumHops = 4
     @State private var showAllHops = false
     @State private var showOffline = true
+    @AppStorage("networkMap.showDestinations") private var showDestinations = true
     @State private var autoRefresh = true
     @State private var showControls = true
     @State private var selectedNodeID: String?
@@ -33,7 +34,8 @@ struct NetworkMapView: View {
         NetworkMapFilter(
             query: searchQuery,
             maximumHops: showAllHops ? nil : UInt8(clamping: maximumHops),
-            showOffline: showOffline
+            showOffline: showOffline,
+            showDestinations: showDestinations
         ).apply(to: snapshot)
     }
 
@@ -89,6 +91,24 @@ struct NetworkMapView: View {
                     .disabled(isRefreshing)
                     .help("Refresh paths, interfaces and destinations now")
 
+                    Button {
+                        withAnimation(.snappy) {
+                            showDestinations.toggle()
+                            clearHiddenSelection()
+                        }
+                    } label: {
+                        Label(
+                            showDestinations ? "Hide individual destinations" : "Show individual destinations",
+                            systemImage: showDestinations ? "person.2.slash" : "person.2"
+                        )
+                    }
+                    .accessibilityIdentifier("network-map-toggle-destinations")
+                    .help(
+                        showDestinations
+                            ? "Hide people and other individual LXMF destinations while keeping the network backbone visible"
+                            : "Show people and other individual LXMF destinations on the network map"
+                    )
+
                     #if os(macOS)
                     Button {
                         toggleFullScreen()
@@ -129,6 +149,10 @@ struct NetworkMapView: View {
             selectedNodeID = filteredSnapshot.nodes.first(where: {
                 $0.kind == .destination || $0.kind == .propagationNode || $0.kind == .transport
             })?.id
+        }
+        .onChange(of: showDestinations) {
+            clearHiddenSelection()
+            resetViewport()
         }
         #if os(macOS)
         .background {
@@ -276,6 +300,8 @@ struct NetworkMapView: View {
                         .font(.caption)
 
                         Toggle("Auto update", isOn: $autoRefresh)
+                        Toggle("Show individual destinations", isOn: $showDestinations)
+                            .help("Show or hide people, bots and other individual LXMF destinations")
                         Toggle("Show unavailable nodes", isOn: $showOffline)
                         Toggle("Show all hop counts", isOn: $showAllHops)
                         if !showAllHops {
@@ -460,6 +486,13 @@ struct NetworkMapView: View {
             zoom = 1
             pan = .zero
         }
+    }
+
+    private func clearHiddenSelection() {
+        guard let selectedNodeID,
+              !filteredSnapshot.nodes.contains(where: { $0.id == selectedNodeID })
+        else { return }
+        self.selectedNodeID = nil
     }
 
     #if os(macOS)

@@ -288,16 +288,24 @@ public struct NetworkMapFilter: Equatable, Sendable {
     public var query: String
     public var maximumHops: UInt8?
     public var showOffline: Bool
+    public var showDestinations: Bool
 
-    public init(query: String = "", maximumHops: UInt8? = 4, showOffline: Bool = true) {
+    public init(
+        query: String = "",
+        maximumHops: UInt8? = 4,
+        showOffline: Bool = true,
+        showDestinations: Bool = true
+    ) {
         self.query = query
         self.maximumHops = maximumHops
         self.showOffline = showOffline
+        self.showDestinations = showDestinations
     }
 
     public func apply(to snapshot: NetworkMapSnapshot) -> NetworkMapSnapshot {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var retained = Set(snapshot.nodes.compactMap { node -> String? in
+            if !showDestinations && node.kind == .destination { return nil }
             if !showOffline && node.status == .offline { return nil }
             if let maximumHops, let hops = node.hops, hops > maximumHops { return nil }
             if normalizedQuery.isEmpty {

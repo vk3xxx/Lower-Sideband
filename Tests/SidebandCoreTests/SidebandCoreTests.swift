@@ -4206,6 +4206,25 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(filtered.edges.count == 3)
 }
 
+@Test func networkMapFilteringCanHideIndividualDestinationsWithoutHidingInfrastructure() {
+    let local = NetworkMapNode(id: "local", kind: .local, label: "Local")
+    let interface = NetworkMapNode(id: "interface", kind: .interface, label: "Dismail")
+    let transport = NetworkMapNode(id: "transport", kind: .transport, label: "Transport")
+    let propagation = NetworkMapNode(id: "propagation", kind: .propagationNode, label: "Propagation node")
+    let alice = NetworkMapNode(id: "alice", kind: .destination, label: "Alice")
+    let snapshot = NetworkMapSnapshot(nodes: [local, interface, transport, propagation, alice], edges: [
+        .init(sourceID: "local", targetID: "interface", kind: .interface),
+        .init(sourceID: "interface", targetID: "transport", kind: .multiHop),
+        .init(sourceID: "transport", targetID: "propagation", kind: .multiHop),
+        .init(sourceID: "transport", targetID: "alice", kind: .multiHop)
+    ])
+
+    let filtered = NetworkMapFilter(showDestinations: false).apply(to: snapshot)
+    #expect(Set(filtered.nodes.map(\.id)) == ["local", "interface", "transport", "propagation"])
+    #expect(!filtered.edges.contains { $0.sourceID == "alice" || $0.targetID == "alice" })
+    #expect(filtered.edges.contains { $0.targetID == "propagation" })
+}
+
 @Test func networkMapLayoutIsDeterministicFiniteAndBoundedForLargeGraphs() {
     var nodes = [
         NetworkMapNode(id: "local", kind: .local, label: "Local"),

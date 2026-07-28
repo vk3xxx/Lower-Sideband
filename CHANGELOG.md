@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.52 (90) - 2026-07-29
+
+- Added a persistent Network Map control for hiding individual LXMF
+  destinations, including their labels, hit targets and connecting lines.
+- Kept interfaces, transports and propagation nodes visible so the underlying
+  Reticulum network topology remains useful when destination visibility is off.
+
 ## 1.3.51 (89) - 2026-07-28
 
 - Open the Reticulum network map in a dedicated resizable macOS window.

@@ -7,6 +7,9 @@ Lower Sideband includes two distinct maps:
 - on macOS, the map opens in a dedicated resizable window that supports native
   full-screen mode from the green window control, the toolbar, or
   Control-Command-F.
+- the **Show individual destinations** control hides people, bots and other
+  LXMF destination nodes and their links while retaining interfaces, transports
+  and propagation nodes. The choice persists across app launches.
 
 The Network Map follows the useful topology concepts exposed by MeshChatX's
 Network Visualiser while remaining a clean native Swift implementation. It is
