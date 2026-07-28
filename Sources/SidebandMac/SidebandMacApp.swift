@@ -34,6 +34,11 @@ struct SidebandApp: App {
         }
         .defaultSize(width: 1_180, height: 760)
         .windowResizability(.contentMinSize)
+        Window("Reticulum Network Map", id: "network-map") {
+            NetworkMapView(store: store)
+        }
+        .defaultSize(width: 1_280, height: 820)
+        .windowResizability(.contentMinSize)
         Settings {
             SidebandSettingsView(store: store, showsCloseButton: false)
                 .frame(minWidth: 900, minHeight: 640)

@@ -4,6 +4,9 @@ Lower Sideband includes two distinct maps:
 
 - the **Situation Map** presents geographic telemetry, trails and overlays;
 - the **Network Map** presents the Reticulum topology observed by this device.
+- on macOS, the map opens in a dedicated resizable window that supports native
+  full-screen mode from the green window control, the toolbar, or
+  Control-Command-F.
 
 The Network Map follows the useful topology concepts exposed by MeshChatX's
 Network Visualiser while remaining a clean native Swift implementation. It is

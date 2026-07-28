@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.51 (89) - 2026-07-28
+
+- Open the Reticulum network map in a dedicated resizable macOS window.
+- Added native macOS full-screen support through the window control, an explicit
+  toolbar action and the standard Control-Command-F shortcut.
+- Kept the existing iPhone and iPad network-map presentation unchanged.
+
 ## 1.3.50 (88) - 2026-07-28
 
 - Added an interactive Reticulum network map for macOS, iPhone and iPad.

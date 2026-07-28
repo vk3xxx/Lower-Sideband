@@ -91,6 +91,7 @@ struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     #endif
     @Bindable var store: SidebandStore
     @State private var showingNewConversation = false
@@ -168,10 +169,20 @@ struct ContentView: View {
                     Button { showingSituationMap = true } label: {
                         Label("Situation map", systemImage: "map")
                     }.help("Show the latest trusted telemetry from every contact and any installed offline GeoJSON overlay")
-                    Button { showingNetworkMap = true } label: {
+                    Button {
+                        #if os(macOS)
+                        openWindow(id: "network-map")
+                        #else
+                        showingNetworkMap = true
+                        #endif
+                    } label: {
                         Label("Network map", systemImage: "point.3.connected.trianglepath.dotted")
                     }
+                    #if os(macOS)
+                    .help("Open the Reticulum network map in its own resizable, full-screen-capable window")
+                    #else
                     .help("Visualise this Reticulum node, active interfaces, next-hop transports and observed destinations")
+                    #endif
                     #if os(macOS)
                     Button { showingArchived.toggle() } label: {
                         Label(showingArchived ? "Hide archived conversations" : "Show archived conversations", systemImage: showingArchived ? "archivebox.fill" : "archivebox")

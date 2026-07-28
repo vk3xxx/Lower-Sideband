@@ -24,6 +24,10 @@ struct NetworkMapView: View {
     @State private var dragOrigin: CGSize?
     @State private var zoomOrigin: CGFloat?
     @State private var isRefreshing = false
+    #if os(macOS)
+    @State private var hostingWindow: NSWindow?
+    @State private var isFullScreen = false
+    #endif
 
     private var filteredSnapshot: NetworkMapSnapshot {
         NetworkMapFilter(
@@ -85,7 +89,31 @@ struct NetworkMapView: View {
                     .disabled(isRefreshing)
                     .help("Refresh paths, interfaces and destinations now")
 
+                    #if os(macOS)
+                    Button {
+                        toggleFullScreen()
+                    } label: {
+                        Label(
+                            isFullScreen ? "Exit Full Screen" : "Enter Full Screen",
+                            systemImage: isFullScreen
+                                ? "arrow.down.right.and.arrow.up.left"
+                                : "arrow.up.left.and.arrow.down.right"
+                        )
+                    }
+                    .keyboardShortcut("f", modifiers: [.command, .control])
+                    .accessibilityIdentifier("network-map-full-screen")
+                    .help(
+                        isFullScreen
+                            ? "Return the Reticulum network map to its window (Control-Command-F)"
+                            : "Show the Reticulum network map full screen (Control-Command-F)"
+                    )
+
+                    Button("Close") { dismiss() }
+                        .keyboardShortcut("w", modifiers: .command)
+                        .help("Close the Reticulum network map window")
+                    #else
                     Button("Done") { dismiss() }
+                    #endif
                 }
             }
         }
@@ -102,6 +130,22 @@ struct NetworkMapView: View {
                 $0.kind == .destination || $0.kind == .propagationNode || $0.kind == .transport
             })?.id
         }
+        #if os(macOS)
+        .background {
+            NetworkMapWindowReader { window in
+                hostingWindow = window
+                isFullScreen = window.styleMask.contains(.fullScreen)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { notification in
+            guard notification.object as? NSWindow === hostingWindow else { return }
+            isFullScreen = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { notification in
+            guard notification.object as? NSWindow === hostingWindow else { return }
+            isFullScreen = false
+        }
+        #endif
         .platformNetworkMapSize()
     }
 
@@ -418,6 +462,12 @@ struct NetworkMapView: View {
         }
     }
 
+    #if os(macOS)
+    private func toggleFullScreen() {
+        hostingWindow?.toggleFullScreen(nil)
+    }
+    #endif
+
     private func refresh() async {
         guard !isRefreshing else { return }
         isRefreshing = true
@@ -434,6 +484,29 @@ struct NetworkMapView: View {
         dismiss()
     }
 }
+
+#if os(macOS)
+private struct NetworkMapWindowReader: NSViewRepresentable {
+    let onResolve: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        resolveWindow(for: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        resolveWindow(for: nsView)
+    }
+
+    private func resolveWindow(for view: NSView) {
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            onResolve(window)
+        }
+    }
+}
+#endif
 
 private extension NetworkMapNode {
     var color: Color {
