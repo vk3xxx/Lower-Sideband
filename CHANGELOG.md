@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.53 (91) - 2026-07-29
+
+- Restored a genuinely full-window Network Map in the TestFlight iPhone/iPad
+  build, including when the iPad app runs on Apple-silicon Macs.
+- Kept the dedicated native macOS map window and its system full-screen support
+  unchanged.
+
 ## 1.3.52 (90) - 2026-07-29
 
 - Added a persistent Network Map control for hiding individual LXMF

@@ -286,7 +286,11 @@ struct ContentView: View {
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
         .sheet(isPresented: $showingNetwork) { SidebandSettingsView(store: store, showsCloseButton: true) }
         .sheet(isPresented: $showingCallHistory) { CallHistoryView(store: store) }
+        #if os(macOS)
         .sheet(isPresented: $showingNetworkMap) { NetworkMapView(store: store) }
+        #else
+        .fullScreenCover(isPresented: $showingNetworkMap) { NetworkMapView(store: store) }
+        #endif
         .sheet(isPresented: $showingSituationMap) { SituationMapView(store: store) }
         .sheet(isPresented: Binding(
             get: { store.voiceCall != nil },

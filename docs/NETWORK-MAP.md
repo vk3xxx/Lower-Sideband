@@ -7,6 +7,8 @@ Lower Sideband includes two distinct maps:
 - on macOS, the map opens in a dedicated resizable window that supports native
   full-screen mode from the green window control, the toolbar, or
   Control-Command-F.
+- on iPhone, iPad and the TestFlight iPad app running on Apple-silicon Macs,
+  the map opens as a full-window cover instead of a constrained modal sheet.
 - the **Show individual destinations** control hides people, bots and other
   LXMF destination nodes and their links while retaining interfaces, transports
   and propagation nodes. The choice persists across app launches.
