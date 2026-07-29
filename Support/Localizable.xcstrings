@@ -1,0 +1,32 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Archive Conversation" : {},
+    "Blocked" : {},
+    "Connecting securely" : {},
+    "Copy ID" : {},
+    "Current route: %@" : {},
+    "Delivered" : {},
+    "Encrypted" : {},
+    "Latest incoming message: %@" : {},
+    "Latest outgoing message: %@" : {},
+    "Lower Sideband" : {},
+    "Mark Read" : {},
+    "Mark Unread" : {},
+    "Message" : {},
+    "Network Settings" : {},
+    "New conversation" : {},
+    "No Conversation" : {},
+    "Notifications muted" : {},
+    "Open Settings" : {},
+    "Pinned" : {},
+    "Queued" : {},
+    "Ready" : {},
+    "Send message" : {},
+    "Settings" : {},
+    "Unarchive Conversation" : {},
+    "Unpin Conversation" : {},
+    "Use managed infrastructure" : {}
+  },
+  "version" : "1.0"
+}

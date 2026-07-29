@@ -78,6 +78,7 @@ Scripts/test-rnode.sh protocol
 - [RNode and radio interfaces](docs/RNODE.md)
 - [Testing and interoperability](docs/TESTING.md)
 - [Managed connectivity infrastructure](docs/MANAGED-INFRASTRUCTURE.md)
+- [Accessibility and localisation](docs/ACCESSIBILITY-AND-LOCALISATION.md)
 - [Porting status and known gaps](PORTING.md)
 - [Native feature parity](docs/FEATURE-PARITY.md)
 

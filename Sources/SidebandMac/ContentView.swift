@@ -668,9 +668,42 @@ struct ContentView: View {
                 }
             }
         }
-        .accessibilityElement(children: .contain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(conversationAccessibilityLabel(conversation))
+        .accessibilityHint("Opens this encrypted conversation")
+        .accessibilityAction(named: conversation.unreadCount > 0 ? "Mark Read" : "Mark Unread") {
+            if conversation.unreadCount > 0 {
+                store.markConversationRead(conversation.id)
+            } else {
+                store.markConversationUnread(conversation.id)
+            }
+        }
+        .accessibilityAction(named: conversation.isPinned ? "Unpin Conversation" : "Pin Conversation") {
+            store.setConversationPinned(!conversation.isPinned, conversationID: conversation.id)
+        }
+        .accessibilityAction(named: conversation.isArchived ? "Unarchive Conversation" : "Archive Conversation") {
+            store.setConversationArchived(!conversation.isArchived, conversationID: conversation.id)
+        }
         .accessibilityIdentifier("conversation-\(conversation.id.uuidString)")
         .help(conversationHoverHelp(conversation))
+    }
+
+    private func conversationAccessibilityLabel(_ conversation: Conversation) -> String {
+        var parts = [conversation.displayName]
+        if conversation.unreadCount > 0 {
+            parts.append(String(localized: "\(conversation.unreadCount) unread messages"))
+        }
+        if let message = store.latestMessage(for: conversation.id) {
+            parts.append(message.direction == .incoming
+                ? String(localized: "Latest incoming message: \(messagePreview(message))")
+                : String(localized: "Latest outgoing message: \(messagePreview(message))"))
+            parts.append(message.state.rawValue)
+        }
+        if conversation.isPinned { parts.append(String(localized: "Pinned")) }
+        if conversation.notificationsMuted { parts.append(String(localized: "Notifications muted")) }
+        if conversation.isBlocked { parts.append(String(localized: "Blocked")) }
+        parts.append(sidebarRouteLabel(for: conversation))
+        return parts.joined(separator: ". ")
     }
 
     @ViewBuilder private func discoveryRow(_ discovery: DiscoveredDestination) -> some View {

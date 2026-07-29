@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.61
+
+- Added a shared string catalog and localisation workflow for macOS and iOS.
+- Added complete VoiceOver conversation summaries and accessible read, pin and
+  archive actions without relying on context menus.
+- Documented Dynamic Type, keyboard, contrast, right-to-left and translation
+  acceptance requirements.
+
 ## 1.3.60
 
 - Added signed managed infrastructure discovery with strict expiry, endpoint,
