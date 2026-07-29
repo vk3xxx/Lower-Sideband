@@ -255,6 +255,8 @@ public struct SidebandTelemetry: Codable, Hashable, Sendable {
 public enum SidebandTelemetryExportFormat: String, CaseIterable, Sendable {
     case csv
     case gpx
+    case json
+    case geojson
 }
 
 public struct SidebandTelemetryStreamEntry: Codable, Hashable, Sendable {
@@ -325,6 +327,40 @@ public enum SidebandTelemetryHistory {
     }
 
     public static func export(messages: [Message], contactName: String, format: SidebandTelemetryExportFormat) -> Data? {
+        let telemetryMessages = messages.filter { $0.telemetry?.validationError == nil && $0.telemetry != nil }
+            .sorted { ($0.telemetry?.mostRecentSensorDate ?? $0.timestamp) < ($1.telemetry?.mostRecentSensorDate ?? $1.timestamp) }
+        guard !telemetryMessages.isEmpty, telemetryMessages.count <= 10_000 else { return nil }
+        if format == .json {
+            let samples: [[String: Any]] = telemetryMessages.compactMap { message in
+                guard let telemetry = message.telemetry else { return nil }
+                var sample: [String: Any] = [
+                    "timestamp": iso8601(telemetry.capturedAt),
+                    "direction": message.direction.rawValue,
+                    "sensor_kinds": telemetry.sensorKinds.map(\.displayName),
+                    "additional_sensors": Dictionary(uniqueKeysWithValues: telemetry.additionalSensors.map {
+                        (String(format: "0x%02X", $0.key), $0.value.base64EncodedString())
+                    })
+                ]
+                if let location = telemetry.location {
+                    sample["location"] = [
+                        "latitude": location.latitude, "longitude": location.longitude,
+                        "altitude": location.altitude, "speed": location.speed,
+                        "bearing": location.bearing, "accuracy": location.accuracy,
+                        "updated_at": iso8601(location.updatedAt)
+                    ] as [String: Any]
+                }
+                if let battery = telemetry.battery {
+                    var value: [String: Any] = ["percent": battery.chargePercent, "charging": battery.isCharging]
+                    if let temperature = battery.temperature { value["temperature"] = temperature }
+                    sample["battery"] = value
+                }
+                return sample
+            }
+            return try? JSONSerialization.data(
+                withJSONObject: ["schema": 1, "contact": String(contactName.prefix(80)), "samples": samples],
+                options: [.prettyPrinted, .sortedKeys]
+            )
+        }
         let records = messages.compactMap { message -> (Message, SidebandTelemetry.Location, SidebandTelemetry.Battery?)? in
             guard let telemetry = message.telemetry, let location = telemetry.location, telemetry.validationError == nil else { return nil }
             return (message, location, telemetry.battery)
@@ -348,6 +384,33 @@ public enum SidebandTelemetryHistory {
             }.joined()
             let name = xmlEscaped(String(contactName.prefix(80)))
             return Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"Lower Sideband\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(name)</name><trkseg>\(trackPoints)</trkseg></trk></gpx>".utf8)
+        case .geojson:
+            let features: [[String: Any]] = records.map { message, location, battery in
+                var properties: [String: Any] = [
+                    "timestamp": iso8601(location.updatedAt),
+                    "direction": message.direction.rawValue,
+                    "altitude_m": location.altitude,
+                    "speed_kmh": location.speed,
+                    "bearing_deg": location.bearing,
+                    "accuracy_m": location.accuracy
+                ]
+                if let battery { properties["battery_percent"] = battery.chargePercent }
+                return [
+                    "type": "Feature",
+                    "geometry": ["type": "Point", "coordinates": [location.longitude, location.latitude, location.altitude]],
+                    "properties": properties
+                ]
+            }
+            return try? JSONSerialization.data(
+                withJSONObject: [
+                    "type": "FeatureCollection",
+                    "name": String(contactName.prefix(80)),
+                    "features": features
+                ],
+                options: [.prettyPrinted, .sortedKeys]
+            )
+        case .json:
+            return nil
         }
     }
 

@@ -295,6 +295,57 @@ import Testing
     #expect(try SidebandOfflineMapPackage.validate(directory: temporary).name == "Test")
 }
 
+@Test func advancedTelemetryMatchesSidebandSensorShapesAndEvaluatesAlerts() throws {
+    var telemetry = SidebandTelemetry(
+        capturedAt: Date(timeIntervalSince1970: 1_700_000_000),
+        battery: .init(chargePercent: 18, isCharging: false)
+    )
+    telemetry.setPhysicalLink(.init(rssi: -83, snr: 7.5, qualityPercent: 62))
+    telemetry.setPowerEntries([
+        .init(label: "Radio", watts: 4.2, icon: "radio"),
+        .init(label: "Display", watts: 1.8)
+    ], production: false)
+    telemetry.setPowerEntries([.init(label: "Solar", watts: 12.5)], production: true)
+    telemetry.setCapacityEntries([.init(label: "Memory", capacity: 8_000, used: 6_000)], kind: .ram)
+    telemetry.setCapacityEntries([.init(label: "Storage", capacity: 64_000, used: 16_000)], kind: .nonVolatileMemory)
+    telemetry.setTankEntries([.init(label: "Water", capacity: 100, level: 35, unit: "L")], kind: .tank)
+    telemetry.setTankEntries([.init(label: "Diesel", capacity: 80, level: 20, unit: "L")], kind: .fuel)
+    telemetry.additionalSensors[SidebandTelemetry.SensorKind.processor.rawValue] = MessagePack.array([
+        MessagePack.array([
+            MessagePack.unsigned(0),
+            MessagePack.array([
+                MessagePack.double(71),
+                MessagePack.array([MessagePack.double(0.9), MessagePack.double(0.7), MessagePack.double(0.5)]),
+                MessagePack.double(2_400)
+            ])
+        ])
+    ])
+
+    let decoded = try SidebandTelemetry(packed: telemetry.packed())
+    #expect(decoded.physicalLink == .init(rssi: -83, snr: 7.5, qualityPercent: 62))
+    #expect(decoded.powerConsumption.map(\.watts) == [4.2, 1.8])
+    #expect(decoded.value(for: .powerConsumptionWatts) == 6)
+    #expect(decoded.powerProduction.first?.label == "Solar")
+    #expect(decoded.processors.first?.currentLoadPercent == 71)
+    #expect(decoded.processors.first?.loadAverages == [0.9, 0.7, 0.5])
+    #expect(decoded.memory.first?.usedPercent == 75)
+    #expect(decoded.storage.first?.usedPercent == 25)
+    #expect(decoded.tanks.first?.levelPercent == 35)
+    #expect(decoded.fuel.first?.levelPercent == 25)
+
+    let lowBattery = SidebandTelemetryAlertRule(
+        name: "Low battery", metric: .batteryPercent, comparison: .below,
+        threshold: 20, severity: .critical
+    )
+    let highLoad = SidebandTelemetryAlertRule(
+        name: "High processor load", metric: .processorLoadPercent, comparison: .above,
+        threshold: 90
+    )
+    #expect(lowBattery.evaluate(decoded)?.value == 18)
+    #expect(lowBattery.evaluate(decoded)?.severity == .critical)
+    #expect(highLoad.evaluate(decoded) == nil)
+}
+
 @Test func additionalInterfaceWireFormatsAreSafeAndCompatible() throws {
     #expect(String(data: ReticulumI2PSAM.hello(), encoding: .utf8) == "HELLO VERSION MIN=3.1 MAX=3.3\n")
     #expect(String(data: try ReticulumI2PSAM.createSession(id: "sideband-1"), encoding: .utf8)?.contains("STYLE=STREAM") == true)
@@ -947,6 +998,16 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(gpxText.contains("<gpx version=\"1.1\""))
     #expect(gpxText.contains("Test &amp; Contact"))
     #expect(gpxText.components(separatedBy: "<trkpt ").count == 3)
+
+    let json = try #require(SidebandTelemetryHistory.export(messages: messages, contactName: "Test Contact", format: .json))
+    let jsonObject = try #require(try JSONSerialization.jsonObject(with: json) as? [String: Any])
+    #expect(jsonObject["schema"] as? Int == 1)
+    #expect((jsonObject["samples"] as? [[String: Any]])?.count == 2)
+
+    let geoJSON = try #require(SidebandTelemetryHistory.export(messages: messages, contactName: "Test Contact", format: .geojson))
+    let geoObject = try #require(try JSONSerialization.jsonObject(with: geoJSON) as? [String: Any])
+    #expect(geoObject["type"] as? String == "FeatureCollection")
+    #expect((geoObject["features"] as? [[String: Any]])?.count == 2)
 }
 
 @Test func telemetryValidationRejectsUnsafeValuesAndReportsFreshness() {

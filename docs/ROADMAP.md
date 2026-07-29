@@ -26,9 +26,7 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
   table shapes beyond the supported `conv`, `lxm`, `telemetry`, and `announce`
   schemas.
 - Broaden support for specialised Reticulum interfaces not available through TCP, AutoInterface, RNode, or generic KISS.
-- Extend native plugin APIs while retaining App Store sandboxing, explicit permissions, and deterministic reviewability.
 - Add physical-board bootloader acceptance evidence for each supported RNode family.
-- Continue expanding less-common telemetry collectors and renderer types.
 
 ## Explicit non-goals
 

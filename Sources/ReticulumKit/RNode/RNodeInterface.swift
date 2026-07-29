@@ -251,13 +251,19 @@ public actor RNodeInterface {
               let packet = pendingPackets.first else { return }
         let frame = try engine.packetFrame(packet)
         pendingPackets.removeFirst()
+        // Close the transmit window before awaiting the byte transport.
+        // Transport callbacks are actor-reentrant, so marking the interface
+        // busy afterwards allowed another sender to enter this method while
+        // the first frame was still being written. On byte-stream transports
+        // that could interleave responses and lose otherwise valid frames.
+        awaitingRadioReady = true
         do {
             try await transport.write(frame)
         } catch {
+            awaitingRadioReady = false
             pendingPackets.insert(packet, at: 0)
             throw error
         }
-        awaitingRadioReady = true
         do {
             try await transport.write(engine.readyQueryCommand())
         } catch {

@@ -26,6 +26,23 @@ struct TelemetryMessageCard: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+            if let temperature = telemetry.temperatureCelsius {
+                Label("\(temperature.formatted(.number.precision(.fractionLength(1)))) °C", systemImage: "thermometer.medium")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            if let humidity = telemetry.relativeHumidityPercent {
+                Label("\(humidity.formatted(.number.precision(.fractionLength(0))))% humidity", systemImage: "humidity")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            if let link = telemetry.physicalLink {
+                let quality = link.qualityPercent.map { "\($0.formatted(.number.precision(.fractionLength(0))))%" } ?? "unknown quality"
+                Label("\(quality) link · RSSI \(link.rssi?.formatted(.number.precision(.fractionLength(0))) ?? "—")", systemImage: "network")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            if let watts = telemetry.value(for: .powerConsumptionWatts) {
+                Label("\(watts.formatted(.number.precision(.fractionLength(1)))) W consumption", systemImage: "bolt")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             Label(telemetry.isFresh() ? "Current" : "Historical · \(telemetry.mostRecentSensorDate.formatted(.relative(presentation: .named)))", systemImage: telemetry.isFresh() ? "checkmark.circle.fill" : "clock")
                 .font(.caption2)
                 .foregroundStyle(telemetry.isFresh() ? Color.green : Color.secondary)
@@ -45,7 +62,7 @@ private struct TelemetryMapPoint: Identifiable {
 }
 
 private struct TelemetryExportDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.commaSeparatedText, .xml] }
+    static var readableContentTypes: [UTType] { [.commaSeparatedText, .xml, .json] }
     let data: Data
 
     init(data: Data) { self.data = data }
@@ -115,6 +132,8 @@ struct ConversationTelemetryMapView: View {
                 Menu("Export", systemImage: "square.and.arrow.up") {
                     Button("CSV data") { prepareExport(.csv) }
                     Button("GPX track") { prepareExport(.gpx) }
+                    Button("JSON telemetry") { prepareExport(.json) }
+                    Button("GeoJSON features") { prepareExport(.geojson) }
                 }
                 Button("Done") { dismiss() }
             }
@@ -139,7 +158,11 @@ struct ConversationTelemetryMapView: View {
         guard let data = SidebandTelemetryHistory.export(messages: messages, contactName: conversationName, format: format) else { return }
         exportDocument = TelemetryExportDocument(data: data)
         exportExtension = format.rawValue
-        exportType = format == .csv ? .commaSeparatedText : (UTType(filenameExtension: "gpx") ?? .xml)
+        switch format {
+        case .csv: exportType = .commaSeparatedText
+        case .gpx: exportType = UTType(filenameExtension: "gpx") ?? .xml
+        case .json, .geojson: exportType = .json
+        }
         showingExporter = true
     }
 }
