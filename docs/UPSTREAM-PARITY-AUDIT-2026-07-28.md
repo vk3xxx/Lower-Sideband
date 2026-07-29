@@ -45,19 +45,19 @@ MeshChatX extension and the Reticulum wire protocol differ.
 | RNode BLE/TCP/serial | Native implementation present |
 | RNodeMulti | Complete in ReticulumKit: virtual-port selection, independent per-port configuration/state, flow control and simulator coverage. Physical multi-radio hardware acceptance is still required. |
 | Serial, KISS, AX.25 KISS | Native macOS lifecycle and advanced unified settings complete; physical acceptance remains |
-| Pipe | Native macOS core present |
+| Pipe | Complete in the ReticulumKit configured runtime and unified macOS editor |
 | WebSocket client | Added in this audit |
 | WebSocket server | Native macOS listener complete |
 | HTTP tunnel client | Added in this audit |
 | HTTP tunnel server | Native macOS listener complete |
-| I2P | Complete in ReticulumKit: SAM v3 session ownership, STREAM CONNECT/ACCEPT, HDLC transport, timeout and reconnect lifecycle. External-router acceptance remains required. |
+| I2P | Complete in ReticulumKit: SAM v3 session ownership, health probe, STREAM CONNECT/ACCEPT, HDLC transport, timeout and bounded reconnect lifecycle, with an optional real-i2pd acceptance gate. |
 | Backbone connector/listener | Complete in ReticulumKit: reference-compatible TCP/HDLC connector, spawned peer listener semantics and signed discovery transport-identity binding. |
 | Weave | Native TCP endpoint lifecycle complete; physical switch acceptance remains |
 
 ## Prioritised remaining work
 
 1. Run physical multi-radio RNodeMulti acceptance on supported hardware.
-2. Run external I2P-router interoperability acceptance.
+2. Completed: real-router I2P acceptance gate and in-app SAM diagnostics.
 3. Completed: Weave TCP endpoint lifecycle in ReticulumKit.
 4. Completed: WebSocket and HTTP server modes on macOS.
 5. Completed: one Apple-style interface editor exposing transport-valid
@@ -65,6 +65,8 @@ MeshChatX extension and the Reticulum wire protocol differ.
 6. Completed: UDP listener, advanced KISS/AX.25 and Weave runtime lifecycles.
 7. Run physical-device and public-Internet acceptance matrices before moving
    any row from partial to complete.
+8. Completed: Pipe editor/runtime lifecycle and coalesced iOS background
+   propagation wake workflow.
 
 ## Licensing boundary
 

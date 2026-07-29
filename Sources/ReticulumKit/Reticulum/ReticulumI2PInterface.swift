@@ -58,6 +58,9 @@ public struct ReticulumI2PConfiguration: Equatable, Sendable {
     public var sessionDestination: String
     public var role: ReticulumI2PStreamRole
     public var timeout: TimeInterval
+    public var reconnect: Bool
+    public var reconnectMinimumDelay: TimeInterval
+    public var reconnectMaximumDelay: TimeInterval
 
     public init(
         samHost: String = "127.0.0.1",
@@ -65,7 +68,10 @@ public struct ReticulumI2PConfiguration: Equatable, Sendable {
         sessionID: String = "lower-sideband-\(UUID().uuidString.lowercased())",
         sessionDestination: String = "TRANSIENT",
         role: ReticulumI2PStreamRole,
-        timeout: TimeInterval = 30
+        timeout: TimeInterval = 30,
+        reconnect: Bool = true,
+        reconnectMinimumDelay: TimeInterval = 1,
+        reconnectMaximumDelay: TimeInterval = 30
     ) {
         self.samHost = samHost
         self.samPort = samPort
@@ -73,6 +79,9 @@ public struct ReticulumI2PConfiguration: Equatable, Sendable {
         self.sessionDestination = sessionDestination
         self.role = role
         self.timeout = timeout
+        self.reconnect = reconnect
+        self.reconnectMinimumDelay = reconnectMinimumDelay
+        self.reconnectMaximumDelay = reconnectMaximumDelay
     }
 
     public func validated() throws -> Self {
@@ -80,7 +89,10 @@ public struct ReticulumI2PConfiguration: Equatable, Sendable {
               samPort > 0,
               ReticulumI2PSAM.validToken(sessionID),
               ReticulumI2PSAM.validToken(sessionDestination),
-              timeout > 0, timeout <= 300 else {
+              timeout > 0, timeout <= 300,
+              reconnectMinimumDelay >= 0.25,
+              reconnectMaximumDelay >= reconnectMinimumDelay,
+              reconnectMaximumDelay <= 300 else {
             throw ReticulumSAMError.invalidConfiguration
         }
         if case let .connect(destination) = role {
@@ -89,6 +101,26 @@ public struct ReticulumI2PConfiguration: Equatable, Sendable {
             }
         }
         return self
+    }
+}
+
+public struct ReticulumI2PSAMProbeResult: Equatable, Sendable {
+    public let samVersion: String
+
+    public init(samVersion: String) {
+        self.samVersion = samVersion
+    }
+}
+
+/// Performs a bounded, non-mutating SAM handshake. The probe does not create
+/// a streaming session and is safe to expose from the interface editor.
+public enum ReticulumI2PSAMDiagnostics {
+    public static func probe(
+        host: String = "127.0.0.1",
+        port: UInt16 = 7_656,
+        timeout: TimeInterval = 5
+    ) async throws -> ReticulumI2PSAMProbeResult {
+        try await ReticulumI2PInterface.probeSAM(host: host, port: port, timeout: timeout)
     }
 }
 
@@ -114,6 +146,7 @@ public actor ReticulumI2PInterface {
     private var decoder = HDLCDecoder()
     private var lifecycleTask: Task<Void, Never>?
     private var generation = UUID()
+    private var reconnectAttempt = 0
 
     public init(
         configuration: ReticulumI2PConfiguration,
@@ -131,6 +164,7 @@ public actor ReticulumI2PInterface {
         guard lifecycleTask == nil, controlConnection == nil, streamConnection == nil else { return }
         generation = UUID()
         let token = generation
+        reconnectAttempt = 0
         lifecycleTask = Task { [weak self] in await self?.establish(generation: token) }
     }
 
@@ -144,6 +178,7 @@ public actor ReticulumI2PInterface {
         streamConnection = nil
         decoder = HDLCDecoder()
         sessionDestination = nil
+        reconnectAttempt = 0
         await setState(.stopped)
     }
 
@@ -189,6 +224,13 @@ public actor ReticulumI2PInterface {
                 streamCommand = try ReticulumI2PSAM.accept(id: configuration.sessionID)
             }
             _ = try await Self.command(streamCommand, on: stream, timeout: configuration.timeout)
+            if case .accept = configuration.role {
+                // SAM STREAM ACCEPT sends the connecting peer's destination on
+                // its own line before the byte stream begins. Consuming that
+                // protocol line is required; otherwise it contaminates the
+                // first HDLC frame received from the peer.
+                _ = try await Self.receivePeerDestination(on: stream, timeout: configuration.timeout)
+            }
 
             guard generation == token, !Task.isCancelled else {
                 control.cancel()
@@ -198,6 +240,7 @@ public actor ReticulumI2PInterface {
             controlConnection = control
             streamConnection = stream
             lifecycleTask = nil
+            reconnectAttempt = 0
             await setState(.ready)
             receive(on: stream, generation: token)
             monitorControl(control, generation: token)
@@ -258,6 +301,24 @@ public actor ReticulumI2PInterface {
         streamConnection = nil
         decoder = HDLCDecoder()
         await setState(.failed(reason))
+        scheduleReconnect(generation: token)
+    }
+
+    private func scheduleReconnect(generation token: UUID) {
+        guard configuration.reconnect, generation == token, lifecycleTask == nil else { return }
+        reconnectAttempt += 1
+        let exponential = configuration.reconnectMinimumDelay * pow(2, Double(max(0, reconnectAttempt - 1)))
+        let delay = min(exponential, configuration.reconnectMaximumDelay)
+        lifecycleTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            await self.retry(generation: token)
+        }
+    }
+
+    private func retry(generation token: UUID) async {
+        guard generation == token else { return }
+        await establish(generation: token)
     }
 
     private func setState(_ value: State) async {
@@ -270,6 +331,38 @@ public actor ReticulumI2PInterface {
         guard reply.verb == "HELLO", reply.operation == "REPLY" else {
             throw ReticulumSAMError.malformedReply
         }
+    }
+
+    private static func receivePeerDestination(
+        on connection: NWConnection,
+        timeout: TimeInterval
+    ) async throws -> String {
+        let destination = try await withTimeout(seconds: timeout, connection: connection) {
+            try await receiveLine(on: connection)
+        }.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ReticulumI2PSAM.validToken(destination) else {
+            throw ReticulumSAMError.malformedReply
+        }
+        return destination
+    }
+
+    fileprivate static func probeSAM(
+        host: String,
+        port: UInt16,
+        timeout: TimeInterval
+    ) async throws -> ReticulumI2PSAMProbeResult {
+        guard !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              port > 0, timeout > 0, timeout <= 30 else {
+            throw ReticulumSAMError.invalidConfiguration
+        }
+        let queue = DispatchQueue(label: "sideband.reticulum.i2p-sam-probe")
+        let connection = try await openConnection(host: host, port: port, timeout: timeout, queue: queue)
+        defer { connection.cancel() }
+        let reply = try await command(ReticulumI2PSAM.hello(), on: connection, timeout: timeout)
+        guard reply.verb == "HELLO", reply.operation == "REPLY" else {
+            throw ReticulumSAMError.malformedReply
+        }
+        return ReticulumI2PSAMProbeResult(samVersion: reply.parameters["VERSION"] ?? "3.x")
     }
 
     private static func command(_ command: Data, on connection: NWConnection, timeout: TimeInterval) async throws -> ReticulumSAMReply {

@@ -51,9 +51,10 @@ Reticulum is delay tolerant. Offline destinations, expired paths, radio duty-cyc
 | Pipe | Yes | No | External packet process |
 | Transport Instance | Yes | No | Forward routes between active Mac interfaces |
 
-Physical RNodeMulti hardware acceptance, external I2P-router acceptance and
-physical Weave-switch/serial-TNC acceptance remain tracked gates, not silently mapped
-to ordinary TCP.
+Physical RNodeMulti hardware acceptance, long-running public-I2P acceptance and
+physical Weave-switch/serial-TNC acceptance remain tracked gates, not silently
+mapped to ordinary TCP. The real-router I2P gate can be enabled with
+`SIDEBAND_EXTERNAL_I2P_SAM_HOST` and `SIDEBAND_EXTERNAL_I2P_SAM_PORT`.
 
 Physical iOS multicast behaviour requires Apple's restricted multicast entitlement. The distributed app does not claim unsupported entitlement access.
 
@@ -70,7 +71,11 @@ validated, deduplicated and limited to three live candidates. Known endpoints
 remain as fallback. Availability and policy are controlled by independent
 operators, and no public endpoint is guaranteed.
 
-For reliable mobile operation, propagation nodes provide store-and-forward delivery while iOS is suspended. Silent APNs wake hints can improve sync latency but still require an operator-controlled APNs provider and remain subject to Apple's scheduling.
+For reliable mobile operation, propagation nodes provide store-and-forward
+delivery while iOS is suspended. Lower Sideband coalesces CloudKit silent
+wakes, background refresh and network-required processing tasks, establishes a
+usable propagation link before polling, and then drains the encrypted outbox.
+Wake timing remains subject to iOS scheduling.
 
 ## Diagnostics
 

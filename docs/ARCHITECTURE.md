@@ -33,7 +33,7 @@ LXMF                                   Reticulum
 `Sources/ReticulumKit` is a standalone Swift framework and Swift Package
 library for reusable Reticulum networking. It owns every Reticulum socket,
 wire codec and interface lifecycle, including TCP, WebSocket, HTTP tunnel, UDP,
-I2P, Weave, AutoInterface, RNode, serial, KISS and AX.25 KISS. Its RNode host
+I2P, Weave, Pipe, AutoInterface, RNode, serial, KISS and AX.25 KISS. Its RNode host
 runtime includes official command framing, incremental stream decoding, radio
 configuration and telemetry, bounded `CMD_READY` flow control, lifecycle-safe
 Network.framework TCP and shared transport contracts. It has no dependency on
@@ -65,6 +65,12 @@ The Xcode project creates separate iOS and macOS framework targets from the same
 5. Destination packets are dispatched to link, proof, path, Resource, propagation, or LXMF handlers.
 6. Outgoing LXMF delivery chooses an authenticated direct link, opportunistic packet, or propagation node according to route state and policy.
 7. Delivery state advances only after valid protocol evidence; connectivity alone is not reported as message delivery.
+
+On iOS, CloudKit content-free pushes and system background tasks enter one
+coalesced wake pipeline. It restores a ReticulumKit interface, obtains a
+propagation route and authenticated link, polls the propagation queue, drains
+outbound work and then synchronises encrypted CloudKit state. Concurrent wakes
+reuse the same bounded task instead of racing independent network engines.
 
 The network map is a read-only projection of this live pipeline. It joins the
 local identity, active interfaces, validated path-table entries, next-hop

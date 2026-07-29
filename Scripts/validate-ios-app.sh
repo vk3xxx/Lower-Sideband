@@ -112,6 +112,15 @@ assert_plist_value NSBonjourServices:0 _reticulum._tcp
 assert_plist_value NSBonjourServices:1 _rns._tcp
 assert_plist_value NSBonjourServices:2 _sideband._tcp
 assert_plist_value BGTaskSchedulerPermittedIdentifiers:0 com.supes.MacSideband.refresh
+assert_plist_value BGTaskSchedulerPermittedIdentifiers:1 com.supes.MacSideband.propagation-processing
+
+background_modes="$(/usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$PLIST")"
+for required_mode in fetch processing remote-notification; do
+    if ! grep -q "$required_mode" <<<"$background_modes"; then
+        echo "Info.plist UIBackgroundModes is missing '$required_mode'." >&2
+        exit 1
+    fi
+done
 
 assert_core_plist_value() {
     local key="$1"

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.57 (95) - 2026-07-29
+
+- Completed the macOS Pipe interface in the unified editor and configured
+  ReticulumKit runtime, including safe absolute executable validation, bounded
+  arguments/environment, HDLC packet transport, diagnostics and reconnects.
+- Hardened the native I2P SAM transport with saved reconnect policy, bounded
+  exponential recovery, an in-app SAM health check and an optional real-router
+  bidirectional acceptance gate.
+- Consolidated iOS background wake work, wait for the propagation path and link
+  before polling, preserve cold-launch CloudKit wakes, and schedule both app
+  refresh and network-required processing tasks.
+- Moved RNode READY-driven queue continuation onto task boundaries so sustained
+  traffic cannot form a recursive transport callback chain.
+
 ## 1.3.56 (94) - 2026-07-29
 
 - Added native ReticulumKit WebSocket and HTTP tunnel listeners with bounded

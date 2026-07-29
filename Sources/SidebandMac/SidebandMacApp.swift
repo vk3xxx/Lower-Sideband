@@ -382,11 +382,27 @@ private final class RemoteWakeBridge {
     static let shared = RemoteWakeBridge()
     private var handler: (@MainActor () async -> Bool)?
     private var memoryPressureHandler: (@MainActor () -> Void)?
+    private var hasDeferredWake = false
 
     func install(wake handler: @escaping @MainActor () async -> Bool, memoryPressure: @escaping @MainActor () -> Void) {
-        self.handler = handler; memoryPressureHandler = memoryPressure
+        self.handler = handler
+        memoryPressureHandler = memoryPressure
+        if hasDeferredWake {
+            hasDeferredWake = false
+            Task { _ = await handler() }
+        }
     }
-    func perform() async -> Bool { await handler?() ?? false }
+    func perform() async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while handler == nil, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        guard let handler else {
+            hasDeferredWake = true
+            return false
+        }
+        return await handler()
+    }
     func handleMemoryPressure() { memoryPressureHandler?() }
 }
 

@@ -34,6 +34,7 @@ public actor ReticulumConfiguredInterfaceRuntime {
     private var weaveInterfaces: [UUID: ReticulumWeaveInterface] = [:]
 #if os(macOS)
     private var serialInterfaces: [UUID: ReticulumSerialPacketInterface] = [:]
+    private var pipeInterfaces: [UUID: ReticulumPipeInterface] = [:]
 #endif
 
     public init(
@@ -93,6 +94,7 @@ public actor ReticulumConfiguredInterfaceRuntime {
         if let interface = weaveInterfaces[id] { try await interface.send(rawPacket: rawPacket); return }
 #if os(macOS)
         if let interface = serialInterfaces[id] { try await interface.send(rawPacket: rawPacket); return }
+        if let interface = pipeInterfaces[id] { try await interface.send(rawPacket); return }
 #endif
         throw RuntimeError.interfaceNotReady
     }
@@ -122,7 +124,9 @@ public actor ReticulumConfiguredInterfaceRuntime {
         for interface in weaveInterfaces.values { await interface.stop() }
 #if os(macOS)
         for interface in serialInterfaces.values { await interface.stop() }
+        for interface in pipeInterfaces.values { await interface.stop() }
         serialInterfaces.removeAll()
+        pipeInterfaces.removeAll()
 #endif
         tcpClients.removeAll(); tcpServers.removeAll(); udpListeners.removeAll()
         webSocketClients.removeAll(); webSocketServers.removeAll()
@@ -237,7 +241,8 @@ public actor ReticulumConfiguredInterfaceRuntime {
                     samPort: profile.samPort ?? 7_656,
                     sessionID: profile.sessionID ?? "lower-sideband-\(profile.id.uuidString.lowercased())",
                     role: .connect(destination: profile.host!),
-                    timeout: profile.connectTimeout
+                    timeout: profile.connectTimeout,
+                    reconnect: profile.reconnect
                 ),
                 ifac: ifac,
                 packetHandler: receive,
@@ -291,7 +296,24 @@ public actor ReticulumConfiguredInterfaceRuntime {
 #else
             throw RuntimeError.unsupportedOnPlatform
 #endif
-        case .auto, .rnode, .rnodeMulti, .pipe:
+        case .pipe:
+#if os(macOS)
+            let interface = ReticulumPipeInterface(
+                executableURL: URL(fileURLWithPath: profile.device!),
+                arguments: profile.pipeArguments ?? [],
+                environment: profile.pipeEnvironment ?? [:],
+                reconnect: profile.reconnect,
+                packetHandler: receive,
+                stateHandler: { [weak self] state in
+                    await self?.setPipeState(state, profile: profile)
+                }
+            )
+            pipeInterfaces[id] = interface
+            try await interface.start()
+#else
+            throw RuntimeError.unsupportedOnPlatform
+#endif
+        case .auto, .rnode, .rnodeMulti:
             // These lifecycles are owned by dedicated ReticulumKit managers.
             throw RuntimeError.managedByDedicatedRuntime
         }
@@ -341,6 +363,15 @@ public actor ReticulumConfiguredInterfaceRuntime {
 
 #if os(macOS)
     private func setSerialState(_ state: ReticulumSerialPacketInterface.State, profile: ReticulumInterfaceProfile) {
+        switch state {
+        case .ready: setReady(profile)
+        case .connecting: setState(.starting, profile: profile)
+        case .failed(let reason): setState(.failed(reason), profile: profile)
+        case .stopped: setState(.stopped, profile: profile)
+        }
+    }
+
+    private func setPipeState(_ state: ReticulumPipeInterface.State, profile: ReticulumInterfaceProfile) {
         switch state {
         case .ready: setReady(profile)
         case .connecting: setState(.starting, profile: profile)

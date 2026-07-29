@@ -258,7 +258,18 @@ struct RNodeTCPRuntimeTests {
             }
         }
 
-        try await waitUntil(timeout: .seconds(30)) { await received.count == 2_500 }
+        let receiveDeadline = ContinuousClock.now + .seconds(30)
+        while await received.count != 2_500, ContinuousClock.now < receiveDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard await received.count == 2_500 else {
+            let receivedCount = await received.count
+            let transmittedCount = await transport.transmittedPackets.count
+            let queuedCount = await interface.snapshot().queuedPackets
+            throw RNodeError.transport(
+                "RNode flow-control soak stalled: received \(receivedCount), transmitted \(transmittedCount), queued \(queuedCount)."
+            )
+        }
         #expect(await received.count == 2_500)
         #expect(await transport.transmittedPackets.count == 2_500)
         #expect(await interface.snapshot().queuedPackets == 0)
@@ -444,6 +455,8 @@ struct ReticulumKitTransportRuntimeTests {
     func i2pSAMLifecycle() async throws {
         let fixture = try LocalSAMFixture()
         let port = try await fixture.start()
+        let probe = try await ReticulumI2PSAMDiagnostics.probe(host: "127.0.0.1", port: port, timeout: 2)
+        #expect(probe.samVersion == "3.3")
         let states = TCPStateRecorder()
         let received = PacketCounter()
         let interface = ReticulumI2PInterface(
@@ -468,6 +481,111 @@ struct ReticulumKitTransportRuntimeTests {
         await interface.stop()
         await fixture.stop()
     }
+
+    @Test("External I2P SAM router carries Reticulum packets bidirectionally when configured")
+    func externalI2PSAMAcceptance() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let portText = environment["SIDEBAND_EXTERNAL_I2P_SAM_PORT"],
+              let port = UInt16(portText) else { return }
+        let host = environment["SIDEBAND_EXTERNAL_I2P_SAM_HOST"] ?? "127.0.0.1"
+        let suffix = UUID().uuidString.lowercased()
+        let acceptReceived = PacketCounter()
+        let connectReceived = PacketCounter()
+        let acceptStates = TCPStateRecorder()
+        let connectStates = TCPStateRecorder()
+        let acceptor = ReticulumI2PInterface(
+            configuration: ReticulumI2PConfiguration(
+                samHost: host,
+                samPort: port,
+                sessionID: "lsb-accept-\(suffix)",
+                role: .accept,
+                timeout: 60,
+                reconnect: false
+            ),
+            packetHandler: { await acceptReceived.add($0.raw) },
+            stateHandler: { await acceptStates.add($0) }
+        )
+        await acceptor.start()
+        let destinationDeadline = ContinuousClock.now + .seconds(60)
+        while await acceptor.sessionDestination == nil, ContinuousClock.now < destinationDeadline {
+            if case let .failed(reason) = await acceptor.state {
+                throw RNodeError.transport("External SAM accept session failed: \(reason)")
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let destination = try #require(await acceptor.sessionDestination)
+        let connector = ReticulumI2PInterface(
+            configuration: ReticulumI2PConfiguration(
+                samHost: host,
+                samPort: port,
+                sessionID: "lsb-connect-\(suffix)",
+                role: .connect(destination: destination),
+                timeout: 60,
+                reconnect: false
+            ),
+            packetHandler: { await connectReceived.add($0.raw) },
+            stateHandler: { await connectStates.add($0) }
+        )
+        await connector.start()
+        let readyDeadline = ContinuousClock.now + .seconds(120)
+        while ContinuousClock.now < readyDeadline {
+            let acceptReady = await acceptStates.isReady
+            let connectReady = await connectStates.isReady
+            if acceptReady && connectReady { break }
+            let acceptState = await acceptor.state
+            let connectState = await connector.state
+            if case let .failed(reason) = acceptState {
+                throw RNodeError.transport("External SAM accept stream failed: \(reason)")
+            }
+            if case let .failed(reason) = connectState {
+                throw RNodeError.transport("External SAM connect stream failed: \(reason)")
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(await acceptStates.isReady)
+        #expect(await connectStates.isReady)
+
+        let forward = packet(payload: "external-i2p-forward", destinationByte: 0x51)
+        try await connector.send(rawPacket: forward)
+        try await waitUntil(timeout: .seconds(30)) { await acceptReceived.combined == forward }
+        let reverse = packet(payload: "external-i2p-reverse", destinationByte: 0x52)
+        try await acceptor.send(rawPacket: reverse)
+        try await waitUntil(timeout: .seconds(30)) { await connectReceived.combined == reverse }
+
+        await connector.stop()
+        await acceptor.stop()
+    }
+
+    #if os(macOS)
+    @Test("Configured Pipe profile owns a safe HDLC subprocess lifecycle")
+    func configuredPipeLifecycle() async throws {
+        let received = PacketCounter()
+        let profile = try ReticulumInterfaceProfile(
+            name: "Local echo pipe",
+            kind: .pipe,
+            device: "/bin/cat",
+            reconnect: false,
+            pipeArguments: [],
+            pipeEnvironment: ["LC_ALL": "C"]
+        ).validated()
+        let runtime = ReticulumConfiguredInterfaceRuntime { packet, interfaceID in
+            #expect(interfaceID == ReticulumConfiguredInterfaceRuntime.interfaceID(for: profile.id))
+            await received.add(packet.raw)
+        }
+        await runtime.apply([profile])
+        try await waitUntil {
+            await runtime.currentSnapshots().first?.state == .ready
+        }
+        let raw = packet(payload: "pipe-runtime", destinationByte: 0x39)
+        try await runtime.send(
+            rawPacket: raw,
+            on: ReticulumConfiguredInterfaceRuntime.interfaceID(for: profile.id)
+        )
+        try await waitUntil { await received.combined == raw }
+        await runtime.stopAll()
+        #expect(await runtime.currentSnapshots().first?.state == .stopped)
+    }
+    #endif
 
     @Test("Backbone listener keeps independent peer sockets and HDLC decoders")
     func backboneListener() async throws {

@@ -7,6 +7,7 @@ import BackgroundTasks
 @MainActor
 public final class BackgroundRefreshCoordinator {
     public static let identifier = "com.supes.MacSideband.refresh"
+    public static let processingIdentifier = "com.supes.MacSideband.propagation-processing"
     private var isRegistered = false
 
     public init() { }
@@ -14,24 +15,28 @@ public final class BackgroundRefreshCoordinator {
     public func register(handler: @escaping @MainActor () async -> Bool) {
 #if os(iOS)
         guard !isRegistered else { return }
-        isRegistered = BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.identifier, using: nil) { task in
-            guard let refresh = task as? BGAppRefreshTask else { task.setTaskCompleted(success: false); return }
-            let work = Task { @MainActor in
-                self.schedule()
-                let succeeded = await withTaskGroup(of: Bool.self) { group in
-                    group.addTask { await handler() }
-                    group.addTask {
-                        try? await Task.sleep(for: .seconds(25))
-                        return false
+        let register: (String, TimeInterval) -> Void = { identifier, timeout in
+            BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
+                let work = Task { @MainActor in
+                    self.schedule()
+                    let succeeded = await withTaskGroup(of: Bool.self) { group in
+                        group.addTask { await handler() }
+                        group.addTask {
+                            try? await Task.sleep(for: .seconds(timeout))
+                            return false
+                        }
+                        let result = await group.next() ?? false
+                        group.cancelAll()
+                        return result
                     }
-                    let result = await group.next() ?? false
-                    group.cancelAll()
-                    return result
+                    task.setTaskCompleted(success: succeeded && !Task.isCancelled)
                 }
-                refresh.setTaskCompleted(success: succeeded && !Task.isCancelled)
+                task.expirationHandler = { work.cancel() }
             }
-            refresh.expirationHandler = { work.cancel() }
         }
+        register(Self.identifier, 25)
+        register(Self.processingIdentifier, 55)
+        isRegistered = true
 #endif
     }
 
@@ -42,6 +47,12 @@ public final class BackgroundRefreshCoordinator {
         let request = BGAppRefreshTaskRequest(identifier: Self.identifier)
         request.earliestBeginDate = max(earliest ?? .distantPast, Date(timeIntervalSinceNow: 15 * 60))
         try? BGTaskScheduler.shared.submit(request)
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.processingIdentifier)
+        let processing = BGProcessingTaskRequest(identifier: Self.processingIdentifier)
+        processing.earliestBeginDate = request.earliestBeginDate
+        processing.requiresNetworkConnectivity = true
+        processing.requiresExternalPower = false
+        try? BGTaskScheduler.shared.submit(processing)
 #endif
     }
 }

@@ -83,7 +83,7 @@ struct ReticulumInterfaceProfilesView: View {
     private var availableKinds: [ReticulumInterfaceKind] {
         #if os(macOS)
         [.tcpClient, .tcpServer, .backboneClient, .backboneServer, .i2p, .udp,
-         .serial, .kiss, .ax25Kiss, .webSocketClient, .webSocketServer,
+         .serial, .kiss, .ax25Kiss, .pipe, .webSocketClient, .webSocketServer,
          .httpClient, .httpServer, .weave]
         #else
         [.tcpClient, .backboneClient, .i2p, .udp, .webSocketClient, .httpClient, .weave]
@@ -110,6 +110,8 @@ private struct ReticulumInterfaceEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: ReticulumInterfaceProfile
     @State private var validationMessage: String?
+    @State private var i2pTestMessage: String?
+    @State private var isTestingI2P = false
     let save: (ReticulumInterfaceProfile) -> String?
 
     init(profile: ReticulumInterfaceProfile, save: @escaping (ReticulumInterfaceProfile) -> String?) {
@@ -167,7 +169,9 @@ private struct ReticulumInterfaceEditorView: View {
 
                 if fields.contains(.device) || fields.contains(.bitrate) || fields.contains(.kissPort) {
                     Section("Hardware") {
-                        if fields.contains(.device) { TextField("Device or command", text: optional(\.device)) }
+                        if fields.contains(.device) {
+                            TextField(draft.kind == .pipe ? "Executable path" : "Device", text: optional(\.device))
+                        }
                         if fields.contains(.bitrate) { TextField("Bitrate / baud rate", value: $draft.bitrate, format: .number) }
                         if fields.contains(.kissPort) {
                             TextField("KISS port", value: $draft.kissPort, format: .number)
@@ -183,11 +187,43 @@ private struct ReticulumInterfaceEditorView: View {
                     }
                 }
 
+                if fields.contains(.pipeArguments) || fields.contains(.pipeEnvironment) {
+                    Section {
+                        if fields.contains(.pipeArguments) {
+                            TextField("Arguments (one per line)", text: pipeArgumentsBinding, axis: .vertical)
+                                .lineLimit(3...8)
+                        }
+                        if fields.contains(.pipeEnvironment) {
+                            TextField("Environment (KEY=VALUE, one per line)", text: pipeEnvironmentBinding, axis: .vertical)
+                                .lineLimit(3...8)
+                        }
+                    } header: {
+                        Text("Pipe process")
+                    } footer: {
+                        Text("Lower Sideband launches only the absolute executable shown above. Shell expansion is never used.")
+                    }
+                }
+
                 if fields.contains(.sam) {
                     Section("I2P SAM") {
                         TextField("SAM host", text: optional(\.samHost, default: "127.0.0.1"))
                         TextField("SAM port", value: $draft.samPort, format: .number.grouping(.never))
                         TextField("Session ID", text: optional(\.sessionID, default: "lower-sideband"))
+                        Button {
+                            testI2PBridge()
+                        } label: {
+                            if isTestingI2P {
+                                Label("Testing SAM bridge…", systemImage: "hourglass")
+                            } else {
+                                Label("Test SAM Bridge", systemImage: "checkmark.circle")
+                            }
+                        }
+                        .disabled(isTestingI2P)
+                        if let i2pTestMessage {
+                            Text(i2pTestMessage)
+                                .font(.caption)
+                                .foregroundStyle(i2pTestMessage.hasPrefix("Connected") ? Color.green : Color.orange)
+                        }
                     }
                 }
 
@@ -236,7 +272,7 @@ private struct ReticulumInterfaceEditorView: View {
     private var editorKinds: [ReticulumInterfaceKind] {
         #if os(macOS)
         [.tcpClient, .tcpServer, .backboneClient, .backboneServer, .i2p, .udp,
-         .serial, .kiss, .ax25Kiss, .webSocketClient, .webSocketServer,
+         .serial, .kiss, .ax25Kiss, .pipe, .webSocketClient, .webSocketServer,
          .httpClient, .httpServer, .weave]
         #else
         [.tcpClient, .backboneClient, .i2p, .udp, .webSocketClient, .httpClient, .weave]
@@ -247,6 +283,57 @@ private struct ReticulumInterfaceEditorView: View {
     }
     private var urlBinding: Binding<String> {
         Binding(get: { draft.url?.absoluteString ?? "" }, set: { draft.url = URL(string: $0) })
+    }
+    private var pipeArgumentsBinding: Binding<String> {
+        Binding(
+            get: { (draft.pipeArguments ?? []).joined(separator: "\n") },
+            set: {
+                let values = $0.split(whereSeparator: \.isNewline).map(String.init)
+                draft.pipeArguments = values.isEmpty ? nil : values
+            }
+        )
+    }
+    private var pipeEnvironmentBinding: Binding<String> {
+        Binding(
+            get: {
+                (draft.pipeEnvironment ?? [:])
+                    .sorted { $0.key < $1.key }
+                    .map { "\($0.key)=\($0.value)" }
+                    .joined(separator: "\n")
+            },
+            set: {
+                var values: [String: String] = [:]
+                for line in $0.split(whereSeparator: \.isNewline) {
+                    guard let separator = line.firstIndex(of: "=") else { continue }
+                    values[String(line[..<separator])] = String(line[line.index(after: separator)...])
+                }
+                draft.pipeEnvironment = values.isEmpty ? nil : values
+            }
+        )
+    }
+    private func testI2PBridge() {
+        isTestingI2P = true
+        i2pTestMessage = nil
+        let host = draft.samHost ?? "127.0.0.1"
+        let port = draft.samPort ?? 7_656
+        Task {
+            do {
+                let result = try await ReticulumI2PSAMDiagnostics.probe(
+                    host: host,
+                    port: port,
+                    timeout: min(max(draft.connectTimeout, 1), 30)
+                )
+                await MainActor.run {
+                    i2pTestMessage = "Connected · SAM \(result.samVersion)"
+                    isTestingI2P = false
+                }
+            } catch {
+                await MainActor.run {
+                    i2pTestMessage = "Unavailable · \(error.localizedDescription)"
+                    isTestingI2P = false
+                }
+            }
+        }
     }
     private func hex(_ path: WritableKeyPath<ReticulumInterfaceProfile, Data?>) -> Binding<String> {
         Binding(

@@ -41,8 +41,8 @@ The detailed upstream comparison and exact pinned versions are in
 | RNode serial | macOS | Yes via ReticulumKit | Protocol conformance; physical device pending | Implemented, not hardware-certified |
 | RNodeMulti virtual ports | `RNodeMultiInterface` | Native virtual-port selection, per-port radio configuration/state, flow control and shared BLE/TCP/serial transport | Exact framing, all 12 virtual ports and simulator coverage | Implemented in ReticulumKit; physical multi-radio device acceptance remains required |
 | Generic KISS / AX.25 KISS | macOS | Unified interface editor | Framing, commands, flow control, AX.25 UI and chunk tests | Complete host lifecycle; physical TNC acceptance remains |
-| Pipe | macOS | Core API | Process lifecycle and HDLC tests | Complete core; settings UI pending |
-| I2P | `I2PInterface` | Native SAM v3 session ownership plus STREAM CONNECT/ACCEPT lifecycle, HDLC, timeout and reconnect support | Live local SAM bridge lifecycle and bidirectional packet test | Implemented in ReticulumKit; external I2P-router acceptance remains required |
+| Pipe | macOS | Unified interface editor | Safe process lifecycle, reconnect and bidirectional HDLC echo test | Complete |
+| I2P | `I2PInterface` | Native SAM v3 session ownership plus STREAM CONNECT/ACCEPT lifecycle, health probe, timeout and bounded reconnect | Local SAM lifecycle plus optional real i2pd bidirectional acceptance gate | Complete in ReticulumKit; long-running public I2P soak remains operational acceptance |
 | Backbone connector/listener | `BackboneInterface` | TCP/HDLC-compatible connector, multi-peer listener and signed discovery transport-identity binding | Live connector/listener packet test and discovery identity validation | Implemented in ReticulumKit |
 | Weave | macOS/iOS | Unified interface editor | Bounds, frame and configured-runtime lifecycle tests | Complete TCP endpoint lifecycle; physical switch acceptance remains |
 
@@ -52,7 +52,8 @@ The detailed upstream comparison and exact pinned versions are in
 - iOS multicast entitlement behaviour on real signed devices.
 - Long-running public-Internet tests across independently operated transports.
 - Operator-controlled gateway, propagation-node and optional APNs wake-service
-  availability.
+  availability. iOS now coalesces CloudKit/BGTask wakes and waits for a usable
+  propagation link, but the operating system still decides execution time.
 
 Public gateways are bootstrap infrastructure, not a central account service,
 and no community-operated endpoint can be guaranteed by the app.

@@ -203,8 +203,11 @@ public actor RNodeInterface {
                 if available {
                     readinessPollTask?.cancel(); readinessPollTask = nil
                     awaitingRadioReady = false
-                    do { try await pumpOutboundQueue() }
-                    catch { await fail(error.localizedDescription) }
+                    // Resume on a fresh task boundary. Some byte transports
+                    // deliver READY synchronously from write(); recursively
+                    // pumping here can build an unbounded callback chain under
+                    // sustained traffic and starve receipt processing.
+                    Task { [weak self] in await self?.resumeOutboundQueue() }
                 } else {
                     scheduleReadinessPoll()
                 }
@@ -231,6 +234,11 @@ public actor RNodeInterface {
     }
 
     private func flushQueue() async {
+        do { try await pumpOutboundQueue() }
+        catch { await fail(error.localizedDescription) }
+    }
+
+    private func resumeOutboundQueue() async {
         do { try await pumpOutboundQueue() }
         catch { await fail(error.localizedDescription) }
     }

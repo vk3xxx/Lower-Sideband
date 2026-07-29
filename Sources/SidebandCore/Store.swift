@@ -278,6 +278,8 @@ public final class SidebandStore {
     private var voiceCallTimeoutTask: Task<Void, Never>?
     @ObservationIgnored private var voiceFrameHandler: ((LXSTVoice.Codec, Data) -> Void)?
     private var propagationSyncTask: Task<Void, Never>?
+    private var backgroundWakeTask: Task<Bool, Never>?
+    private var backgroundWakeToken: UUID?
     private var reconnectTask: Task<Void, Never>?
     private var attemptedGatewayIDs: Set<String> = []
     private var attemptedConfiguredGatewayIDs: Set<String> = []
@@ -1960,32 +1962,7 @@ public final class SidebandStore {
     }
 
     private func performBackgroundRefresh() async -> Bool {
-        let startedAt = Date.now
-        defer {
-            lastBackgroundRefreshAt = startedAt
-            UserDefaults.standard.set(startedAt, forKey: "sidebandLastBackgroundRefreshAt")
-            if let lastBackgroundRefreshSucceeded {
-                UserDefaults.standard.set(lastBackgroundRefreshSucceeded, forKey: "sidebandLastBackgroundRefreshSucceeded")
-            }
-        }
-        if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
-        let deadline = ContinuousClock.now + .seconds(10)
-        while networkState != .ready, ContinuousClock.now < deadline, !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(250))
-        }
-        guard networkState == .ready, !Task.isCancelled else {
-            lastBackgroundRefreshSucceeded = false
-            backgroundRefresh.schedule()
-            return false
-        }
-        await announceLocalDeliveryDestination()
-        await syncPropagationNow()
-        await flushQueuedMessages()
-        for conversation in conversations { await propagateQueued(for: conversation.id) }
-        if iCloudSyncEnabled { await syncICloudNow() }
-        lastBackgroundRefreshSucceeded = !Task.isCancelled
-        backgroundRefresh.schedule()
-        return !Task.isCancelled
+        await performCoalescedWakeSync(networkTimeout: 10)
     }
 
     /// Performs the bounded work allowed after an iOS silent wake. The push
@@ -1993,36 +1970,109 @@ public final class SidebandStore {
     /// end-to-end encrypted LXMF propagation sync.
     @discardableResult
     public func performRemoteWakeSync() async -> Bool {
+        await performCoalescedWakeSync(networkTimeout: 12)
+    }
+
+    private func performCoalescedWakeSync(networkTimeout: TimeInterval) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if let backgroundWakeTask {
+            return await withTaskCancellationHandler {
+                await backgroundWakeTask.value
+            } onCancel: {
+                Task { @MainActor [weak self] in self?.cancelBackgroundWake() }
+            }
+        }
+        let token = UUID()
+        backgroundWakeToken = token
+        let task = Task { @MainActor [weak self] in
+            await self?.runWakeSync(networkTimeout: networkTimeout) ?? false
+        }
+        backgroundWakeTask = task
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelBackgroundWake(token: token) }
+        }
+        if backgroundWakeToken == token {
+            backgroundWakeTask = nil
+            backgroundWakeToken = nil
+        }
+        return result
+    }
+
+    private func cancelBackgroundWake(token: UUID? = nil) {
+        guard token == nil || backgroundWakeToken == token else { return }
+        backgroundWakeTask?.cancel()
+        backgroundWakeTask = nil
+        backgroundWakeToken = nil
+    }
+
+    private func runWakeSync(networkTimeout: TimeInterval) async -> Bool {
+        let startedAt = Date.now
+        defer {
+            let succeeded = !Task.isCancelled && networkState == .ready
+            lastBackgroundRefreshAt = startedAt
+            lastBackgroundRefreshSucceeded = succeeded
+            UserDefaults.standard.set(startedAt, forKey: "sidebandLastBackgroundRefreshAt")
+            UserDefaults.standard.set(succeeded, forKey: "sidebandLastBackgroundRefreshSucceeded")
+            backgroundRefresh.schedule()
+        }
         if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
-        let networkDeadline = ContinuousClock.now + .seconds(12)
+        let networkDeadline = ContinuousClock.now + .seconds(networkTimeout)
         while networkState != .ready, ContinuousClock.now < networkDeadline, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(250))
         }
         guard networkState == .ready, !Task.isCancelled else {
-            backgroundRefresh.schedule()
             return false
         }
 
         await announceLocalDeliveryDestination()
         guard !Task.isCancelled else { return false }
-        if DestinationHash.isValid(propagationNodeHash) {
-            if !propagationNodeHasPath { await requestPropagationNodePath() }
-            if propagationNodeHasPath,
-               !pendingLinkHashes.contains(propagationNodeHash),
-               !activeLinkHashes.contains(propagationNodeHash) {
-                await requestLink(to: propagationNodeHash)
+        if DestinationHash.isValid(propagationNodeHash),
+           await preparePropagationLink(until: ContinuousClock.now + .seconds(8)) {
+            let responseBaseline = propagationResponsesReceived
+            await syncPropagationNow()
+            let responseDeadline = ContinuousClock.now + .seconds(4)
+            while propagationResponsesReceived == responseBaseline,
+                  pendingPropagationRequests.values.contains(where: { if case .list = $0 { true } else { false } }),
+                  ContinuousClock.now < responseDeadline,
+                  !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(200))
             }
         }
-        await syncPropagationNow()
         guard !Task.isCancelled else { return false }
+        await flushQueuedMessages()
         for conversation in conversations {
             guard !Task.isCancelled else { return false }
             await attemptDelivery(for: conversation.id)
             await propagateQueued(for: conversation.id)
         }
         if iCloudSyncEnabled { await syncICloudNow() }
-        backgroundRefresh.schedule()
         return true
+    }
+
+    private func preparePropagationLink(until deadline: ContinuousClock.Instant) async -> Bool {
+        guard DestinationHash.isValid(propagationNodeHash) else { return false }
+        var lastPathRequest = ContinuousClock.now - .seconds(10)
+        var lastLinkRequest = ContinuousClock.now - .seconds(10)
+        while ContinuousClock.now < deadline, !Task.isCancelled {
+            if activeLinks.values.contains(where: { $0.destinationHash.hex == propagationNodeHash }) {
+                return true
+            }
+            if !propagationNodeHasPath,
+               !propagationNodePathPending,
+               lastPathRequest.duration(to: ContinuousClock.now) >= .seconds(2) {
+                lastPathRequest = ContinuousClock.now
+                await requestPropagationNodePath()
+            } else if propagationNodeHasPath,
+                      !pendingLinkHashes.contains(propagationNodeHash),
+                      lastLinkRequest.duration(to: ContinuousClock.now) >= .seconds(2) {
+                lastLinkRequest = ContinuousClock.now
+                await requestLink(to: propagationNodeHash)
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return activeLinks.values.contains(where: { $0.destinationHash.hex == propagationNodeHash })
     }
 
     public func setICloudSyncEnabled(_ enabled: Bool) async {

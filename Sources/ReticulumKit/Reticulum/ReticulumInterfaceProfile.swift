@@ -91,6 +91,8 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
     public var switchID: Data?
     public var localEndpointID: Data?
     public var remoteEndpointID: Data?
+    public var pipeArguments: [String]?
+    public var pipeEnvironment: [String: String]?
 
     public init(
         id: UUID = UUID(),
@@ -126,7 +128,9 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         flowControl: Bool? = nil,
         switchID: Data? = nil,
         localEndpointID: Data? = nil,
-        remoteEndpointID: Data? = nil
+        remoteEndpointID: Data? = nil,
+        pipeArguments: [String]? = nil,
+        pipeEnvironment: [String: String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -162,6 +166,8 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         self.switchID = switchID
         self.localEndpointID = localEndpointID
         self.remoteEndpointID = remoteEndpointID
+        self.pipeArguments = pipeArguments
+        self.pipeEnvironment = pipeEnvironment
     }
 
     public func validated() throws -> Self {
@@ -250,7 +256,26 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
                 remoteEndpointID: remoteEndpointID,
                 reconnect: reconnect
             ).validated()
-        case .auto, .rnode, .pipe:
+        case .pipe:
+            guard let executable = device?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  executable.hasPrefix("/") else {
+                throw ValidationError.invalidPipeExecutable
+            }
+            let arguments = pipeArguments ?? []
+            guard arguments.count <= 64,
+                  arguments.allSatisfy({ !$0.contains("\0") && $0.utf8.count <= 4_096 }) else {
+                throw ValidationError.invalidPipeArguments
+            }
+            let environment = pipeEnvironment ?? [:]
+            guard environment.count <= 64,
+                  environment.allSatisfy({
+                      !$0.key.isEmpty && !$0.key.contains("=") && !$0.key.contains("\0") &&
+                      !$0.value.contains("\0") &&
+                      $0.key.utf8.count <= 256 && $0.value.utf8.count <= 4_096
+                  }) else {
+                throw ValidationError.invalidPipeEnvironment
+            }
+        case .auto, .rnode:
             break
         }
         return self
@@ -287,6 +312,9 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         case invalidMTU
         case invalidIFACSize
         case missingVirtualPorts
+        case invalidPipeExecutable
+        case invalidPipeArguments
+        case invalidPipeEnvironment
 
         public var errorDescription: String? {
             switch self {
@@ -300,6 +328,9 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
             case .invalidMTU: "MTU must be between 256 and 262,144 bytes."
             case .invalidIFACSize: "IFAC size must be between 1 and 64 bytes."
             case .missingVirtualPorts: "Configure at least one RNode virtual port."
+            case .invalidPipeExecutable: "Choose an executable using its absolute path."
+            case .invalidPipeArguments: "Pipe arguments are invalid or exceed the safe limit."
+            case .invalidPipeEnvironment: "Pipe environment entries are invalid or exceed the safe limit."
             }
         }
     }
@@ -310,6 +341,7 @@ public enum ReticulumInterfaceField: String, CaseIterable, Sendable {
     case mtu, bitrate, polling, ifac, transportIdentity, sam, virtualPorts
     case listenHost, forwardHost, forwardPort, callsign, ssid, kissPort, flowControl
     case switchID, localEndpointID, remoteEndpointID
+    case pipeArguments, pipeEnvironment
 }
 
 public extension ReticulumInterfaceKind {
@@ -328,7 +360,7 @@ public extension ReticulumInterfaceKind {
         case .serial: fields.formUnion([.device, .bitrate])
         case .kiss: fields.formUnion([.device, .bitrate, .kissPort, .flowControl])
         case .ax25Kiss: fields.formUnion([.device, .bitrate, .kissPort, .flowControl, .callsign, .ssid])
-        case .pipe: fields.formUnion([.device, .reconnect])
+        case .pipe: fields.formUnion([.device, .reconnect, .pipeArguments, .pipeEnvironment])
         case .webSocketClient, .httpClient: fields.formUnion([.url, .timeout, .reconnect, .mtu, .polling])
         case .webSocketServer, .httpServer: fields.formUnion([.listenHost, .port, .mtu, .polling])
         case .weave: fields.formUnion([.host, .port, .switchID, .localEndpointID, .remoteEndpointID, .reconnect])
