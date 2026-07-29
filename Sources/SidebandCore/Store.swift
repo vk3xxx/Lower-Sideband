@@ -4,7 +4,7 @@ import CryptoKit
 import Network
 import ReticulumKit
 
-public enum NetworkConnectionMode: String, CaseIterable, Sendable {
+public enum NetworkConnectionMode: String, Codable, CaseIterable, Sendable {
     case automatic
     case configured
 
@@ -152,6 +152,8 @@ public final class SidebandStore {
     public private(set) var connectionMode: NetworkConnectionMode
     public var internetOnlyEnabled: Bool
     public var autoInterfaceEnabled: Bool
+    public private(set) var networkProfiles: [SidebandNetworkProfile] = SidebandNetworkProfile.builtIns
+    public private(set) var activeNetworkProfileID: UUID?
     public private(set) var reticulumInterfaceProfiles: [ReticulumInterfaceProfile] = []
     public private(set) var reticulumInterfaceProfileErrors: [UUID: String] = [:]
     public private(set) var configuredInterfaceSnapshots: [ReticulumConfiguredInterfaceRuntime.Snapshot] = []
@@ -436,6 +438,7 @@ public final class SidebandStore {
         remoteWakeEnabled = UserDefaults.standard.bool(forKey: "remoteWakeEnabled")
         remoteWakeLastRegisteredAt = UserDefaults.standard.object(forKey: "sidebandAPNsLastRegisteredAt") as? Date
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
+        activeNetworkProfileID = UserDefaults.standard.string(forKey: "sidebandActiveNetworkProfileID").flatMap(UUID.init(uuidString:))
         #if os(macOS)
         transportInstanceEnabled = UserDefaults.standard.bool(forKey: "reticulumTransportInstanceEnabled")
         #else
@@ -452,6 +455,11 @@ public final class SidebandStore {
         telemetryCollectorEnabled = UserDefaults.standard.bool(forKey: "telemetryCollectorEnabled")
         telemetryCollectorHash = UserDefaults.standard.string(forKey: "telemetryCollectorHash") ?? ""
         telemetryCollectorLatestOnly = UserDefaults.standard.object(forKey: "telemetryCollectorLatestOnly") as? Bool ?? true
+        if let encrypted = UserDefaults.standard.data(forKey: "sidebandNetworkProfiles.v1"),
+           let data = try? localDataCipher.open(encrypted, context: "sideband-network-profiles-v1"),
+           let custom = try? JSONDecoder.sideband.decode([SidebandNetworkProfile].self, from: data) {
+            networkProfiles.append(contentsOf: custom.filter { $0.kind == .custom }.prefix(24))
+        }
         lastNetworkReadyAt = UserDefaults.standard.object(forKey: "reticulumLastReadyAt") as? Date
         deferredKeepalives = UserDefaults.standard.integer(forKey: "reticulumDeferredKeepalives")
         deferredTunnelSyntheses = UserDefaults.standard.integer(forKey: "reticulumDeferredTunnelSyntheses")
@@ -2468,6 +2476,76 @@ public final class SidebandStore {
             pendingLANGatewaySwitchID = nil
         }
         if autoConnectEnabled { Task { await reconnectNetwork() } }
+    }
+
+    public func applyNetworkProfile(_ profileID: UUID) {
+        guard let profile = networkProfiles.first(where: { $0.id == profileID }) else { return }
+        activeNetworkProfileID = profile.id
+        connectionMode = profile.connectionMode
+        autoConnectEnabled = profile.autoConnect
+        preferIPv6 = profile.preferIPv6
+        internetOnlyEnabled = profile.internetOnly
+        autoInterfaceEnabled = profile.autoInterface
+        networkHost = profile.host
+        networkIPv6Host = profile.ipv6Host
+        networkPort = profile.port
+        UserDefaults.standard.set(profile.id.uuidString, forKey: "sidebandActiveNetworkProfileID")
+        persistNetworkPreferences()
+        if internetOnlyEnabled { lanDiscovery.stop() }
+        if autoConnectEnabled { Task { await reconnectNetwork() } }
+    }
+
+    @discardableResult
+    public func saveCurrentNetworkProfile(named name: String) -> UUID? {
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty else {
+            lastError = "Enter a name for this network profile."
+            return nil
+        }
+        let profile = SidebandNetworkProfile(
+            name: cleanName,
+            connectionMode: connectionMode,
+            autoConnect: autoConnectEnabled,
+            preferIPv6: preferIPv6,
+            internetOnly: internetOnlyEnabled,
+            autoInterface: autoInterfaceEnabled,
+            host: networkHost,
+            ipv6Host: networkIPv6Host,
+            port: networkPort
+        )
+        networkProfiles.append(profile)
+        activeNetworkProfileID = profile.id
+        persistNetworkProfiles()
+        UserDefaults.standard.set(profile.id.uuidString, forKey: "sidebandActiveNetworkProfileID")
+        return profile.id
+    }
+
+    public func deleteNetworkProfile(_ id: UUID) {
+        guard let profile = networkProfiles.first(where: { $0.id == id }), profile.kind == .custom else { return }
+        networkProfiles.removeAll { $0.id == id }
+        if activeNetworkProfileID == id {
+            activeNetworkProfileID = nil
+            UserDefaults.standard.removeObject(forKey: "sidebandActiveNetworkProfileID")
+        }
+        persistNetworkProfiles()
+    }
+
+    private func persistNetworkProfiles() {
+        let custom = networkProfiles.filter { $0.kind == .custom }
+        guard let data = try? JSONEncoder.sideband.encode(custom),
+              let encrypted = try? localDataCipher.seal(data, context: "sideband-network-profiles-v1") else { return }
+        UserDefaults.standard.set(encrypted, forKey: "sidebandNetworkProfiles.v1")
+    }
+
+    private func persistNetworkPreferences() {
+        UserDefaults.standard.set(connectionMode.rawValue, forKey: "reticulumConnectionMode")
+        UserDefaults.standard.set(autoConnectEnabled, forKey: "reticulumAutoConnect")
+        UserDefaults.standard.set(preferIPv6, forKey: "reticulumPreferIPv6")
+        UserDefaults.standard.set(internetOnlyEnabled, forKey: "reticulumInternetOnly")
+        UserDefaults.standard.set(autoInterfaceEnabled, forKey: "reticulumAutoInterface")
+        UserDefaults.standard.set(networkHost, forKey: "reticulumHost")
+        UserDefaults.standard.set(networkIPv6Host, forKey: "reticulumIPv6Host")
+        UserDefaults.standard.set(networkPort, forKey: "reticulumPort")
     }
 
     public func configureManagedInfrastructure(enabled: Bool, url: String, publicKey: String) {

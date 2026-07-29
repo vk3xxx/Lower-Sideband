@@ -135,6 +135,7 @@ struct SidebandSettingsView: View {
     @State private var supportBundleDocument: SupportBundleDocument?
     @State private var showingSupportBundleExporter = false
     @State private var exportFilename = "Lower-Sideband-Support"
+    @State private var networkProfileName = ""
 
     var body: some View {
         Group {
@@ -393,6 +394,37 @@ struct SidebandSettingsView: View {
 
     private var connectionSettings: some View {
         Form {
+            Section {
+                Picker("Active profile", selection: Binding(
+                    get: { store.activeNetworkProfileID },
+                    set: { id in if let id { store.applyNetworkProfile(id) } }
+                )) {
+                    Text("Current settings").tag(Optional<UUID>.none)
+                    ForEach(store.networkProfiles) { profile in
+                        Text(profile.name).tag(Optional(profile.id))
+                    }
+                }
+                HStack {
+                    TextField("New profile name", text: $networkProfileName)
+                    Button("Save Current") {
+                        if store.saveCurrentNetworkProfile(named: networkProfileName) != nil {
+                            networkProfileName = ""
+                        }
+                    }
+                    .disabled(networkProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if let active = store.networkProfiles.first(where: { $0.id == store.activeNetworkProfileID }),
+                   active.kind == .custom {
+                    Button("Delete \(active.name)", role: .destructive) {
+                        store.deleteNetworkProfile(active.id)
+                    }
+                }
+            } header: {
+                Text("Network profiles")
+            } footer: {
+                Text("Switch between complete connection configurations without changing Reticulum identity or message data.")
+            }
+
             Section {
                 Picker("Connection mode", selection: Binding(
                     get: { store.connectionMode },

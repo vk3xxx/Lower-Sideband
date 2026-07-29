@@ -4919,6 +4919,24 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(items.last?.kind == .delivered)
 }
 
+@Test func networkProfilesNormalizeUntrustedInput() {
+    let profile = SidebandNetworkProfile(
+        name: "  Field setup  ",
+        connectionMode: .configured,
+        preferIPv6: false,
+        internetOnly: true,
+        autoInterface: true,
+        host: "  example.net  ",
+        ipv6Host: "  2001:db8::1  ",
+        port: 99_999
+    )
+    #expect(profile.name == "Field setup")
+    #expect(profile.host == "example.net")
+    #expect(profile.ipv6Host == "2001:db8::1")
+    #expect(profile.port == 65_535)
+    #expect(SidebandNetworkProfile.builtIns.count == 3)
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }
