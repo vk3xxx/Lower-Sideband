@@ -1,0 +1,54 @@
+# Migrating from Python Sideband
+
+Lower Sideband can inspect and merge a historical Python Sideband
+`sideband.db` without Python and without modifying the source database.
+
+## Import workflow
+
+1. In **Settings > Data**, choose **Import Python Sideband Database**.
+2. Select the original `sideband.db`.
+3. Review the preflight summary. Lower Sideband reports the source size and the
+   number of conversations, messages, telemetry records, and announces before
+   making any changes.
+4. Choose **Import** to merge the validated records with existing Lower
+   Sideband data.
+5. Use **Undo Last Python Import** if the result is not what you expected.
+   Rollback remains available until the app closes or another import begins.
+
+Create a normal encrypted Lower Sideband backup after reviewing a successful
+import. That backup is the durable rollback point across later launches.
+
+## Data coverage
+
+The importer understands the current historical Python tables:
+
+| Python table | Native result |
+| --- | --- |
+| `conv` | Conversation name, trust, unread state, telemetry/request preferences, and supported appearance metadata |
+| `lxm` | Incoming and outgoing text messages, timestamps, delivery state, and LXMF identifiers |
+| `telemetry` | Valid telemetry readings attached to timestamped imported messages |
+| `announce` | LXMF delivery discoveries, marked unverified until observed and cryptographically validated again |
+
+Malformed, unsupported, or unmatched rows are skipped and counted in the
+completion report. Binary message bodies that cannot be represented as text
+are retained as an explicit legacy-binary placeholder rather than interpreted
+unsafely.
+
+## Safety and limitations
+
+- The source SQLite database is opened read-only. Automated tests verify its
+  bytes are unchanged after preview and import.
+- Import is a merge. Existing conversations are preserved and matching
+  destinations are reconciled through the normal snapshot merge rules.
+- Python identities, private keys, network configuration, and executable
+  plugins are not silently imported. Use the dedicated encrypted identity
+  migration flow and review trust fingerprints separately.
+- Historical announces are never treated as verified identity evidence.
+- Local attachment paths from another platform are not trusted or copied
+  automatically.
+- The importer has bounded row and blob handling. It does not execute SQL,
+  Python, plugin code, or content from the database.
+
+Keep the original database and a Lower Sideband encrypted backup until you
+have verified conversation names, recent messages, telemetry, and contact
+identity fingerprints.

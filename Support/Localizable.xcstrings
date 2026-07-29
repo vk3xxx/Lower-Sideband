@@ -3,11 +3,15 @@
   "strings" : {
     "Archive Conversation" : {},
     "Blocked" : {},
+    "Cancel" : {},
     "Connecting securely" : {},
     "Copy ID" : {},
     "Current route: %@" : {},
     "Delivered" : {},
     "Encrypted" : {},
+    "Import" : {},
+    "Import Python Sideband Data?" : {},
+    "Import Python Sideband Database" : {},
     "Latest incoming message: %@" : {},
     "Latest outgoing message: %@" : {},
     "Lower Sideband" : {},
@@ -25,6 +29,7 @@
     "Send message" : {},
     "Settings" : {},
     "Unarchive Conversation" : {},
+    "Undo Last Python Import" : {},
     "Unpin Conversation" : {},
     "Use managed infrastructure" : {}
   },

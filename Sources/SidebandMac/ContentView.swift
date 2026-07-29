@@ -121,6 +121,8 @@ struct ContentView: View {
     @State private var showingContactCollectionImporter = false
     @State private var showingConversationArchiveImporter = false
     @State private var showingLegacyDatabaseImporter = false
+    @State private var pendingLegacyImportURL: URL?
+    @State private var pendingLegacyImportPreview: LegacySidebandSQLiteImporter.Preview?
     @State private var pendingRestoreData: Data?
 
     var body: some View {
@@ -229,6 +231,10 @@ struct ContentView: View {
                         Divider()
                         Button { showingConversationArchiveImporter = true } label: { Label("Import Conversation Archive", systemImage: "bubble.left.and.text.bubble.right") }
                         Button { showingLegacyDatabaseImporter = true } label: { Label("Import Python Sideband Database", systemImage: "cylinder.split.1x2") }
+                        Button("Undo Last Python Import", systemImage: "arrow.uturn.backward.circle") {
+                            rollbackLegacyImport()
+                        }
+                        .disabled(!store.canRollbackLegacyImport)
                     } label: { Label("Contacts", systemImage: "person.2") }
                     .help("Import contacts or conversation archives")
                     #else
@@ -253,6 +259,10 @@ struct ContentView: View {
                             Button { showingContactCollectionImporter = true } label: { Label("Import Contacts", systemImage: "person.crop.circle.badge.plus") }
                             Button { showingConversationArchiveImporter = true } label: { Label("Import Conversation Archive", systemImage: "bubble.left.and.text.bubble.right") }
                             Button { showingLegacyDatabaseImporter = true } label: { Label("Import Python Sideband Database", systemImage: "cylinder.split.1x2") }
+                            Button("Undo Last Python Import", systemImage: "arrow.uturn.backward.circle") {
+                                rollbackLegacyImport()
+                            }
+                            .disabled(!store.canRollbackLegacyImport)
                         }
                     } label: {
                         Label("More actions", systemImage: "ellipsis.circle")
@@ -320,7 +330,7 @@ struct ContentView: View {
         }
         .fileImporter(isPresented: $showingLegacyDatabaseImporter, allowedContentTypes: [.data]) { result in
             switch result {
-            case .success(let url): importLegacyDatabase(from: url)
+            case .success(let url): prepareLegacyDatabaseImport(from: url)
             case .failure(let error): store.lastError = "Could not open legacy database: \(error.localizedDescription)"
             }
         }
@@ -393,6 +403,32 @@ struct ContentView: View {
             }
         } message: {
             Text("Current conversations, messages, discoveries, and drafts will be replaced with the validated backup contents.")
+        }
+        .alert(
+            "Import Python Sideband Data?",
+            isPresented: Binding(
+                get: { pendingLegacyImportPreview != nil },
+                set: {
+                    if !$0 {
+                        pendingLegacyImportPreview = nil
+                        pendingLegacyImportURL = nil
+                    }
+                }
+            )
+        ) {
+            Button("Cancel", role: .cancel) {
+                pendingLegacyImportPreview = nil
+                pendingLegacyImportURL = nil
+            }
+            Button("Import") {
+                if let url = pendingLegacyImportURL { importLegacyDatabase(from: url) }
+                pendingLegacyImportPreview = nil
+                pendingLegacyImportURL = nil
+            }
+        } message: {
+            if let preview = pendingLegacyImportPreview {
+                Text("\(preview.conversations) conversations, \(preview.messages) messages, \(preview.telemetryRecords) telemetry records and \(preview.announces) announces will be merged from a read-only \(ByteCountFormatter.string(fromByteCount: Int64(preview.sourceBytes), countStyle: .file)) database. You can undo this import until the app closes.")
+            }
         }
         .task {
             #if os(iOS)
@@ -571,10 +607,31 @@ struct ContentView: View {
             let report = try store.importLegacySidebandDatabase(at: url)
             let conversationCount = report.snapshot.conversations.count
             let messageCount = report.snapshot.messages.count
-            let skipped = report.skippedMessages == 0 ? "" : " \(report.skippedMessages) unmatched message rows were skipped."
-            store.lastError = "Imported \(conversationCount) conversation\(conversationCount == 1 ? "" : "s") and \(messageCount) message\(messageCount == 1 ? "" : "s") from the read-only Python database.\(skipped)"
+            let warningSummary = report.warnings.isEmpty ? "" : " \(report.warnings.joined(separator: " "))"
+            store.lastError = "Imported \(conversationCount) conversation\(conversationCount == 1 ? "" : "s"), \(messageCount) message\(messageCount == 1 ? "" : "s"), \(report.importedTelemetry) telemetry record\(report.importedTelemetry == 1 ? "" : "s") and \(report.importedAnnounces) announce\(report.importedAnnounces == 1 ? "" : "s") from the read-only Python database.\(warningSummary)"
         } catch {
             store.lastError = "Could not import Python Sideband database: \(error.localizedDescription)"
+        }
+    }
+
+    private func prepareLegacyDatabaseImport(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            pendingLegacyImportPreview = try store.previewLegacySidebandDatabase(at: url)
+            pendingLegacyImportURL = url
+        } catch {
+            store.lastError = "Could not inspect Python Sideband database: \(error.localizedDescription)"
+        }
+    }
+
+    private func rollbackLegacyImport() {
+        do {
+            if try store.rollbackLastLegacyImport() {
+                store.lastError = "The last Python Sideband import was undone."
+            }
+        } catch {
+            store.lastError = "Could not undo the Python Sideband import: \(error.localizedDescription)"
         }
     }
 

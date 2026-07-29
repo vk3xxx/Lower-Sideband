@@ -182,6 +182,7 @@ public final class SidebandStore {
     public private(set) var networkInterfaces: [ReticulumTCPInterfacePool.Snapshot] = []
     public private(set) var discoveredNetworkInterfaces: [DiscoveredReticulumInterface] = []
     public private(set) var lastQuarantinedPersistenceURL: URL?
+    public private(set) var canRollbackLegacyImport = false
     public var selectedConversationID: UUID?
     public var lastError: String?
 
@@ -194,6 +195,7 @@ public final class SidebandStore {
     private var discoverySaveTask: Task<Void, Never>?
     private var deferredSaveTask: Task<Void, Never>?
     @ObservationIgnored private var lastValidatedPersistenceData: Data?
+    @ObservationIgnored private var legacyImportRollbackData: Data?
     @ObservationIgnored private var lastSavedSnapshotDigest: Data?
     @ObservationIgnored private var messageIndexesAreDirty = true
     @ObservationIgnored private var messagesByConversation: [UUID: [Message]] = [:]
@@ -2568,11 +2570,16 @@ public final class SidebandStore {
         }
     }
 
-    /// Imports conversations and messages directly from a historical Python
+    /// Inspects or imports supported records from a historical Python
     /// Sideband SQLite database without modifying the source file.
+    public func previewLegacySidebandDatabase(at url: URL) throws -> LegacySidebandSQLiteImporter.Preview {
+        try LegacySidebandSQLiteImporter.preview(from: url)
+    }
+
     @discardableResult
     public func importLegacySidebandDatabase(at url: URL) throws -> LegacySidebandSQLiteImporter.Report {
         let report = try LegacySidebandSQLiteImporter.load(from: url)
+        let rollback = try exportSnapshotData()
         let local = AppSnapshot(
             conversations: conversations, messages: messages, discoveries: discoveries,
             drafts: drafts, voiceCallHistory: voiceCallHistory,
@@ -2583,7 +2590,18 @@ public final class SidebandStore {
         applyCloudSnapshot(merged)
         save()
         syncUnreadBadge()
+        legacyImportRollbackData = rollback
+        canRollbackLegacyImport = true
         return report
+    }
+
+    @discardableResult
+    public func rollbackLastLegacyImport() throws -> Bool {
+        guard let legacyImportRollbackData else { return false }
+        try restoreSnapshotData(legacyImportRollbackData)
+        self.legacyImportRollbackData = nil
+        canRollbackLegacyImport = false
+        return true
     }
 
     public func validatedSnapshot(from data: Data) throws -> AppSnapshot {

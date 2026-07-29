@@ -4171,27 +4171,86 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
 @Test func legacyPythonSQLiteDatabaseImportsReadOnly() throws {
     let url = FileManager.default.temporaryDirectory.appending(path: "sideband-legacy-\(UUID().uuidString).db")
     defer { try? FileManager.default.removeItem(at: url) }
+    let conversationData = MessagePack.map([
+        ("telemetry", MessagePack.bool(true)),
+        ("allow_requests", MessagePack.bool(true)),
+        ("appearance", MessagePack.array([MessagePack.string("home")]))
+    ])
+    let telemetryTimestamp = 1_700_000_000
+    let telemetry = SidebandTelemetry(
+        capturedAt: Date(timeIntervalSince1970: TimeInterval(telemetryTimestamp)),
+        location: .init(latitude: -37.8136, longitude: 144.9631, accuracy: 8, updatedAt: Date(timeIntervalSince1970: TimeInterval(telemetryTimestamp))),
+        battery: .init(chargePercent: 73, isCharging: false)
+    ).packed()
     var database: OpaquePointer?
     #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
     guard let database else { return }
     let sql = """
     CREATE TABLE conv (dest_context BLOB PRIMARY KEY, last_tx INTEGER, last_rx INTEGER, unread INTEGER, type INTEGER, trust INTEGER, name BLOB, data BLOB);
     CREATE TABLE lxm (lxm_hash BLOB PRIMARY KEY, dest BLOB, source BLOB, title BLOB, tx_ts INTEGER, rx_ts INTEGER, state INTEGER, method INTEGER, t_encrypted INTEGER, t_encryption INTEGER, data BLOB, extra BLOB);
-    INSERT INTO conv VALUES (x'00112233445566778899aabbccddeeff',10,20,1,0,1,x'4c65676163792050656572',NULL);
+    CREATE TABLE announce (received INTEGER, source BLOB, data BLOB, dest_type TEXT);
+    CREATE TABLE telemetry (dest_context BLOB, ts INTEGER, data BLOB);
+    INSERT INTO conv VALUES (x'00112233445566778899aabbccddeeff',10,20,1,0,1,x'4c65676163792050656572',x'\(conversationData.hex)');
     INSERT INTO lxm VALUES (x'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',x'ffffffffffffffffffffffffffffffff',x'00112233445566778899aabbccddeeff',x'',0,21,4,0,0,0,x'68656c6c6f206c6567616379',NULL);
+    INSERT INTO announce VALUES (23,x'102132435465768798a9bacbdcedfe0f',x'4c6567616379204e6f6465','lxmf.delivery');
+    INSERT INTO telemetry VALUES (x'00112233445566778899aabbccddeeff',\(telemetryTimestamp),x'\(telemetry.hex)');
     """
     #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
     sqlite3_close(database)
 
     let before = try Data(contentsOf: url)
+    let preview = try LegacySidebandSQLiteImporter.preview(from: url)
+    #expect(preview.conversations == 1)
+    #expect(preview.messages == 1)
+    #expect(preview.announces == 1)
+    #expect(preview.telemetryRecords == 1)
+    #expect(Set(preview.availableTables).isSuperset(of: ["conv", "lxm", "announce", "telemetry"]))
     let report = try LegacySidebandSQLiteImporter.load(from: url)
     #expect(report.snapshot.conversations.count == 1)
     #expect(report.snapshot.conversations[0].displayName == "Legacy Peer")
     #expect(report.snapshot.conversations[0].isTrusted)
-    #expect(report.snapshot.messages.count == 1)
+    #expect(report.snapshot.conversations[0].telemetrySharingEnabled)
+    #expect(report.snapshot.conversations[0].pluginCommandsEnabled)
+    #expect(report.snapshot.conversations[0].appearanceSymbol == .home)
+    #expect(report.snapshot.messages.count == 2)
     #expect(report.snapshot.messages[0].body == "hello legacy")
     #expect(report.snapshot.messages[0].direction == .incoming)
+    #expect(report.snapshot.messages.first(where: { $0.telemetry != nil })?.telemetry?.battery?.chargePercent == 73)
+    #expect(report.importedTelemetry == 1)
+    #expect(report.importedAnnounces == 1)
+    #expect(report.snapshot.discoveries.first?.destinationHash == "102132435465768798a9bacbdcedfe0f")
+    #expect(report.snapshot.discoveries.first?.isValidated == false)
     #expect(try Data(contentsOf: url) == before)
+}
+
+@MainActor @Test func legacyPythonSQLiteImportCanBeRolledBackDuringTheSession() throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    let databaseURL = directory.appending(path: "sideband.db")
+    let storeURL = directory.appending(path: "store.json")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    var database: OpaquePointer?
+    #expect(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
+    guard let database else { return }
+    let sql = """
+    CREATE TABLE conv (dest_context BLOB PRIMARY KEY, last_tx INTEGER, last_rx INTEGER, unread INTEGER, type INTEGER, trust INTEGER, name BLOB, data BLOB);
+    CREATE TABLE lxm (lxm_hash BLOB PRIMARY KEY, dest BLOB, source BLOB, title BLOB, tx_ts INTEGER, rx_ts INTEGER, state INTEGER, method INTEGER, t_encrypted INTEGER, t_encryption INTEGER, data BLOB, extra BLOB);
+    INSERT INTO conv VALUES (x'00112233445566778899aabbccddeeff',10,20,0,0,1,x'496d706f727465642050656572',NULL);
+    """
+    #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close(database)
+
+    let store = SidebandStore(persistenceURL: storeURL)
+    #expect(store.addConversation(destinationHash: "ffeeddccbbaa99887766554433221100", displayName: "Existing Peer"))
+    let originalDestinations = Set(store.conversations.map(\.destinationHash))
+
+    _ = try store.importLegacySidebandDatabase(at: databaseURL)
+    #expect(store.canRollbackLegacyImport)
+    #expect(store.conversations.contains { $0.displayName == "Imported Peer" })
+    #expect(try store.rollbackLastLegacyImport())
+    #expect(!store.canRollbackLegacyImport)
+    #expect(Set(store.conversations.map(\.destinationHash)) == originalDestinations)
+    #expect(try !store.rollbackLastLegacyImport())
 }
 
 @Test func chunkedRNodeFlasherWritesInOrderAndVerifiesDigest() async throws {

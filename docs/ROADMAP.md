@@ -7,7 +7,8 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
 - Keep the completed deterministic upstream matrix current as Sideband,
   Reticulum and LXMF publish new releases.
 - Exercise attachments, propagation sync, voice, telemetry, RNode, and network transitions across physical iPhone, iPad, and Mac hardware.
-- Expand accessibility audits, localisation preparation, performance profiling, and long-running memory/power tests.
+- Continue translated-locale review, assistive-technology testing on physical
+  devices, and long-running memory/power profiling.
 - Strengthen public endpoint health data and operator documentation without embedding private infrastructure assumptions.
 - Expand automated migration fixtures as new upstream historical schemas are found.
 
@@ -19,7 +20,9 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
 
 ## Compatibility extensions
 
-- Expand direct legacy Python Sideband SQLite conversion if upstream introduces additional table shapes beyond `conv` and `lxm`.
+- Expand the tested read-only Python migration matrix if upstream introduces
+  table shapes beyond the supported `conv`, `lxm`, `telemetry`, and `announce`
+  schemas.
 - Broaden support for specialised Reticulum interfaces not available through TCP, AutoInterface, RNode, or generic KISS.
 - Extend native plugin APIs while retaining App Store sandboxing, explicit permissions, and deterministic reviewability.
 - Add physical-board bootloader acceptance evidence for each supported RNode family.

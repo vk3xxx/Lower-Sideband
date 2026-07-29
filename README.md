@@ -80,6 +80,7 @@ Scripts/test-rnode.sh protocol
 - [Managed connectivity infrastructure](docs/MANAGED-INFRASTRUCTURE.md)
 - [Accessibility and localisation](docs/ACCESSIBILITY-AND-LOCALISATION.md)
 - [Runtime and lifecycle hardening](docs/RUNTIME-HARDENING.md)
+- [Migrating from Python Sideband](docs/MIGRATION.md)
 - [Porting status and known gaps](PORTING.md)
 - [Native feature parity](docs/FEATURE-PARITY.md)
 

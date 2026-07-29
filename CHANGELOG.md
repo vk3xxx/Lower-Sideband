@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.63
+
+- Added a read-only Python Sideband database preflight that reports source
+  size and available conversations, messages, telemetry, and announces before
+  import.
+- Expanded migration to preserve supported conversation preferences,
+  historical telemetry, and unverified discovery announces with bounded
+  parsing and explicit skipped-record reporting.
+- Added one-click session rollback that restores the encrypted pre-import
+  snapshot without touching the original Python database.
+
 ## 1.3.62
 
 - Added persistent lifecycle, network-transition, memory-pressure and
