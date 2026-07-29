@@ -608,7 +608,7 @@ struct ContentView: View {
             let conversationCount = report.snapshot.conversations.count
             let messageCount = report.snapshot.messages.count
             let warningSummary = report.warnings.isEmpty ? "" : " \(report.warnings.joined(separator: " "))"
-            store.lastError = "Imported \(conversationCount) conversation\(conversationCount == 1 ? "" : "s"), \(messageCount) message\(messageCount == 1 ? "" : "s"), \(report.importedTelemetry) telemetry record\(report.importedTelemetry == 1 ? "" : "s") and \(report.importedAnnounces) announce\(report.importedAnnounces == 1 ? "" : "s") from the read-only Python database.\(warningSummary)"
+            store.lastError = "Imported \(conversationCount) conversation\(conversationCount == 1 ? "" : "s"), \(messageCount) message\(messageCount == 1 ? "" : "s") (\(report.importedRichMessages) with rich LXMF fields), \(report.importedTelemetry) telemetry record\(report.importedTelemetry == 1 ? "" : "s") and \(report.importedAnnounces) announce\(report.importedAnnounces == 1 ? "" : "s") from the read-only Python database.\(warningSummary)"
         } catch {
             store.lastError = "Could not import Python Sideband database: \(error.localizedDescription)"
         }

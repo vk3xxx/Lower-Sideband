@@ -24,8 +24,8 @@ The importer understands the current historical Python tables:
 
 | Python table | Native result |
 | --- | --- |
-| `conv` | Conversation name, trust, unread state, telemetry/request preferences, and supported appearance metadata |
-| `lxm` | Incoming and outgoing text messages, timestamps, delivery state, and LXMF identifiers |
+| `conv` | Conversation name, trust, exact unread count, pin/archive/block/mute state, notification preview choice, notes, tags, telemetry/request preferences, propagation preference, and supported appearance metadata |
+| `lxm` | Incoming and outgoing messages, timestamps, delivery state, LXMF identifiers, renderer, replies, reactions, comments, continuations, telemetry, telemetry streams, voice fields, and safe native commands |
 | `telemetry` | Valid telemetry readings attached to timestamped imported messages |
 | `announce` | LXMF delivery discoveries, marked unverified until observed and cryptographically validated again |
 
@@ -33,6 +33,11 @@ Malformed, unsupported, or unmatched rows are skipped and counted in the
 completion report. Binary message bodies that cannot be represented as text
 are retained as an explicit legacy-binary placeholder rather than interpreted
 unsafely.
+
+The importer recognises the canonical Python column names and known historical
+aliases used by older Sideband databases. This includes binary and hexadecimal
+text forms of destination and message hashes. A compatibility fixture protects
+these older layouts from regression.
 
 ## Safety and limitations
 

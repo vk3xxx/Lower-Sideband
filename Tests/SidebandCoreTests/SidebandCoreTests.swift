@@ -4223,6 +4223,82 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(try Data(contentsOf: url) == before)
 }
 
+@Test func legacyPythonSQLiteImporterSupportsHistoricalAliasesAndRichLXMFFields() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: "sideband-legacy-aliases-\(UUID().uuidString).db")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let peerHash = "00112233445566778899aabbccddeeff"
+    let localHash = "ffeeddccbbaa99887766554433221100"
+    let replyTarget = Data(repeating: 0xA4, count: 32)
+    let conversationData = MessagePack.map([
+        ("telemetry", MessagePack.bool(true)),
+        ("allow_requests", MessagePack.bool(true)),
+        ("pinned", MessagePack.bool(true)),
+        ("archived", MessagePack.bool(true)),
+        ("blocked", MessagePack.bool(true)),
+        ("notifications_muted", MessagePack.bool(true)),
+        ("notification_preview", MessagePack.bool(false)),
+        ("contact_note", MessagePack.string("Imported note")),
+        ("tags", MessagePack.array([MessagePack.string("field"), MessagePack.string("team")])),
+        ("propagation_preferred", MessagePack.bool(true)),
+        ("appearance_color", MessagePack.string("purple")),
+        ("appearance_symbol", MessagePack.string(Conversation.AppearanceSymbol.work.rawValue))
+    ])
+    let fields: [UInt64: Data] = [
+        0x0F: MessagePack.unsigned(UInt64(Message.Renderer.markdown.rawValue)),
+        0x30: MessagePack.binary(replyTarget),
+        0x31: MessagePack.binary(Data("Historical quote".utf8)),
+        0x09: LXMFCommand.encode([.ping])!
+    ]
+    let payload = MessagePack.lxmfPayload(
+        timestamp: 1_700_000_100,
+        title: Data(),
+        content: Data("historical rich message".utf8),
+        encodedFields: fields
+    )
+    var packed = Data(hex: localHash)
+    packed.append(Data(hex: peerHash))
+    packed.append(Data(repeating: 0, count: 64))
+    packed.append(payload)
+
+    var database: OpaquePointer?
+    #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
+    guard let database else { return }
+    let sql = """
+    CREATE TABLE conv (destination_hash TEXT PRIMARY KEY, last_activity INTEGER, unread_count INTEGER, trusted INTEGER, display_name TEXT, metadata BLOB);
+    CREATE TABLE lxm (message_hash TEXT PRIMARY KEY, destination TEXT, source_hash TEXT, subject TEXT, timestamp INTEGER, delivery_state INTEGER, packed BLOB);
+    INSERT INTO conv VALUES ('\(peerHash)',1700000100,7,1,'Historical Peer',x'\(conversationData.hex)');
+    INSERT INTO lxm VALUES ('\(String(repeating: "ab", count: 32))','\(localHash)','\(peerHash)','',1700000100,4,x'\(packed.hex)');
+    """
+    #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close(database)
+
+    let report = try LegacySidebandSQLiteImporter.load(from: url)
+    #expect(report.snapshot.conversations.count == 1)
+    let conversation = try #require(report.snapshot.conversations.first)
+    #expect(conversation.destinationHash == peerHash)
+    #expect(conversation.displayName == "Historical Peer")
+    #expect(conversation.unreadCount == 7)
+    #expect(conversation.isTrusted)
+    #expect(conversation.isPinned)
+    #expect(conversation.isArchived)
+    #expect(conversation.isBlocked)
+    #expect(conversation.notificationsMuted)
+    #expect(conversation.notificationPreviewEnabled == false)
+    #expect(conversation.pluginCommandsEnabled)
+    #expect(conversation.contactNote == "Imported note")
+    #expect(conversation.tags == ["field", "team"])
+    #expect(conversation.deliveryPreference == .propagationPreferred)
+    #expect(conversation.appearanceColor == .purple)
+    #expect(conversation.appearanceSymbol == .work)
+    let message = try #require(report.snapshot.messages.first)
+    #expect(message.body == "historical rich message")
+    #expect(message.renderer == .markdown)
+    #expect(message.replyTo == replyTarget)
+    #expect(message.replyQuote == "Historical quote")
+    #expect(message.commands == [.ping])
+    #expect(report.importedRichMessages == 1)
+}
+
 @MainActor @Test func legacyPythonSQLiteImportCanBeRolledBackDuringTheSession() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     let databaseURL = directory.appending(path: "sideband.db")

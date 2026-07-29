@@ -25,6 +25,7 @@ public enum LegacySidebandSQLiteImporter {
         public let skippedTelemetry: Int
         public let importedAnnounces: Int
         public let importedTelemetry: Int
+        public let importedRichMessages: Int
         public let warnings: [String]
     }
 
@@ -64,18 +65,22 @@ public enum LegacySidebandSQLiteImporter {
     private static func load(from database: OpaquePointer) throws -> Report {
         guard hasTable("conv", in: database), hasTable("lxm", in: database) else { throw ImportError.unsupportedSchema }
         let conversationColumns = tableColumns("conv", in: database)
-        let dataExpression = conversationColumns.contains("data") ? "data" : "NULL"
-        let nameExpression = conversationColumns.contains("name") ? "name" : "NULL"
-        let trustExpression = conversationColumns.contains("trust") ? "trust" : "0"
-        let unreadExpression = conversationColumns.contains("unread") ? "unread" : "0"
+        let destinationExpression = expression(in: conversationColumns, aliases: ["dest_context", "destination_hash", "destination", "dest"])
+        guard destinationExpression != "NULL" else { throw ImportError.unsupportedSchema }
+        let lastTXExpression = expression(in: conversationColumns, aliases: ["last_tx", "last_sent", "last_activity"], fallback: "0")
+        let lastRXExpression = expression(in: conversationColumns, aliases: ["last_rx", "last_received", "last_activity"], fallback: "0")
+        let unreadExpression = expression(in: conversationColumns, aliases: ["unread", "unread_count"], fallback: "0")
+        let trustExpression = expression(in: conversationColumns, aliases: ["trust", "trusted"], fallback: "0")
+        let nameExpression = expression(in: conversationColumns, aliases: ["name", "display_name"])
+        let dataExpression = expression(in: conversationColumns, aliases: ["data", "metadata", "options"])
 
         var conversations: [Conversation] = []
         var conversationByDestination: [Data: Conversation] = [:]
-        try rows("SELECT dest_context,last_tx,last_rx,\(unreadExpression),\(trustExpression),\(nameExpression),\(dataExpression) FROM conv LIMIT \(maximumConversations)", in: database) { statement in
-            guard let destination = blob(statement, 0), destination.count == 16 else { throw ImportError.corruptRow }
+        let conversationSQL = "SELECT \(destinationExpression),\(lastTXExpression),\(lastRXExpression),\(unreadExpression),\(trustExpression),\(nameExpression),\(dataExpression) FROM conv LIMIT \(maximumConversations)"
+        try rows(conversationSQL, in: database) { statement in
+            guard let destination = destinationHash(statement, 0) else { throw ImportError.corruptRow }
             let hash = destination.hex
-            let nameData = blob(statement, 5) ?? Data()
-            let name = String(data: nameData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = textOrBlobString(statement, 5)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let lastTX = sqlite3_column_double(statement, 1)
             let lastRX = sqlite3_column_double(statement, 2)
             let updated = Date(timeIntervalSince1970: max(lastTX, lastRX, 0))
@@ -84,11 +89,19 @@ public enum LegacySidebandSQLiteImporter {
                 destinationHash: hash,
                 displayName: (name?.isEmpty == false ? name! : "Imported \(hash.prefix(8))"),
                 isTrusted: sqlite3_column_int(statement, 4) != 0,
+                isPinned: options.isPinned,
+                isArchived: options.isArchived,
+                isBlocked: options.isBlocked,
+                notificationsMuted: options.notificationsMuted,
+                notificationPreviewEnabled: options.notificationPreviewEnabled,
                 telemetrySharingEnabled: options.telemetrySharing,
                 pluginCommandsEnabled: options.allowRequests,
+                contactNote: options.contactNote,
+                tags: options.tags,
                 appearanceColor: options.color,
                 appearanceSymbol: options.symbol,
-                unreadCount: sqlite3_column_int(statement, 3) != 0 ? 1 : 0,
+                deliveryPreference: options.deliveryPreference,
+                unreadCount: max(0, Int(sqlite3_column_int64(statement, 3))),
                 updatedAt: updated
             )
             conversations.append(conversation)
@@ -97,9 +110,21 @@ public enum LegacySidebandSQLiteImporter {
 
         var messages: [Message] = []
         var skipped = 0
+        var importedRichMessages = 0
         var warnings: [String] = []
-        try rows("SELECT lxm_hash,dest,source,title,tx_ts,rx_ts,state,data FROM lxm ORDER BY MAX(tx_ts,rx_ts) LIMIT \(maximumMessages)", in: database) { statement in
-            guard let destination = blob(statement, 1), let source = blob(statement, 2) else { skipped += 1; return }
+        let messageColumns = tableColumns("lxm", in: database)
+        let messageHashExpression = expression(in: messageColumns, aliases: ["lxm_hash", "message_hash", "hash"])
+        let messageDestinationExpression = expression(in: messageColumns, aliases: ["dest", "destination", "destination_hash"])
+        let messageSourceExpression = expression(in: messageColumns, aliases: ["source", "source_hash"])
+        guard messageDestinationExpression != "NULL", messageSourceExpression != "NULL" else { throw ImportError.unsupportedSchema }
+        let titleExpression = expression(in: messageColumns, aliases: ["title", "subject"])
+        let txExpression = expression(in: messageColumns, aliases: ["tx_ts", "sent_at", "timestamp"], fallback: "0")
+        let rxExpression = expression(in: messageColumns, aliases: ["rx_ts", "received_at", "timestamp"], fallback: "0")
+        let stateExpression = expression(in: messageColumns, aliases: ["state", "delivery_state"], fallback: "0")
+        let packedExpression = expression(in: messageColumns, aliases: ["data", "packed", "content", "body"])
+        let messageSQL = "SELECT \(messageHashExpression),\(messageDestinationExpression),\(messageSourceExpression),\(titleExpression),\(txExpression),\(rxExpression),\(stateExpression),\(packedExpression) FROM lxm LIMIT \(maximumMessages)"
+        try rows(messageSQL, in: database) { statement in
+            guard let destination = destinationHash(statement, 1), let source = destinationHash(statement, 2) else { skipped += 1; return }
             let peer = conversationByDestination[destination] ?? conversationByDestination[source]
             guard let peer else { skipped += 1; return }
             let packed = blob(statement, 7) ?? Data()
@@ -115,10 +140,42 @@ public enum LegacySidebandSQLiteImporter {
             let timestamp = decoded.map { Date(timeIntervalSince1970: $0.timestamp) } ?? Date(timeIntervalSince1970: max(tx, rx, 0))
             let oldState = sqlite3_column_int(statement, 6)
             let state: Message.DeliveryState = incoming ? .delivered : (oldState >= 0x04 ? .delivered : .sent)
+            let telemetry = decoded?.binaryField(0x02).flatMap { try? SidebandTelemetry(packed: $0) }
+            let telemetryStream = SidebandTelemetryStreamEntry.decode(decoded?.fields[0x03])
+            let voiceAudio = LXMFVoiceMessageAudio(field: decoded?.fields[0x07])
+            let renderer = decoded?.unsignedField(0x0F)
+                .flatMap { UInt8(exactly: $0) }
+                .flatMap(Message.Renderer.init(rawValue:)) ?? .plain
+            let replyTo = decoded?.binaryField(0x30).flatMap { $0.count == 32 ? $0 : nil }
+            let replyQuote = decoded?.binaryField(0x31)
+                .flatMap { String(data: $0, encoding: .utf8) }
+                .map { String($0.prefix(SidebandMessageLimits.maximumReplyQuoteCharacters)) }
+            let reactionTarget = decoded?.binaryMapField(0x40, key: 0x00).flatMap { $0.count == 32 ? $0 : nil }
+            let reactionContent = decoded?.binaryMapField(0x40, key: 0x01)
+                .flatMap { String(data: $0, encoding: .utf8) }
+                .map { String($0.prefix(SidebandMessageLimits.maximumReactionCharacters)) }
+            let commentTo = decoded?.binaryMapField(0x41, key: 0x00).flatMap { $0.count == 32 ? $0 : nil }
+            let continuationOf = decoded?.binaryMapField(0x42, key: 0x00).flatMap { $0.count == 32 ? $0 : nil }
+            let commands = LXMFCommand.decode(decoded?.fields[0x09])
+            if telemetry != nil || !telemetryStream.isEmpty || voiceAudio != nil || renderer != .plain ||
+                replyTo != nil || reactionTarget != nil || commentTo != nil || continuationOf != nil || !commands.isEmpty {
+                importedRichMessages += 1
+            }
             messages.append(Message(
                 conversationID: peer.id, body: String(body.prefix(SidebandMessageLimits.maximumTextCharacters)),
                 timestamp: timestamp, direction: incoming ? .incoming : .outgoing, state: state,
-                lxmfID: decoded?.messageID ?? blob(statement, 0)
+                telemetry: telemetry,
+                telemetryStream: telemetryStream,
+                voiceAudio: voiceAudio,
+                renderer: renderer,
+                lxmfID: decoded?.messageID ?? messageID(statement, 0),
+                replyTo: replyTo,
+                replyQuote: replyQuote,
+                reactionTo: reactionTarget,
+                reactionContent: reactionContent,
+                commentTo: commentTo,
+                continuationOf: continuationOf,
+                commands: commands
             ))
         }
 
@@ -182,6 +239,7 @@ public enum LegacySidebandSQLiteImporter {
             skippedTelemetry: skippedTelemetry,
             importedAnnounces: discoveries.count,
             importedTelemetry: importedTelemetry,
+            importedRichMessages: importedRichMessages,
             warnings: warnings
         )
     }
@@ -230,6 +288,14 @@ public enum LegacySidebandSQLiteImporter {
     private struct ConversationOptions {
         var telemetrySharing = false
         var allowRequests = false
+        var isPinned = false
+        var isArchived = false
+        var isBlocked = false
+        var notificationsMuted = false
+        var notificationPreviewEnabled: Bool?
+        var contactNote = ""
+        var tags: [String] = []
+        var deliveryPreference: Conversation.DeliveryPreference = .automatic
         var color: Conversation.AppearanceColor = .blue
         var symbol: Conversation.AppearanceSymbol = .person
     }
@@ -241,8 +307,26 @@ public enum LegacySidebandSQLiteImporter {
             guard case let .string(name) = key else { continue }
             if name == "telemetry", case let .bool(enabled) = value { options.telemetrySharing = enabled }
             if name == "allow_requests", case let .bool(enabled) = value { options.allowRequests = enabled }
+            if name == "pinned", case let .bool(enabled) = value { options.isPinned = enabled }
+            if name == "archived", case let .bool(enabled) = value { options.isArchived = enabled }
+            if name == "blocked", case let .bool(enabled) = value { options.isBlocked = enabled }
+            if ["muted", "notifications_muted"].contains(name), case let .bool(enabled) = value { options.notificationsMuted = enabled }
+            if name == "notification_preview", case let .bool(enabled) = value { options.notificationPreviewEnabled = enabled }
+            if ["note", "contact_note"].contains(name), let note = value.stringValue { options.contactNote = String(note.prefix(512)) }
+            if name == "tags", case let .array(values) = value {
+                options.tags = Array(values.compactMap(\.stringValue).prefix(8)).map { String($0.prefix(32)) }
+            }
+            if ["propagation", "propagation_preferred"].contains(name), case .bool(true) = value {
+                options.deliveryPreference = .propagationPreferred
+            }
             if name == "is_object", case .bool(true) = value { options.symbol = .antenna }
             if name == "ptt_enabled", case .bool(true) = value { options.symbol = .radio }
+            if name == "appearance_color", let color = value.stringValue.flatMap(Conversation.AppearanceColor.init(rawValue:)) {
+                options.color = color
+            }
+            if name == "appearance_symbol", let symbol = value.stringValue.flatMap(Conversation.AppearanceSymbol.init(rawValue:)) {
+                options.symbol = symbol
+            }
             if name == "appearance", case let .array(parts) = value, let first = parts.first,
                case let .string(icon) = first {
                 if icon.localizedCaseInsensitiveContains("car") { options.symbol = .vehicle }
@@ -251,6 +335,24 @@ public enum LegacySidebandSQLiteImporter {
             }
         }
         return options
+    }
+
+    private static func expression(in columns: Set<String>, aliases: [String], fallback: String = "NULL") -> String {
+        aliases.first(where: columns.contains) ?? fallback
+    }
+
+    private static func destinationHash(_ statement: OpaquePointer, _ column: Int32) -> Data? {
+        guard let value = blob(statement, column) else { return nil }
+        if value.count == 16 { return value }
+        guard value.count == 32, let string = String(data: value, encoding: .utf8) else { return nil }
+        return Data(hex: string)
+    }
+
+    private static func messageID(_ statement: OpaquePointer, _ column: Int32) -> Data? {
+        guard let value = blob(statement, column) else { return nil }
+        if value.count == 32 { return value }
+        guard value.count == 64, let string = String(data: value, encoding: .utf8) else { return nil }
+        return Data(hex: string)
     }
 
     private static func rows(_ sql: String, in database: OpaquePointer, body: (OpaquePointer) throws -> Void) throws {
@@ -287,4 +389,26 @@ public enum LegacySidebandSQLiteImporter {
 
 private extension Data {
     var hex: String { map { String(format: "%02x", $0) }.joined() }
+    init?(hex: String) {
+        guard hex.count.isMultiple(of: 2) else { return nil }
+        var value = Data(capacity: hex.count / 2)
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+            value.append(byte)
+            index = next
+        }
+        self = value
+    }
+}
+
+private extension MessagePackValue {
+    var stringValue: String? {
+        switch self {
+        case .string(let value): value
+        case .binary(let value): String(data: value, encoding: .utf8)
+        default: nil
+        }
+    }
 }
