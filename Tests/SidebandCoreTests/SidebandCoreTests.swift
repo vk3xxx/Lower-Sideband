@@ -1653,6 +1653,29 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(redacted.components(separatedBy: "<ipv4-").count == 3)
 }
 
+@MainActor @Test func deviceAcceptancePersistsBoundsAndExportsEvidence() throws {
+    let suiteName = "device-acceptance-\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: suiteName))
+    defer { suite.removePersistentDomain(forName: suiteName) }
+    let acceptance = SidebandDeviceAcceptance(defaults: suite)
+    acceptance.record(.passed, for: .messaging, notes: String(repeating: "a", count: 2_000))
+    acceptance.record(.failed, for: .attachments, notes: "Digest mismatch")
+    #expect(acceptance.completedCount == 2)
+    #expect(acceptance.result(for: .messaging).notes.count == 1_000)
+
+    let restored = SidebandDeviceAcceptance(defaults: suite)
+    #expect(restored.result(for: .messaging).outcome == .passed)
+    #expect(restored.result(for: .attachments).outcome == .failed)
+    let data = try restored.exportData(now: Date(timeIntervalSince1970: 321))
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let report = try decoder.decode(SidebandAcceptanceReport.self, from: data)
+    #expect(report.generatedAt == Date(timeIntervalSince1970: 321))
+    #expect(report.passedCount == 1)
+    #expect(report.failedCount == 1)
+    #expect(report.results.count == SidebandAcceptanceScenario.allCases.count)
+}
+
 @MainActor @Test func inboundDeliveryProofReturnsOnLinkIngressInterface() {
     let linkID = "0123456789abcdef0123456789abcdef"
     let interfaces = [

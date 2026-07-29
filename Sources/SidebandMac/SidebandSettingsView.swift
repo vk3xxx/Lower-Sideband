@@ -129,6 +129,7 @@ struct SidebandSettingsView: View {
     @State private var confirmation: SettingsConfirmation?
     @State private var supportBundleDocument: SupportBundleDocument?
     @State private var showingSupportBundleExporter = false
+    @State private var exportFilename = "Lower-Sideband-Support"
 
     var body: some View {
         Group {
@@ -142,7 +143,7 @@ struct SidebandSettingsView: View {
             isPresented: $showingSupportBundleExporter,
             document: supportBundleDocument,
             contentType: .json,
-            defaultFilename: "Lower-Sideband-Support-\(Date.now.formatted(.iso8601.year().month().day()))"
+            defaultFilename: exportFilename
         ) { result in
             if case .failure(let error) = result { store.lastError = "Support report export failed: \(error.localizedDescription)" }
             supportBundleDocument = nil
@@ -1016,6 +1017,41 @@ struct SidebandSettingsView: View {
             } footer: {
                 Text("The exported support report contains health counters and redacted technical state. It never includes message content, private keys, exact identities, addresses, or attachment payloads.")
             }
+
+            Section {
+                SettingsStateRow(
+                    title: "Environment",
+                    value: store.deviceAcceptance.deviceDescription,
+                    icon: store.deviceAcceptance.isPhysicalDevice ? "checkmark.seal.fill" : "simulator",
+                    tint: store.deviceAcceptance.isPhysicalDevice ? .green : .orange
+                )
+                ProgressView(
+                    value: Double(store.deviceAcceptance.completedCount),
+                    total: Double(SidebandAcceptanceScenario.allCases.count)
+                ) {
+                    Text("Acceptance progress")
+                } currentValueLabel: {
+                    Text("\(store.deviceAcceptance.completedCount) of \(SidebandAcceptanceScenario.allCases.count)")
+                }
+                ForEach(SidebandAcceptanceScenario.allCases) { scenario in
+                    acceptanceScenarioRow(scenario)
+                }
+                Button {
+                    exportAcceptanceReport()
+                } label: {
+                    Label("Export Acceptance Report", systemImage: "doc.badge.arrow.up")
+                }
+                Button("Reset Acceptance Results", role: .destructive) {
+                    store.deviceAcceptance.reset()
+                }
+                .disabled(store.deviceAcceptance.completedCount == 0)
+            } header: {
+                Text("Apple device acceptance")
+            } footer: {
+                Text(store.deviceAcceptance.isPhysicalDevice
+                     ? "Record evidence on this device after completing each guided scenario. Radio hardware certification is tracked separately."
+                     : "Simulator results are useful for development but do not certify camera, microphone, background scheduling, cellular handover or physical-device behaviour.")
+            }
         }
     }
 
@@ -1044,9 +1080,70 @@ struct SidebandSettingsView: View {
     private func exportSupportBundle() {
         do {
             supportBundleDocument = SupportBundleDocument(data: try store.exportRedactedSupportBundleData())
+            exportFilename = "Lower-Sideband-Support-\(Date.now.formatted(.iso8601.year().month().day()))"
             showingSupportBundleExporter = true
         } catch {
             store.lastError = "Support report export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportAcceptanceReport() {
+        do {
+            supportBundleDocument = SupportBundleDocument(data: try store.deviceAcceptance.exportData())
+            exportFilename = "Lower-Sideband-Device-Acceptance-\(Date.now.formatted(.iso8601.year().month().day()))"
+            showingSupportBundleExporter = true
+        } catch {
+            store.lastError = "Acceptance report export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func acceptanceScenarioRow(_ scenario: SidebandAcceptanceScenario) -> some View {
+        let result = store.deviceAcceptance.result(for: scenario)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(scenario.title, systemImage: acceptanceIcon(result.outcome))
+                    .foregroundStyle(acceptanceColor(result.outcome))
+                Spacer()
+                if let testedAt = result.testedAt {
+                    Text(testedAt, format: .relative(presentation: .named))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Menu("Result") {
+                    Button("Pass", systemImage: "checkmark.circle") {
+                        store.deviceAcceptance.record(.passed, for: scenario, notes: result.notes)
+                    }
+                    Button("Fail", systemImage: "xmark.circle") {
+                        store.deviceAcceptance.record(.failed, for: scenario, notes: result.notes)
+                    }
+                    Button("Not Run", systemImage: "circle") {
+                        store.deviceAcceptance.record(.notRun, for: scenario)
+                    }
+                }
+            }
+            Text(scenario.instructions).font(.caption).foregroundStyle(.secondary)
+            TextField("Optional evidence or notes", text: Binding(
+                get: { store.deviceAcceptance.result(for: scenario).notes },
+                set: { store.deviceAcceptance.record(result.outcome, for: scenario, notes: $0) }
+            ), axis: .vertical)
+            .lineLimit(1...3)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func acceptanceIcon(_ outcome: SidebandAcceptanceOutcome) -> String {
+        switch outcome {
+        case .notRun: "circle"
+        case .passed: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        }
+    }
+
+    private func acceptanceColor(_ outcome: SidebandAcceptanceOutcome) -> Color {
+        switch outcome {
+        case .notRun: .secondary
+        case .passed: .green
+        case .failed: .red
         }
     }
 

@@ -171,6 +171,7 @@ public final class SidebandStore {
     public let privacyLock = AppPrivacyLock()
     public let backgroundRefresh = BackgroundRefreshCoordinator()
     public let runtimeHealth = SidebandRuntimeHealth()
+    public let deviceAcceptance = SidebandDeviceAcceptance()
     public let rnodeManager = RNodeManager()
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
