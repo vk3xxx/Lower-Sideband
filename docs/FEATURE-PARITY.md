@@ -20,7 +20,7 @@ The detailed upstream comparison and exact pinned versions are in
 | Telemetry and maps | Complete | Canonical and unknown sensors, collector streams, trails, geospatial calculations and validated offline tiles |
 | Reticulum network map | Complete | Live interfaces, observed next-hop transports, direct/multi-hop routes, propagation nodes, route search/filtering and destination actions |
 | Sync and migration | Complete with platform limits | End-to-end encrypted CloudKit snapshots, assets and tombstones; read-only Python Sideband preview/import across canonical and historical schemas, including rich LXMF fields, conversation preferences, telemetry and announces with session rollback |
-| Plugins | Deliberately different | App-Store-safe native/declarative, permission-scoped plugins replace downloaded executable Python |
+| Plugins | Native parity | App-Store-safe native/declarative command, service, telemetry and structured status-card APIs; permission-scoped route, contact, message-metadata and telemetry-summary context replaces downloaded executable Python |
 | Background reception | Platform-limited | Content-free CloudKit wakes and bounded refresh; arbitrary immediate Reticulum ingress still depends on iOS scheduling or an operator wake service |
 
 ## Reticulum transports

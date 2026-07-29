@@ -863,6 +863,11 @@ struct SidebandSettingsView: View {
                             Text(pluginPermissionSummary(manifest.permissions))
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
+                            if let runtime = store.pluginRegistry.runtimeStatuses[manifest.identifier] {
+                                Text("\(runtime.invocationCount) run\(runtime.invocationCount == 1 ? "" : "s") · last \(runtime.lastOutcome?.rawValue ?? "unknown")")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .help("\(manifest.name) is \(store.isPluginEnabled(manifest.identifier) ? "enabled" : "disabled"). \(pluginPermissionSummary(manifest.permissions))")
@@ -1272,6 +1277,8 @@ struct SidebandSettingsView: View {
             switch $0 {
             case .networkStatus: "network status"
             case .conversationMetadata: "contact identifier"
+            case .messageMetadata: "message metadata"
+            case .telemetryRead: "telemetry summary"
             case .telemetryWrite: "telemetry provider"
             case .serviceLifecycle: "background service"
             }

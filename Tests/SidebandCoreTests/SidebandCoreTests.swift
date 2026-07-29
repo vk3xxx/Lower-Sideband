@@ -316,21 +316,40 @@ import Testing
 @MainActor @Test func declarativePluginsAreBoundedPermissionScopedAndExecutable() async throws {
     let definition = SidebandDeclarativePluginDefinition(
         identifier: "org.example.field-status", name: "Field Status", version: "1.0",
-        permissions: [.networkStatus],
-        responses: ["field-status": "Network {{network.state}}, route {{route.state}}, sender {{sender.short}}, note {{argument.0}}"]
+        permissions: [.networkStatus, .conversationMetadata, .messageMetadata, .telemetryRead],
+        responses: ["field-status": "{{conversation.name}} field status"],
+        presentations: ["field-status": .metricList],
+        details: ["field-status": [
+            "Route": "{{route.hops}} hops on {{route.interface}}",
+            "Message": "{{message.direction}} at {{message.timestamp}}",
+            "Battery": "{{telemetry.battery}}",
+            "Note": "{{argument.0}}",
+            "Sender": "{{sender.short}}"
+        ]]
     )
     let data = try JSONEncoder().encode(definition)
     let decoded = try SidebandDeclarativePluginDefinition.decode(data)
     let registry = SidebandPluginRegistry(plugins: [], telemetry: [], enabledIdentifiers: [], persistsConfiguration: false)
     #expect(registry.registerDeclarative(decoded, enabled: true))
     let result = await registry.execute(command: "field-status", arguments: ["ok"], context: .init(
-        command: "field-status", arguments: ["ok"], senderDestinationHash: String(repeating: "a", count: 32), networkReady: true, routeAvailable: false
+        command: "field-status", arguments: ["ok"], senderDestinationHash: String(repeating: "a", count: 32),
+        networkReady: true, routeAvailable: true, routeHopCount: 4, routeInterface: "public-ipv6",
+        conversationDisplayName: "Field Team", messageDirection: .incoming,
+        messageTimestamp: Date(timeIntervalSince1970: 1_700_000_000), telemetrySummary: ["battery": "73%"]
     ))
     #expect(result.outcome == .succeeded)
-    #expect(result.response?.text == "Network ready, route unavailable, sender redacted, note ok")
+    #expect(result.response?.text == "Field Team field status")
+    #expect(result.response?.presentation == .metricList)
+    #expect(result.response?.details["Route"] == "4 hops on public-ipv6")
+    #expect(result.response?.details["Message"]?.contains("incoming at 2023-11-14T22:13:20") == true)
+    #expect(result.response?.details["Battery"] == "73%")
+    #expect(result.response?.details["Sender"] == "aaaaaaaa")
+    #expect(result.response?.renderedText.contains("Battery: 73%") == true)
 
     let unsafe = SidebandDeclarativePluginDefinition(identifier: "org.example.unsafe", name: "Unsafe", version: "1", responses: ["unsafe": "{{file.read}}"])
     #expect(throws: SidebandDeclarativePluginDefinition.Error.self) { try unsafe.validate() }
+    let legacy = Data(#"{"schemaVersion":1,"identifier":"org.example.legacy","name":"Legacy","version":"1","permissions":[],"responses":{"legacy":"Still safe"}}"#.utf8)
+    #expect(try SidebandDeclarativePluginDefinition.decode(legacy).schemaVersion == 1)
 }
 
 @Test func signedRNodeCatalogConfigArchiveAndRichTextAreValidated() throws {
@@ -572,6 +591,26 @@ private struct PermissionProbePlugin: SidebandCommandPlugin {
     }
     func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {
         SidebandPluginResponse(text: [context.senderDestinationHash ?? "redacted", context.networkReady.map(String.init) ?? "redacted", context.routeAvailable.map(String.init) ?? "redacted"].joined(separator: "|"))
+    }
+}
+
+private struct ExtendedPermissionProbePlugin: SidebandCommandPlugin {
+    let manifest = SidebandPluginManifest(
+        identifier: "test.extended-permissions", name: "Extended Permission Probe", version: "1",
+        commands: ["extended-probe"],
+        permissions: [.networkStatus, .conversationMetadata, .messageMetadata, .telemetryRead]
+    )
+    func handle(_ context: SidebandPluginContext) async throws -> SidebandPluginResponse {
+        SidebandPluginResponse(
+            text: "Extended",
+            presentation: .metricList,
+            details: [
+                "Route": "\(context.routeHopCount.map(String.init) ?? "redacted")|\(context.routeInterface ?? "redacted")",
+                "Conversation": context.conversationDisplayName ?? "redacted",
+                "Message": context.messageDirection?.rawValue ?? "redacted",
+                "Battery": context.telemetrySummary["battery"] ?? "redacted"
+            ]
+        )
     }
 }
 
@@ -1726,18 +1765,36 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     let success = await registry.execute(command: "test-echo", arguments: ["a", "b"], context: context)
     #expect(success.response?.text == "a|b")
     #expect(success.outcome == .succeeded)
+    #expect(registry.runtimeStatuses["test.native"]?.invocationCount == 1)
+    #expect(registry.runtimeStatuses["test.native"]?.lastOutcome == .succeeded)
+    #expect(registry.runtimeStatuses["test.native"]?.lastRunAt != nil)
     #expect(await registry.execute(command: "undeclared", arguments: [], context: context).outcome == .unavailable)
     registry.setEnabled(false, identifier: "test.native")
     #expect(await registry.execute(command: "test-echo", arguments: [], context: context).outcome == .unavailable)
 }
 
 @MainActor @Test func nativePluginsReceiveOnlyDeclaredContextPermissions() async {
-    let fullContext = SidebandPluginContext(command: "probe", arguments: [], senderDestinationHash: String(repeating: "a", count: 32), networkReady: true, routeAvailable: false)
+    let fullContext = SidebandPluginContext(
+        command: "probe", arguments: [], senderDestinationHash: String(repeating: "a", count: 32),
+        networkReady: true, routeAvailable: false, routeHopCount: 5, routeInterface: "interface-a",
+        conversationDisplayName: "Alpha", messageDirection: .incoming,
+        messageTimestamp: Date(timeIntervalSince1970: 1_700_000_000), telemetrySummary: ["battery": "80%"]
+    )
     let restricted = SidebandPluginRegistry(plugins: [PermissionProbePlugin(permissions: [])], enabledIdentifiers: ["test.permissions"], persistsConfiguration: false)
     #expect(await restricted.execute(command: "probe", arguments: [], context: fullContext).response?.text == "redacted|redacted|redacted")
 
     let allowed = SidebandPluginRegistry(plugins: [PermissionProbePlugin(permissions: [.networkStatus, .conversationMetadata])], enabledIdentifiers: ["test.permissions"], persistsConfiguration: false)
     #expect(await allowed.execute(command: "probe", arguments: [], context: fullContext).response?.text == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|true|false")
+
+    let extended = SidebandPluginRegistry(
+        plugins: [ExtendedPermissionProbePlugin()],
+        enabledIdentifiers: ["test.extended-permissions"], persistsConfiguration: false
+    )
+    let response = await extended.execute(command: "extended-probe", arguments: [], context: fullContext).response
+    #expect(response?.details["Route"] == "5|interface-a")
+    #expect(response?.details["Conversation"] == "Alpha")
+    #expect(response?.details["Message"] == "incoming")
+    #expect(response?.details["Battery"] == "80%")
 }
 
 @MainActor @Test func nativeTelemetryPluginsContributeCanonicalSensors() async throws {

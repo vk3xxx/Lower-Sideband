@@ -4592,7 +4592,7 @@ public final class SidebandStore {
             rememberReceivedLXMFID(message.messageID.hex)
             save()
             if conversation.isTrusted, isConversationIdentityVerified(conversation.id), !commands.isEmpty {
-                Task { await handleIncomingCommands(commands, conversationID: conversation.id) }
+                Task { await handleIncomingCommands(commands, conversationID: conversation.id, messageTimestamp: incomingMessage.timestamp) }
             }
             return true
         }
@@ -5842,7 +5842,7 @@ public final class SidebandStore {
         return fields
     }
 
-    private func handleIncomingCommands(_ commands: [LXMFCommand], conversationID: UUID) async {
+    private func handleIncomingCommands(_ commands: [LXMFCommand], conversationID: UUID, messageTimestamp: Date) async {
         let now = Date.now
         if let previous = lastCommandResponseAt[conversationID], now.timeIntervalSince(previous) < 5 { return }
         lastCommandResponseAt[conversationID] = now
@@ -5890,17 +5890,40 @@ public final class SidebandStore {
                     recordPluginAudit(command: command, conversationID: conversationID, pluginIdentifier: nil, outcome: .denied)
                     continue
                 }
+                let activeRoute: ReticulumPath?
+                if let destination = Data(hexadecimal: conversation.destinationHash) {
+                    activeRoute = await pathTable.path(to: destination)
+                } else {
+                    activeRoute = nil
+                }
+                var telemetrySummary: [String: String] = [:]
+                if let latest = messages.lazy
+                    .filter({ $0.conversationID == conversationID && $0.telemetry != nil })
+                    .sorted(by: { $0.timestamp > $1.timestamp })
+                    .first?.telemetry {
+                    telemetrySummary["sensors"] = latest.sensorKinds.map(\.displayName).joined(separator: ", ")
+                    telemetrySummary["captured"] = ISO8601DateFormatter().string(from: latest.capturedAt)
+                    if let battery = latest.battery {
+                        telemetrySummary["battery"] = "\(Int(battery.chargePercent.rounded()))%"
+                    }
+                }
                 let context = SidebandPluginContext(
                     command: command,
                     arguments: arguments,
                     senderDestinationHash: conversation.destinationHash,
                     networkReady: networkState == .ready,
-                    routeAvailable: hasPath(to: conversation.destinationHash)
+                    routeAvailable: hasPath(to: conversation.destinationHash),
+                    routeHopCount: activeRoute?.hops,
+                    routeInterface: activeRoute?.interfaceID,
+                    conversationDisplayName: conversation.displayName,
+                    messageDirection: .incoming,
+                    messageTimestamp: messageTimestamp,
+                    telemetrySummary: telemetrySummary
                 )
                 let execution = await pluginRegistry.execute(command: command, arguments: arguments, context: context)
                 recordPluginAudit(command: command, conversationID: conversationID, pluginIdentifier: execution.pluginIdentifier, outcome: execution.outcome)
                 guard let pluginResponse = execution.response else { continue }
-                response = pluginResponse.text
+                response = pluginResponse.renderedText
             }
             enqueueAutomatedResponse(response, conversationID: conversationID)
         }

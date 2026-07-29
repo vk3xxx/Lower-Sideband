@@ -4,6 +4,8 @@ import Foundation
 public enum SidebandPluginPermission: String, Codable, Hashable, Sendable {
     case networkStatus
     case conversationMetadata
+    case messageMetadata
+    case telemetryRead
     case telemetryWrite
     case serviceLifecycle
 }
@@ -31,19 +33,74 @@ public struct SidebandPluginContext: Sendable {
     public let senderDestinationHash: String?
     public let networkReady: Bool?
     public let routeAvailable: Bool?
+    public let routeHopCount: UInt8?
+    public let routeInterface: String?
+    public let conversationDisplayName: String?
+    public let messageDirection: Message.Direction?
+    public let messageTimestamp: Date?
+    /// Bounded, display-safe sensor summaries. Raw telemetry and location
+    /// coordinates are never provided to command plugins.
+    public let telemetrySummary: [String: String]
 
-    public init(command: String, arguments: [String], senderDestinationHash: String? = nil, networkReady: Bool? = nil, routeAvailable: Bool? = nil) {
+    public init(
+        command: String,
+        arguments: [String],
+        senderDestinationHash: String? = nil,
+        networkReady: Bool? = nil,
+        routeAvailable: Bool? = nil,
+        routeHopCount: UInt8? = nil,
+        routeInterface: String? = nil,
+        conversationDisplayName: String? = nil,
+        messageDirection: Message.Direction? = nil,
+        messageTimestamp: Date? = nil,
+        telemetrySummary: [String: String] = [:]
+    ) {
         self.command = command
         self.arguments = arguments
         self.senderDestinationHash = senderDestinationHash
         self.networkReady = networkReady
         self.routeAvailable = routeAvailable
+        self.routeHopCount = routeHopCount
+        self.routeInterface = routeInterface.map { String($0.prefix(128)) }
+        self.conversationDisplayName = conversationDisplayName.map { String($0.prefix(80)) }
+        self.messageDirection = messageDirection
+        self.messageTimestamp = messageTimestamp
+        self.telemetrySummary = Dictionary(
+            uniqueKeysWithValues: telemetrySummary.sorted(by: { $0.key < $1.key }).prefix(16).map {
+                (String($0.key.prefix(48)), String($0.value.prefix(128)))
+            }
+        )
     }
+}
+
+public enum SidebandPluginPresentation: String, Codable, Sendable {
+    case text
+    case status
+    case metricList
 }
 
 public struct SidebandPluginResponse: Sendable, Equatable {
     public let text: String
-    public init(text: String) { self.text = String(text.prefix(1_024)) }
+    public let presentation: SidebandPluginPresentation
+    public let details: [String: String]
+
+    public init(text: String, presentation: SidebandPluginPresentation = .text, details: [String: String] = [:]) {
+        self.text = String(text.prefix(1_024))
+        self.presentation = presentation
+        self.details = Dictionary(
+            uniqueKeysWithValues: details.sorted(by: { $0.key < $1.key }).prefix(12).map {
+                (String($0.key.prefix(48)), String($0.value.prefix(256)))
+            }
+        )
+    }
+
+    /// Portable fallback used when the recipient does not render structured
+    /// native plugin cards.
+    public var renderedText: String {
+        guard !details.isEmpty else { return text }
+        let rows = details.sorted(by: { $0.key < $1.key }).map { "\($0.key): \($0.value)" }
+        return String(([text] + rows).joined(separator: "\n").prefix(4_096))
+    }
 }
 
 public protocol SidebandCommandPlugin: Sendable {
@@ -83,6 +140,12 @@ public struct SidebandPluginExecution: Sendable, Equatable {
     }
 }
 
+public struct SidebandPluginRuntimeStatus: Sendable, Equatable {
+    public let invocationCount: Int
+    public let lastOutcome: SidebandPluginExecutionOutcome?
+    public let lastRunAt: Date?
+}
+
 @MainActor public final class SidebandPluginRegistry {
     private var plugins: [String: any SidebandCommandPlugin] = [:]
     private var services: [String: any SidebandServicePlugin] = [:]
@@ -91,6 +154,7 @@ public struct SidebandPluginExecution: Sendable, Equatable {
     private let executionTimeout: Duration
     private let persistsConfiguration: Bool
     public private(set) var rejectedPluginDescriptions: [String] = []
+    public private(set) var runtimeStatuses: [String: SidebandPluginRuntimeStatus] = [:]
 
     public init(plugins: [any SidebandCommandPlugin] = [SidebandInfoPlugin()], services: [any SidebandServicePlugin] = [], telemetry: [any SidebandTelemetryPlugin] = [SystemTelemetryPlugin()], executionTimeout: Duration = .seconds(3), enabledIdentifiers: Set<String>? = nil, persistsConfiguration: Bool = true) {
         self.executionTimeout = executionTimeout
@@ -196,7 +260,13 @@ public struct SidebandPluginExecution: Sendable, Equatable {
             arguments: arguments,
             senderDestinationHash: permissions.contains(.conversationMetadata) ? context.senderDestinationHash : nil,
             networkReady: permissions.contains(.networkStatus) ? context.networkReady : nil,
-            routeAvailable: permissions.contains(.networkStatus) ? context.routeAvailable : nil
+            routeAvailable: permissions.contains(.networkStatus) ? context.routeAvailable : nil,
+            routeHopCount: permissions.contains(.networkStatus) ? context.routeHopCount : nil,
+            routeInterface: permissions.contains(.networkStatus) ? context.routeInterface : nil,
+            conversationDisplayName: permissions.contains(.conversationMetadata) ? context.conversationDisplayName : nil,
+            messageDirection: permissions.contains(.messageMetadata) ? context.messageDirection : nil,
+            messageTimestamp: permissions.contains(.messageMetadata) ? context.messageTimestamp : nil,
+            telemetrySummary: permissions.contains(.telemetryRead) ? context.telemetrySummary : [:]
         )
         enum Result: Sendable {
             case response(SidebandPluginResponse)
@@ -219,12 +289,24 @@ public struct SidebandPluginExecution: Sendable, Equatable {
         }
         switch result {
         case .response(let response):
+            recordRuntime(identifier: plugin.manifest.identifier, outcome: .succeeded)
             return SidebandPluginExecution(pluginIdentifier: plugin.manifest.identifier, outcome: .succeeded, response: response)
         case .failed:
+            recordRuntime(identifier: plugin.manifest.identifier, outcome: .failed)
             return SidebandPluginExecution(pluginIdentifier: plugin.manifest.identifier, outcome: .failed, response: SidebandPluginResponse(text: "Plugin request failed safely."))
         case .timedOut:
+            recordRuntime(identifier: plugin.manifest.identifier, outcome: .timedOut)
             return SidebandPluginExecution(pluginIdentifier: plugin.manifest.identifier, outcome: .timedOut, response: SidebandPluginResponse(text: "Plugin request timed out safely."))
         }
+    }
+
+    private func recordRuntime(identifier: String, outcome: SidebandPluginExecutionOutcome) {
+        let existing = runtimeStatuses[identifier]
+        runtimeStatuses[identifier] = SidebandPluginRuntimeStatus(
+            invocationCount: (existing?.invocationCount ?? 0) + 1,
+            lastOutcome: outcome,
+            lastRunAt: .now
+        )
     }
 
     private func persistEnabledIdentifiers() {
@@ -257,7 +339,10 @@ public struct SidebandInfoPlugin: SidebandCommandPlugin {
         case "route-status":
             let network = context.networkReady.map { $0 ? "ready" : "offline" } ?? "not permitted"
             let route = context.routeAvailable.map { $0 ? "available" : "unknown" } ?? "not permitted"
-            return SidebandPluginResponse(text: "Route status: network \(network), route \(route).")
+            var details = ["Network": network, "Route": route]
+            if let hops = context.routeHopCount { details["Hops"] = String(hops) }
+            if let interface = context.routeInterface { details["Interface"] = interface }
+            return SidebandPluginResponse(text: "Route status", presentation: .status, details: details)
         default:
             return SidebandPluginResponse(text: "Lower Sideband native plugin service is available.")
         }

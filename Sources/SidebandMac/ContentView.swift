@@ -1925,6 +1925,8 @@ private struct NetworkView: View {
             switch $0 {
             case .networkStatus: "network status"
             case .conversationMetadata: "contact identifier"
+            case .messageMetadata: "message metadata"
+            case .telemetryRead: "telemetry summary"
             case .telemetryWrite: "telemetry provider"
             case .serviceLifecycle: "background service"
             }

@@ -26,7 +26,7 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 - Contact fingerprints, QR/contact links, trust pinning, blocking, and user-reviewed safety reports
 - Encrypted local persistence and optional encrypted private CloudKit synchronisation
 - macOS Reticulum Transport Instance mode with route learning and loop suppression
-- Permission-scoped native command, service, telemetry, and safe declarative plugin APIs
+- Permission-scoped native command, service, telemetry, structured status-card, and safe declarative plugin APIs
 
 ## Platform support
 
