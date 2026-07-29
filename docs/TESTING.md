@@ -119,6 +119,27 @@ For end-to-end testing between two app instances:
 
 No finite test establishes “100% reliable” networking. Report the exact topology, message count, proof count, retries, failures, and elapsed time.
 
+### Public-Internet production certificate
+
+Public-Internet acceptance is fail-closed. Capture completed Internet-only soak
+reports over at least two independently described routes, with at least 2,500
+messages each way per route, deterministic 1 MiB files/images, reconnects,
+delivery proofs, zero missing or duplicate messages, correct order, and no
+delivery timeouts. Then issue a machine-readable certificate:
+
+```sh
+Scripts/certify-public-internet.sh \
+  .build/linux-mac-soak-route-a.json \
+  .build/linux-mac-soak-route-b.json
+```
+
+The validator hashes every source report and refuses incomplete, local,
+single-route, under-count, corrupt-attachment, timeout, duplicate, ordering, or
+proof-deficient evidence. Thresholds can only be deliberately changed through
+`SIDEBAND_CERT_MIN_MESSAGES`, `SIDEBAND_CERT_MIN_ROUTES`, and
+`SIDEBAND_CERT_MAX_TIMEOUTS`. This certification tooling is read-only and never
+changes DNS or network configuration.
+
 ## Manual GitHub Actions
 
 The `Apple builds` workflow is intentionally triggered only with `workflow_dispatch`. Commits and pull requests do not automatically consume GitHub Actions minutes. A maintainer can start the full verification workflow when useful.

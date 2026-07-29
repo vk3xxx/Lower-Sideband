@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.64
+
+- Added a fail-closed public-Internet delivery certification gate requiring
+  independent routes, at least 2,500 proved messages each way per route,
+  reconnects, verified 1 MiB files/images, ordering and de-duplication.
+- Added immutable SHA-256 evidence references and machine-readable
+  certification output without changing DNS or network configuration.
+
 ## 1.3.63
 
 - Added a read-only Python Sideband database preflight that reports source
