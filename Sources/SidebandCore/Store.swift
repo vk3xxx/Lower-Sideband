@@ -176,6 +176,8 @@ public final class SidebandStore {
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
     public private(set) var attachmentStorageReport: AttachmentStorageReport?
+    public private(set) var storagePolicy = SidebandStoragePolicy()
+    public private(set) var lastStorageCleanupResult: SidebandStorageCleanupResult?
     public let resourceStagingStore: ReticulumResourceStagingStore
     public private(set) var selectedGatewayName: String?
     public private(set) var activeNetworkHost: String?
@@ -363,6 +365,14 @@ public final class SidebandStore {
         lastICloudSync = UserDefaults.standard.object(forKey: "iCloudLastSuccessfulSync") as? Date
         attachmentStore = AttachmentStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "Attachments", directoryHint: .isDirectory))
         resourceStagingStore = ReticulumResourceStagingStore(directory: self.persistenceURL.deletingLastPathComponent().appending(path: "ResourceStaging", directoryHint: .isDirectory))
+        if let policyData = UserDefaults.standard.data(forKey: "sidebandStoragePolicy.v1"),
+           let policy = try? JSONDecoder.sideband.decode(SidebandStoragePolicy.self, from: policyData) {
+            storagePolicy = policy.normalized
+        }
+        if let cleanupData = UserDefaults.standard.data(forKey: "sidebandLastStorageCleanup.v1"),
+           let result = try? JSONDecoder.sideband.decode(SidebandStorageCleanupResult.self, from: cleanupData) {
+            lastStorageCleanupResult = result
+        }
         let transportMaterial = SecureIdentityStore.loadOrCreate(account: "reticulum.transport", legacyDefaultsKey: "reticulumTransportIdentity")
         switch transportMaterial {
         case .success(let material): transportIdentity = (try? ReticulumIdentity(privateKey: material)) ?? ReticulumIdentity()
@@ -492,7 +502,14 @@ public final class SidebandStore {
         runtimeHealth.start()
         runtimeHealth.recordForeground()
         Task { try? await resourceStagingStore.removeStale(olderThan: Date(timeIntervalSinceNow: -86_400)) }
-        Task { [weak self] in _ = await self?.cleanOrphanedAttachments() }
+        Task { [weak self] in
+            guard let self else { return }
+            if self.storagePolicy.automaticCleanupEnabled {
+                _ = await self.performStorageMaintenance()
+            } else {
+                _ = await self.cleanOrphanedAttachments()
+            }
+        }
         syncUnreadBadge()
     }
 
@@ -515,6 +532,19 @@ public final class SidebandStore {
         latestMessageDateByConversation.removeAll(keepingCapacity: false)
         reactionCountsByConversationAndTarget.removeAll(keepingCapacity: false)
         messageIndexesAreDirty = true
+    }
+
+    /// Releases only derived in-memory data. Durable encrypted content remains intact.
+    @discardableResult
+    public func releasePerformanceCaches() -> Int {
+        let count = transcriptCache.count
+            + messagesByConversation.count
+            + latestMessageByConversation.count
+            + failedMessageCountByConversation.count
+            + latestMessageDateByConversation.count
+            + reactionCountsByConversationAndTarget.count
+        releaseRebuildableCaches()
+        return count
     }
 
     public var localVoiceHash: String { LXSTVoice.destinationHash(for: messagingIdentity).hex }
@@ -678,6 +708,123 @@ public final class SidebandStore {
 
     public func refreshAttachmentStorageReport() async {
         attachmentStorageReport = await attachmentStore.storageReport(for: messages.flatMap(\.attachments))
+    }
+
+    public func setStoragePolicy(_ policy: SidebandStoragePolicy) {
+        storagePolicy = policy.normalized
+        if let data = try? JSONEncoder.sideband.encode(storagePolicy) {
+            UserDefaults.standard.set(data, forKey: "sidebandStoragePolicy.v1")
+        }
+    }
+
+    /// Applies explicit retention and quota limits without removing starred content,
+    /// scheduled/outbound work, or attachments involved in an active transfer.
+    @discardableResult
+    public func performStorageMaintenance(now: Date = .now) async -> SidebandStorageCleanupResult {
+        let policy = storagePolicy.normalized
+        let calendar = Calendar(identifier: .gregorian)
+        let messageCutoff = policy.messageRetentionDays > 0
+            ? calendar.date(byAdding: .day, value: -policy.messageRetentionDays, to: now)
+            : nil
+        let attachmentCutoff = policy.attachmentRetentionDays > 0
+            ? calendar.date(byAdding: .day, value: -policy.attachmentRetentionDays, to: now)
+            : nil
+
+        func isTerminal(_ message: Message) -> Bool {
+            message.state == .delivered || message.state == .failed
+        }
+        func hasActiveAttachment(_ message: Message) -> Bool {
+            message.attachments.contains { $0.state == .queued || $0.state == .transferring }
+        }
+
+        let removableMessageIDs = Set(messages.compactMap { message -> UUID? in
+            guard let messageCutoff,
+                  message.timestamp < messageCutoff,
+                  isTerminal(message),
+                  !message.isStarred,
+                  !hasActiveAttachment(message) else { return nil }
+            return message.id
+        })
+
+        var removableAttachmentIDs = Set<UUID>()
+        if let attachmentCutoff {
+            for message in messages where !removableMessageIDs.contains(message.id) {
+                guard message.timestamp < attachmentCutoff, isTerminal(message), !message.isStarred else { continue }
+                for attachment in message.attachments
+                    where attachment.state != .queued && attachment.state != .transferring {
+                    removableAttachmentIDs.insert(attachment.id)
+                }
+            }
+        }
+
+        if policy.maximumAttachmentStorageMB > 0 {
+            let limit = policy.maximumAttachmentStorageMB * 1_000_000
+            let retainedMessages = messages.filter { !removableMessageIDs.contains($0.id) }
+            var remainingBytes = retainedMessages
+                .flatMap(\.attachments)
+                .filter { !removableAttachmentIDs.contains($0.id) }
+                .reduce(0) { $0 + max(0, $1.byteCount) }
+            if remainingBytes > limit {
+                let candidates = retainedMessages
+                    .filter { isTerminal($0) && !$0.isStarred }
+                    .flatMap { message in
+                        message.attachments
+                            .filter {
+                                !removableAttachmentIDs.contains($0.id)
+                                    && $0.state != .queued
+                                    && $0.state != .transferring
+                            }
+                            .map { (message.timestamp, $0) }
+                    }
+                    .sorted { $0.0 < $1.0 }
+                for (_, attachment) in candidates where remainingBytes > limit {
+                    removableAttachmentIDs.insert(attachment.id)
+                    remainingBytes -= max(0, attachment.byteCount)
+                }
+            }
+        }
+
+        let attachmentsFromMessages = messages
+            .filter { removableMessageIDs.contains($0.id) }
+            .flatMap(\.attachments)
+        let individuallyRemoved = messages
+            .flatMap(\.attachments)
+            .filter { removableAttachmentIDs.contains($0.id) }
+        let allRemovedAttachments = Dictionary(
+            uniqueKeysWithValues: (attachmentsFromMessages + individuallyRemoved).map { ($0.id, $0) }
+        ).values
+        for attachment in allRemovedAttachments {
+            try? await attachmentStore.remove(attachment)
+        }
+
+        if !removableMessageIDs.isEmpty {
+            messages.removeAll { removableMessageIDs.contains($0.id) }
+        }
+        if !removableAttachmentIDs.isEmpty {
+            for index in messages.indices {
+                messages[index].attachments.removeAll { removableAttachmentIDs.contains($0.id) }
+            }
+        }
+        if !removableMessageIDs.isEmpty || !removableAttachmentIDs.isEmpty {
+            sortConversations()
+            save()
+        }
+
+        let paths = Set(messages.flatMap(\.attachments).map(\.relativePath))
+        let orphaned = (try? await attachmentStore.removeOrphans(referencedRelativePaths: paths)) ?? 0
+        await refreshAttachmentStorageReport()
+        let result = SidebandStorageCleanupResult(
+            messagesRemoved: removableMessageIDs.count,
+            attachmentsRemoved: allRemovedAttachments.count,
+            attachmentBytesRemoved: allRemovedAttachments.reduce(0) { $0 + max(0, $1.byteCount) },
+            orphanedFilesRemoved: orphaned,
+            performedAt: now
+        )
+        lastStorageCleanupResult = result
+        if let data = try? JSONEncoder.sideband.encode(result) {
+            UserDefaults.standard.set(data, forKey: "sidebandLastStorageCleanup.v1")
+        }
+        return result
     }
 
     @discardableResult

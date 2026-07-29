@@ -4534,6 +4534,97 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(zip(values, values.dropFirst()).allSatisfy { $0 <= $1 })
 }
 
+@Test func storagePolicyNormalizesUnsafeLimits() {
+    let policy = SidebandStoragePolicy(
+        automaticCleanupEnabled: true,
+        messageRetentionDays: 1,
+        attachmentRetentionDays: 50_000,
+        maximumAttachmentStorageMB: 1
+    )
+    #expect(policy.automaticCleanupEnabled)
+    #expect(policy.messageRetentionDays == 7)
+    #expect(policy.attachmentRetentionDays == 3_650)
+    #expect(policy.maximumAttachmentStorageMB == 50)
+}
+
+@MainActor @Test func storageMaintenanceProtectsStarredAndInFlightContent() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appending(path: "sideband-storage-\(UUID().uuidString)", directoryHint: .isDirectory)
+    defer {
+        UserDefaults.standard.removeObject(forKey: "sidebandStoragePolicy.v1")
+        UserDefaults.standard.removeObject(forKey: "sidebandLastStorageCleanup.v1")
+        try? FileManager.default.removeItem(at: root)
+    }
+    let store = SidebandStore(persistenceURL: root.appending(path: "store.json"))
+    let conversation = Conversation(destinationHash: "00112233445566778899aabbccddeeff", displayName: "Storage Test")
+    let oldDate = Date(timeIntervalSinceNow: -(120 * 86_400))
+    let disposableAttachment = try await store.attachmentStore.save(
+        data: Data(repeating: 0x41, count: 1_024),
+        filename: "old.bin",
+        mimeType: "application/octet-stream"
+    )
+    let starredAttachment = try await store.attachmentStore.save(
+        data: Data(repeating: 0x42, count: 2_048),
+        filename: "starred.bin",
+        mimeType: "application/octet-stream"
+    )
+    let activeAttachment = Attachment(
+        filename: "active.bin",
+        byteCount: 4_096,
+        relativePath: "active.bin",
+        state: .transferring,
+        progress: 0.5
+    )
+    let snapshot = AppSnapshot(
+        conversations: [conversation],
+        messages: [
+            Message(
+                conversationID: conversation.id,
+                body: "remove me",
+                timestamp: oldDate,
+                direction: .incoming,
+                state: .delivered,
+                attachments: [disposableAttachment]
+            ),
+            Message(
+                conversationID: conversation.id,
+                body: "starred",
+                timestamp: oldDate,
+                direction: .incoming,
+                state: .delivered,
+                attachments: [starredAttachment],
+                isStarred: true
+            ),
+            Message(
+                conversationID: conversation.id,
+                body: "still sending",
+                timestamp: oldDate,
+                direction: .outgoing,
+                state: .queued,
+                attachments: [activeAttachment]
+            )
+        ]
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try store.restoreSnapshotData(encoder.encode(snapshot))
+    store.setStoragePolicy(SidebandStoragePolicy(messageRetentionDays: 30, attachmentRetentionDays: 30))
+
+    let result = await store.performStorageMaintenance()
+
+    #expect(result.messagesRemoved == 1)
+    #expect(result.attachmentsRemoved == 1)
+    #expect(store.messages.count == 2)
+    #expect(store.messages.contains { $0.body == "starred" && $0.attachments.count == 1 })
+    #expect(store.messages.contains { $0.body == "still sending" && $0.attachments.count == 1 })
+    #expect(!(await fileExists(store.attachmentStore.url(for: disposableAttachment))))
+    #expect(await fileExists(store.attachmentStore.url(for: starredAttachment)))
+}
+
+private func fileExists(_ url: URL) -> Bool {
+    FileManager.default.fileExists(atPath: url.path)
+}
+
 @Test func networkMapBuildsDirectAndMultiHopTopologyWithoutInventingLinks() {
     let now = Date(timeIntervalSince1970: 1_700_000_000)
     let directHash = String(repeating: "11", count: 16)

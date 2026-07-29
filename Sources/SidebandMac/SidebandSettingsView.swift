@@ -75,12 +75,14 @@ private enum SettingsConfirmation {
     case resetGatewayHealth
     case clearPluginHistory
     case removeRNode(UUID, String)
+    case runStorageMaintenance
 
     var title: String {
         switch self {
         case .resetGatewayHealth: "Reset Gateway History?"
         case .clearPluginHistory: "Clear Plugin Activity?"
         case .removeRNode: "Remove RNode?"
+        case .runStorageMaintenance: "Run Storage Maintenance?"
         }
     }
 
@@ -92,6 +94,8 @@ private enum SettingsConfirmation {
             "This removes the local plugin command audit history. It does not change which plugins are enabled."
         case .removeRNode(_, let name):
             "\(name) will be removed from this device. The radio itself is not modified."
+        case .runStorageMaintenance:
+            "Lower Sideband will apply your retention and storage limits. Starred messages, scheduled messages, queued messages and active transfers are always preserved."
         }
     }
 
@@ -100,6 +104,7 @@ private enum SettingsConfirmation {
         case .resetGatewayHealth: "Reset History"
         case .clearPluginHistory: "Clear Activity"
         case .removeRNode: "Remove RNode"
+        case .runStorageMaintenance: "Run Maintenance"
         }
     }
 }
@@ -681,6 +686,58 @@ struct SidebandSettingsView: View {
                 }
             }
 
+            Section {
+                Toggle("Automatic maintenance", isOn: Binding(
+                    get: { store.storagePolicy.automaticCleanupEnabled },
+                    set: { value in updateStoragePolicy { $0.automaticCleanupEnabled = value } }
+                ))
+                Picker("Keep messages", selection: Binding(
+                    get: { store.storagePolicy.messageRetentionDays },
+                    set: { value in updateStoragePolicy { $0.messageRetentionDays = value } }
+                )) {
+                    ForEach(SidebandStoragePolicy.retentionChoices, id: \.self) { days in
+                        Text(retentionLabel(days)).tag(days)
+                    }
+                }
+                Picker("Keep attachments", selection: Binding(
+                    get: { store.storagePolicy.attachmentRetentionDays },
+                    set: { value in updateStoragePolicy { $0.attachmentRetentionDays = value } }
+                )) {
+                    ForEach(SidebandStoragePolicy.retentionChoices, id: \.self) { days in
+                        Text(retentionLabel(days)).tag(days)
+                    }
+                }
+                Picker("Attachment storage limit", selection: Binding(
+                    get: { store.storagePolicy.maximumAttachmentStorageMB },
+                    set: { value in updateStoragePolicy { $0.maximumAttachmentStorageMB = value } }
+                )) {
+                    ForEach(SidebandStoragePolicy.storageChoicesMB, id: \.self) { megabytes in
+                        Text(storageLimitLabel(megabytes)).tag(megabytes)
+                    }
+                }
+                if let result = store.lastStorageCleanupResult {
+                    LabeledContent("Last maintenance", value: result.performedAt.formatted(date: .abbreviated, time: .shortened))
+                    Text(result.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        Button("Run Maintenance Now") { confirmation = .runStorageMaintenance }
+                        Button("Release Temporary Caches") { _ = store.releasePerformanceCaches() }
+                    }
+                    VStack(alignment: .leading) {
+                        Button("Run Maintenance Now") { confirmation = .runStorageMaintenance }
+                        Button("Release Temporary Caches") { _ = store.releasePerformanceCaches() }
+                    }
+                }
+            } header: {
+                Text("Storage management")
+            } footer: {
+                Text("Limits apply oldest-first. Starred content, scheduled or queued messages, and active attachment transfers are never removed. Temporary caches can always be rebuilt from encrypted storage.")
+            }
+            .accessibilityIdentifier("settings.storage.management")
+
             if !store.incomingResourceProgress.isEmpty {
                 Section("Active transfers") {
                     ForEach(store.incomingResourceProgress.keys.sorted(), id: \.self) { hash in
@@ -1247,8 +1304,26 @@ struct SidebandSettingsView: View {
             store.clearPluginAuditHistory()
         case .removeRNode(let id, _):
             Task { await store.rnodeManager.remove(id) }
+        case .runStorageMaintenance:
+            Task { _ = await store.performStorageMaintenance() }
         }
         self.confirmation = nil
+    }
+
+    private func updateStoragePolicy(_ update: (inout SidebandStoragePolicy) -> Void) {
+        var policy = store.storagePolicy
+        update(&policy)
+        store.setStoragePolicy(policy)
+    }
+
+    private func retentionLabel(_ days: Int) -> String {
+        days == 0 ? "Forever" : "\(days) days"
+    }
+
+    private func storageLimitLabel(_ megabytes: Int) -> String {
+        megabytes == 0
+            ? "No limit"
+            : ByteCountFormatter.string(fromByteCount: Int64(megabytes) * 1_000_000, countStyle: .file)
     }
 
     private var configuredPortIsValid: Bool { (1...65_535).contains(store.networkPort) }

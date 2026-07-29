@@ -16,6 +16,8 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
   long-running memory/power profiling on physical devices.
 - Keep the versioned redacted support-report schema current as new runtime
   health counters are added.
+- Keep storage-retention and quota safeguards covered as new message and
+  attachment states are introduced.
 - Strengthen public endpoint health data and operator documentation without embedding private infrastructure assumptions.
 - Expand automated migration fixtures as new upstream historical schemas are found.
 
