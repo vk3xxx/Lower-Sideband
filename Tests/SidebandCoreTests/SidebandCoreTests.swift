@@ -4984,6 +4984,23 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(items.first(where: { $0.kind == .link })?.url?.host == "example.com")
 }
 
+@Test func smartCollectionsMatchMessageCapabilitiesAndTags() {
+    var conversation = Conversation(destinationHash: String(repeating: "cd", count: 16), displayName: "Field Team")
+    conversation.tags = ["Operations"]
+    let attachment = Attachment(filename: "plan.pdf", byteCount: 10, relativePath: "plan.pdf", state: .available)
+    let message = Message(
+        conversationID: conversation.id,
+        body: "",
+        direction: .incoming,
+        state: .delivered,
+        attachments: [attachment]
+    )
+    #expect(ConversationOrganisation.matches(conversation, collection: .attachments, messages: [message]))
+    #expect(ConversationOrganisation.matches(conversation, collection: .all, messages: [message], tag: "operations"))
+    #expect(!ConversationOrganisation.matches(conversation, collection: .failed, messages: [message]))
+    #expect(!ConversationOrganisation.matches(conversation, collection: .all, messages: [message], tag: "Family"))
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }

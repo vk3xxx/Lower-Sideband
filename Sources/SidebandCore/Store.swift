@@ -739,6 +739,48 @@ public final class SidebandStore {
         ConversationMediaIndexer.index(messages: messages, conversationID: conversationID)
     }
 
+    public func conversations(in collection: ConversationSmartCollection, tag: String? = nil) -> [Conversation] {
+        conversations.filter {
+            ConversationOrganisation.matches($0, collection: collection, messages: messages, tag: tag)
+        }.sorted {
+            if $0.isPinned != $1.isPinned { return $0.isPinned && !$1.isPinned }
+            return $0.updatedAt > $1.updatedAt
+        }
+    }
+
+    @discardableResult
+    public func applyBulkAction(_ action: ConversationBulkAction, to ids: Set<UUID>) -> Int {
+        guard !ids.isEmpty else { return 0 }
+        var changed = 0
+        for index in conversations.indices where ids.contains(conversations[index].id) {
+            switch action {
+            case .pin:
+                if !conversations[index].isPinned { conversations[index].isPinned = true; conversations[index].isArchived = false; changed += 1 }
+            case .unpin:
+                if conversations[index].isPinned { conversations[index].isPinned = false; changed += 1 }
+            case .archive:
+                if !conversations[index].isArchived { conversations[index].isArchived = true; conversations[index].isPinned = false; changed += 1 }
+            case .unarchive:
+                if conversations[index].isArchived { conversations[index].isArchived = false; changed += 1 }
+            case .mute:
+                if !conversations[index].notificationsMuted { conversations[index].notificationsMuted = true; changed += 1 }
+            case .unmute:
+                if conversations[index].notificationsMuted { conversations[index].notificationsMuted = false; changed += 1 }
+            case .markRead:
+                if conversations[index].unreadCount != 0 { conversations[index].unreadCount = 0; changed += 1 }
+            case .markUnread:
+                if conversations[index].unreadCount == 0 { conversations[index].unreadCount = 1; changed += 1 }
+            }
+            if ids.contains(conversations[index].id) { conversations[index].updatedAt = .now }
+        }
+        if changed > 0 {
+            sortConversations()
+            save()
+            syncUnreadBadge()
+        }
+        return changed
+    }
+
     public func refreshAttachmentStorageReport() async {
         attachmentStorageReport = await attachmentStore.storageReport(for: messages.flatMap(\.attachments))
     }
