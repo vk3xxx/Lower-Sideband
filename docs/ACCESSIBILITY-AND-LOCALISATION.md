@@ -22,3 +22,10 @@ concatenated English fragments should be avoided. Before adding a translation:
 
 The English catalog is the reviewed source language. Additional languages
 should only be marked complete after native-language review.
+
+`Scripts/validate-apple-quality.swift` fails when critical messaging,
+settings, network-map or migration strings leave the shared catalog, when
+essential VoiceOver/automation identifiers disappear, or when required
+privacy and background declarations are missing. Run
+`Scripts/run-production-quality-gates.sh all` for the complete deterministic
+test and unsigned Release-build gate.

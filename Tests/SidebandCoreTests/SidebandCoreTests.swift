@@ -4502,17 +4502,23 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     let reachabilityBaseline = health.reachabilityTransitions
     let wakeBaseline = health.backgroundWakeAttempts
     let successBaseline = health.backgroundWakeSuccesses
+    let metricBaseline = health.metricPayloadsReceived
+    let diagnosticBaseline = health.diagnosticPayloadsReceived
     let start = Date(timeIntervalSince1970: 1_800_000_000)
     health.recordForeground(at: start)
     health.recordReachabilityTransition(at: start.addingTimeInterval(2))
     health.recordBackground(at: start.addingTimeInterval(10))
     health.recordBackgroundWake(succeeded: true, duration: 1.25)
+    health.recordMetricKitPayloads(metrics: 2, diagnostics: 1, at: start.addingTimeInterval(12))
     #expect(health.foregroundTransitions == foregroundBaseline + 1)
     #expect(health.backgroundTransitions == backgroundBaseline + 1)
     #expect(health.reachabilityTransitions == reachabilityBaseline + 1)
     #expect(health.backgroundWakeAttempts == wakeBaseline + 1)
     #expect(health.backgroundWakeSuccesses == successBaseline + 1)
     #expect(health.lastBackgroundWakeDuration == 1.25)
+    #expect(health.metricPayloadsReceived == metricBaseline + 2)
+    #expect(health.diagnosticPayloadsReceived == diagnosticBaseline + 1)
+    #expect(health.lastMetricPayloadAt == start.addingTimeInterval(12))
 }
 
 private actor TestBootloaderTransport: RNodeBootloaderTransport {

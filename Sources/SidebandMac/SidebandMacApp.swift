@@ -6,6 +6,7 @@ import CryptoKit
 import UIKit
 @preconcurrency import CallKit
 @preconcurrency import AVFoundation
+@preconcurrency import MetricKit
 #endif
 
 @main
@@ -56,6 +57,9 @@ struct SidebandApp: App {
                         deviceToken: { [store] token in await store.updateRemoteWakeDeviceToken(token) },
                         registrationFailure: { [store] message in store.remoteWakeRegistrationFailed(message) }
                     )
+                    MetricKitMonitor.shared.install { [store] metrics, diagnostics in
+                        store.runtimeHealth.recordMetricKitPayloads(metrics: metrics, diagnostics: diagnostics)
+                    }
                     UIApplication.shared.registerForRemoteNotifications()
                 }
         }
@@ -436,6 +440,50 @@ private final class RemoteWakeBridge {
         guard let registrationFailureHandler else { return }
         pendingRegistrationFailure = nil
         registrationFailureHandler(message)
+    }
+}
+
+private final class MetricKitMonitor: NSObject, MXMetricManagerSubscriber, @unchecked Sendable {
+    static let shared = MetricKitMonitor()
+    private let lock = NSLock()
+    private var installed = false
+    private var handler: (@MainActor @Sendable (Int, Int) -> Void)?
+    private var pendingMetrics = 0
+    private var pendingDiagnostics = 0
+
+    @MainActor
+    func install(handler: @escaping @MainActor @Sendable (Int, Int) -> Void) {
+        lock.lock()
+        self.handler = handler
+        let metrics = pendingMetrics
+        let diagnostics = pendingDiagnostics
+        pendingMetrics = 0
+        pendingDiagnostics = 0
+        let shouldRegister = !installed
+        installed = true
+        lock.unlock()
+        if shouldRegister { MXMetricManager.shared.add(self) }
+        if metrics > 0 || diagnostics > 0 { handler(metrics, diagnostics) }
+    }
+
+    nonisolated func didReceive(_ payloads: [MXMetricPayload]) {
+        deliver(metrics: payloads.count, diagnostics: 0)
+    }
+
+    nonisolated func didReceive(_ payloads: [MXDiagnosticPayload]) {
+        deliver(metrics: 0, diagnostics: payloads.count)
+    }
+
+    private nonisolated func deliver(metrics: Int, diagnostics: Int) {
+        lock.lock()
+        guard let handler else {
+            pendingMetrics += metrics
+            pendingDiagnostics += diagnostics
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        Task { @MainActor in handler(metrics, diagnostics) }
     }
 }
 

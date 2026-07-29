@@ -7,8 +7,10 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
 - Keep the completed deterministic upstream matrix current as Sideband,
   Reticulum and LXMF publish new releases.
 - Exercise attachments, propagation sync, voice, telemetry, RNode, and network transitions across physical iPhone, iPad, and Mac hardware.
-- Continue translated-locale review, assistive-technology testing on physical
-  devices, and long-running memory/power profiling.
+- Keep the automated string-catalog, accessibility-identifier, privacy,
+  background-mode, MetricKit, serial-test, and Release-build quality gates
+  green. Continue native-speaker review, assistive-technology testing, and
+  long-running memory/power profiling on physical devices.
 - Strengthen public endpoint health data and operator documentation without embedding private infrastructure assumptions.
 - Expand automated migration fixtures as new upstream historical schemas are found.
 

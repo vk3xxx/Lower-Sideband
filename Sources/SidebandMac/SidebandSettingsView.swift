@@ -335,6 +335,11 @@ struct SidebandSettingsView: View {
                     value: store.runtimeHealth.backgroundWakeSuccessRate?.formatted(.percent.precision(.fractionLength(1))) ?? "No wake attempts"
                 )
                 LabeledContent("Memory warnings", value: store.runtimeHealth.memoryPressureEvents.formatted())
+                LabeledContent("MetricKit reports", value: store.runtimeHealth.metricPayloadsReceived.formatted())
+                LabeledContent("MetricKit diagnostics", value: store.runtimeHealth.diagnosticPayloadsReceived.formatted())
+                if let metricDate = store.runtimeHealth.lastMetricPayloadAt {
+                    LabeledContent("Last MetricKit report", value: metricDate.formatted(date: .abbreviated, time: .shortened))
+                }
                 LabeledContent("Network changes", value: store.runtimeHealth.reachabilityTransitions.formatted())
                 LabeledContent(
                     "Foreground runtime",

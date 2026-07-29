@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.66
+
+- Added privacy-preserving MetricKit lifecycle integration with aggregate
+  metric and diagnostic receipt health surfaced in Settings.
+- Added an enforceable Apple quality audit for critical localisation,
+  accessibility identifiers, privacy strings, background modes, CloudKit,
+  APNs and MetricKit integration.
+- Added deterministic serial-test and unsigned Release-build production gates
+  for macOS and iPhone/iPad simulator targets.
+
 ## 1.3.65
 
 - Automatically propagated APNs token rotation to the signed managed wake

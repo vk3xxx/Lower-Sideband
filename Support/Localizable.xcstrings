@@ -2,6 +2,7 @@
   "sourceLanguage" : "en",
   "strings" : {
     "Archive Conversation" : {},
+    "Background delivery" : {},
     "Blocked" : {},
     "Cancel" : {},
     "Connecting securely" : {},
@@ -26,6 +27,8 @@
     "Pinned" : {},
     "Queued" : {},
     "Ready" : {},
+    "Register This Device" : {},
+    "Remote message wakes" : {},
     "Send message" : {},
     "Settings" : {},
     "Unarchive Conversation" : {},

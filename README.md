@@ -67,6 +67,7 @@ For a complete unsigned verification pass:
 Scripts/check-repository.sh
 Scripts/validate-ios-app.sh 'generic/platform=iOS Simulator'
 Scripts/test-rnode.sh protocol
+Scripts/run-production-quality-gates.sh all
 ```
 
 ## Documentation

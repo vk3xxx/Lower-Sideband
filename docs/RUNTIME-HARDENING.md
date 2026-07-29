@@ -21,6 +21,13 @@ Settings reports network transitions, memory warnings, foreground runtime,
 background-wake success rate and whether the app is conserving energy. These
 counters persist across launches and are included in privacy-safe diagnostics.
 
+On iOS, MetricKit delivery is registered during startup. Lower Sideband records
+only aggregate metric and diagnostic payload counts and their latest arrival
+time; payload contents remain in Apple's MetricKit pipeline and are never
+combined with conversation data. The production quality gate runs tests
+serially before Release builds, avoiding false timing failures caused by
+hundreds of unrelated tests competing concurrently.
+
 Production acceptance should include:
 
 1. repeated Wi-Fi/cellular/IPv6/IPv4 transitions;
