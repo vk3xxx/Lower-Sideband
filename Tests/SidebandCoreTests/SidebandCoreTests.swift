@@ -4341,6 +4341,87 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(distinctDestinationPositions.count > 1_400)
 }
 
+@Test func managedInfrastructureRequiresSignedRedundantEndpoints() throws {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let operatorIdentity = ReticulumIdentity()
+    let propagation = String(repeating: "ab", count: 16)
+    let manifest = ManagedInfrastructureManifest(
+        issuedAt: now.addingTimeInterval(-60),
+        expiresAt: now.addingTimeInterval(24 * 60 * 60),
+        gateways: [
+            .init(name: "Primary IPv6", host: "gateway.example.net", port: 4242, priority: 10),
+            .init(name: "Secondary IPv4", host: "198.51.100.10", port: 4242, priority: 20)
+        ],
+        propagationNodes: [.init(name: "Store and forward", destinationHash: propagation, priority: 10)],
+        wakeRegistrationURL: URL(string: "https://wake.example.net/v1/devices")
+    )
+    let envelope = try ManagedInfrastructureDirectory.signedEnvelope(manifest: manifest, identity: operatorIdentity)
+    let verified = try ManagedInfrastructureDirectory.verify(
+        envelope,
+        trustedPublicKey: operatorIdentity.publicKey,
+        now: now
+    )
+    #expect(verified.gateways.map(\.name) == ["Primary IPv6", "Secondary IPv4"])
+    #expect(verified.manifest.propagationNodes.first?.destinationHash == propagation)
+
+    let tampered = SignedManagedInfrastructureManifest(
+        manifest: .init(
+            issuedAt: manifest.issuedAt,
+            expiresAt: manifest.expiresAt,
+            gateways: [
+                .init(name: "Attacker", host: "attacker.example", port: 4242),
+                manifest.gateways[1]
+            ]
+        ),
+        signature: envelope.signature
+    )
+    do {
+        _ = try ManagedInfrastructureDirectory.verify(
+            tampered,
+            trustedPublicKey: operatorIdentity.publicKey,
+            now: now
+        )
+        Issue.record("Tampered managed infrastructure must not verify")
+    } catch let error as ManagedInfrastructureDirectory.DirectoryError {
+        #expect(error == .invalidSignature)
+    }
+}
+
+@Test func managedGatewaysPrecedeCommunityFallbacks() {
+    let managed = [
+        InternetGateway(name: "Managed primary", host: "managed-a.example", port: 4242),
+        InternetGateway(name: "Managed secondary", host: "managed-b.example", port: 4242)
+    ]
+    let community = [InternetGateway(name: "Community", host: "community.example", port: 4242)]
+    let ordered = PublicReticulumGateways.ordered(
+        customHost: nil,
+        customPort: 4242,
+        preferredID: nil,
+        managedGateways: managed,
+        communityGateways: community
+    )
+    #expect(Array(ordered.prefix(2)) == managed)
+    #expect(ordered[2] == community[0])
+}
+
+@Test func remoteWakeRegistrationIsSignedAndContainsNoMessageContent() throws {
+    let identity = ReticulumIdentity()
+    let registration = try RemoteWakeRegistration.create(
+        deviceToken: String(repeating: "01", count: 32),
+        apnsEnvironment: "sandbox",
+        deliveryDestination: String(repeating: "cd", count: 16),
+        identity: identity,
+        issuedAt: Date(timeIntervalSince1970: 1_800_000_000),
+        nonce: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    )
+    #expect(registration.validates())
+    let data = try JSONEncoder().encode(registration)
+    let text = String(decoding: data, as: UTF8.self)
+    #expect(!text.localizedCaseInsensitiveContains("message"))
+    #expect(!text.localizedCaseInsensitiveContains("attachment"))
+    #expect(!text.localizedCaseInsensitiveContains("private"))
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }

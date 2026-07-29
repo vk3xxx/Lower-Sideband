@@ -195,6 +195,7 @@ public enum PublicReticulumGateways {
         customHost: String?,
         customPort: Int,
         preferredID: String?,
+        managedGateways: [InternetGateway] = [],
         communityGateways: [InternetGateway] = [],
         excluding attemptedIDs: Set<String> = [],
         health: [String: GatewayHealthRecord] = [:],
@@ -205,6 +206,7 @@ public enum PublicReticulumGateways {
         if !normalizedHost.isEmpty, let port = UInt16(exactly: customPort), port > 0 {
             gateways.append(InternetGateway(name: "Configured internet gateway", host: normalizedHost, port: port))
         }
+        gateways.append(contentsOf: managedGateways.prefix(16))
         // MeshChatX selects three community nodes. Applying the same bound
         // prevents malformed directory data from opening excessive sockets.
         gateways.append(contentsOf: communityGateways.prefix(3))

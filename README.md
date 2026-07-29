@@ -77,6 +77,7 @@ Scripts/test-rnode.sh protocol
 - [Reticulum network map](docs/NETWORK-MAP.md)
 - [RNode and radio interfaces](docs/RNODE.md)
 - [Testing and interoperability](docs/TESTING.md)
+- [Managed connectivity infrastructure](docs/MANAGED-INFRASTRUCTURE.md)
 - [Porting status and known gaps](PORTING.md)
 - [Native feature parity](docs/FEATURE-PARITY.md)
 

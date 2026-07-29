@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.60
+
+- Added signed managed infrastructure discovery with strict expiry, endpoint,
+  size and Reticulum identity-signature validation.
+- Added redundant managed TCP/Backbone gateway provisioning integrated with
+  existing health scoring and automatic public failover.
+- Added managed LXMF propagation-node selection and signed, content-free APNs
+  device registration for reliable background delivery.
+- Added professional macOS/iOS settings, security documentation and regression
+  tests for tamper rejection, priority ordering and wake registration privacy.
+
 ## 1.3.59
 
 - Pinned the developer reference submodules to Sideband 2.0.1, Reticulum

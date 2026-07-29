@@ -293,6 +293,15 @@ public final class SidebandStore {
     private var preferredInternetGatewayID: String?
     public private(set) var gatewayHealth: [String: GatewayHealthRecord] = [:]
     public private(set) var communityInternetGateways: [InternetGateway] = []
+    public private(set) var managedInternetGateways: [InternetGateway] = []
+    public private(set) var managedPropagationNodeCount = 0
+    public private(set) var managedInfrastructureStatus = "Not configured"
+    public private(set) var managedInfrastructureLastRefresh: Date?
+    public var managedInfrastructureEnabled: Bool
+    public var managedInfrastructureURL: String
+    public var managedInfrastructurePublicKey: String
+    public var remoteWakeEnabled: Bool
+    public private(set) var remoteWakeStatus = "Not configured"
     private var networkConnectionStartedAt: Date?
     private var deferredPathRequests: Set<String> = []
     private var answeredLocalPathRequestTags: [Data: Date] = [:]
@@ -300,6 +309,10 @@ public final class SidebandStore {
     private var reconnectAttempt = 0
     private let transportIdentity: ReticulumIdentity
     @ObservationIgnored private let communityInterfaceDirectory = CommunityInterfaceDirectory()
+    @ObservationIgnored private let managedInfrastructureDirectory = ManagedInfrastructureDirectory()
+    @ObservationIgnored private let remoteWakeRegistrationClient = RemoteWakeRegistrationClient()
+    @ObservationIgnored private var managedInfrastructureSnapshot: ManagedInfrastructureDirectory.Snapshot?
+    private var didRefreshManagedInfrastructure = false
     private let tcpInterfaceHash: Data
     private var messagingIdentity: ReticulumIdentity
     @ObservationIgnored private lazy var transportInstance = ReticulumTransportInstance(identityHash: transportIdentity.hash)
@@ -389,6 +402,10 @@ public final class SidebandStore {
         autoConnectEnabled = UserDefaults.standard.object(forKey: "reticulumAutoConnect") as? Bool ?? true
         connectionMode = UserDefaults.standard.string(forKey: "reticulumConnectionMode").flatMap(NetworkConnectionMode.init(rawValue:)) ?? .automatic
         internetOnlyEnabled = UserDefaults.standard.bool(forKey: "reticulumInternetOnly")
+        managedInfrastructureEnabled = UserDefaults.standard.bool(forKey: "managedInfrastructureEnabled")
+        managedInfrastructureURL = UserDefaults.standard.string(forKey: "managedInfrastructureURL") ?? ""
+        managedInfrastructurePublicKey = UserDefaults.standard.string(forKey: "managedInfrastructurePublicKey") ?? ""
+        remoteWakeEnabled = UserDefaults.standard.bool(forKey: "remoteWakeEnabled")
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         #if os(macOS)
         transportInstanceEnabled = UserDefaults.standard.bool(forKey: "reticulumTransportInstanceEnabled")
@@ -1831,6 +1848,7 @@ public final class SidebandStore {
                 customHost: networkInternetHost,
                 customPort: networkInternetPort,
                 preferredID: internetGatewayID,
+                managedGateways: managedInternetGateways,
                 communityGateways: communityInternetGateways,
                 health: gatewayHealth
             )
@@ -2235,6 +2253,7 @@ public final class SidebandStore {
         attemptedGatewayIDs.removeAll()
         attemptedInternetGatewayIDs.removeAll()
         didRefreshCommunityGateways = false
+        didRefreshManagedInfrastructure = false
         if autoConnectEnabled { Task { await reconnectNetwork() } }
     }
 
@@ -2264,6 +2283,105 @@ public final class SidebandStore {
             pendingLANGatewaySwitchID = nil
         }
         if autoConnectEnabled { Task { await reconnectNetwork() } }
+    }
+
+    public func configureManagedInfrastructure(enabled: Bool, url: String, publicKey: String) {
+        managedInfrastructureEnabled = enabled
+        managedInfrastructureURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        managedInfrastructurePublicKey = publicKey
+            .filter(\.isHexDigit)
+            .lowercased()
+        UserDefaults.standard.set(enabled, forKey: "managedInfrastructureEnabled")
+        UserDefaults.standard.set(managedInfrastructureURL, forKey: "managedInfrastructureURL")
+        UserDefaults.standard.set(managedInfrastructurePublicKey, forKey: "managedInfrastructurePublicKey")
+        didRefreshManagedInfrastructure = false
+        if !enabled {
+            managedInfrastructureSnapshot = nil
+            managedInternetGateways = []
+            managedPropagationNodeCount = 0
+            managedInfrastructureStatus = "Disabled"
+        }
+    }
+
+    public func setRemoteWakeEnabled(_ enabled: Bool) {
+        remoteWakeEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "remoteWakeEnabled")
+        remoteWakeStatus = enabled ? "Waiting for registration" : "Disabled"
+        if enabled { Task { await registerRemoteWake() } }
+    }
+
+    public func refreshManagedInfrastructure(force: Bool = true, surfaceErrors: Bool = true) async {
+        guard managedInfrastructureEnabled else {
+            managedInfrastructureStatus = "Disabled"
+            managedInternetGateways = []
+            managedPropagationNodeCount = 0
+            return
+        }
+        guard let url = URL(string: managedInfrastructureURL),
+              let publicKey = Data(hexadecimal: managedInfrastructurePublicKey) else {
+            managedInfrastructureStatus = "Configuration incomplete"
+            if surfaceErrors { lastError = "Enter a valid HTTPS manifest URL and trusted 128-character operator public key." }
+            return
+        }
+        managedInfrastructureStatus = "Refreshing signed directory…"
+        do {
+            let snapshot = try await managedInfrastructureDirectory.snapshot(
+                url: url,
+                trustedPublicKey: publicKey,
+                forceRefresh: force
+            )
+            managedInfrastructureSnapshot = snapshot
+            managedInternetGateways = snapshot.gateways
+            managedPropagationNodeCount = snapshot.manifest.propagationNodes.count
+            managedInfrastructureLastRefresh = snapshot.refreshedAt
+            managedInfrastructureStatus = "\(snapshot.gateways.count) verified gateways"
+            if propagationNodeIsAutomatic,
+               let node = snapshot.manifest.propagationNodes.sorted(by: {
+                   $0.priority == $1.priority ? $0.name < $1.name : $0.priority < $1.priority
+               }).first {
+                propagationNodeHash = node.destinationHash.lowercased()
+                UserDefaults.standard.set(propagationNodeHash, forKey: "lxmfPropagationNode")
+                if networkState == .ready { await requestPropagationNodePath() }
+            }
+            if remoteWakeEnabled { await registerRemoteWake() }
+        } catch {
+            managedInfrastructureStatus = "Verification failed"
+            if surfaceErrors { lastError = error.localizedDescription }
+        }
+    }
+
+    public func registerRemoteWake() async {
+        guard remoteWakeEnabled else {
+            remoteWakeStatus = "Disabled"
+            return
+        }
+        guard let endpoint = managedInfrastructureSnapshot?.manifest.wakeRegistrationURL else {
+            remoteWakeStatus = "No verified wake service"
+            return
+        }
+        guard let token = UserDefaults.standard.string(forKey: "sidebandAPNsDeviceToken"), !token.isEmpty else {
+            remoteWakeStatus = "Waiting for APNs token"
+            return
+        }
+        remoteWakeStatus = "Registering…"
+        do {
+            #if DEBUG
+            let environment = "sandbox"
+            #else
+            let environment = "production"
+            #endif
+            let registration = try RemoteWakeRegistration.create(
+                deviceToken: token,
+                apnsEnvironment: environment,
+                deliveryDestination: localDeliveryHash,
+                identity: messagingIdentity
+            )
+            try await remoteWakeRegistrationClient.register(registration, at: endpoint)
+            remoteWakeStatus = "Registered securely"
+        } catch {
+            remoteWakeStatus = "Registration failed"
+            lastError = error.localizedDescription
+        }
     }
 
     public func setPropagationNode(_ hash: String) {
@@ -3128,6 +3246,7 @@ public final class SidebandStore {
         attemptedConfiguredGatewayIDs.removeAll()
         attemptedInternetGatewayIDs.removeAll()
         didRefreshCommunityGateways = false
+        didRefreshManagedInfrastructure = false
         observedLANDiscoveryGrace = false
         automaticConnectionDescription = connectionMode == .automatic
             ? "Discovering Reticulum gateways automatically"
@@ -3183,6 +3302,10 @@ public final class SidebandStore {
         }
 
         if !didRefreshCommunityGateways {
+            if !didRefreshManagedInfrastructure {
+                didRefreshManagedInfrastructure = true
+                await refreshManagedInfrastructure(surfaceErrors: false)
+            }
             didRefreshCommunityGateways = true
             communityInternetGateways = await communityInterfaceDirectory.gateways()
         }
@@ -3190,6 +3313,7 @@ public final class SidebandStore {
             customHost: networkInternetHost,
             customPort: networkInternetPort,
             preferredID: preferredInternetGatewayID,
+            managedGateways: managedInternetGateways,
             communityGateways: communityInternetGateways,
             excluding: attemptedInternetGatewayIDs,
             health: gatewayHealth

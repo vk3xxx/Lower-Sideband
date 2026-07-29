@@ -419,6 +419,57 @@ struct SidebandSettingsView: View {
                 Text("This optional endpoint is tried before the built-in public pool. Lower Sideband never changes system DNS settings.")
             }
 
+            Section {
+                Toggle("Use managed infrastructure", isOn: Binding(
+                    get: { store.managedInfrastructureEnabled },
+                    set: {
+                        store.configureManagedInfrastructure(
+                            enabled: $0,
+                            url: store.managedInfrastructureURL,
+                            publicKey: store.managedInfrastructurePublicKey
+                        )
+                    }
+                ))
+                SettingsTextFieldRow(
+                    title: "Signed directory",
+                    prompt: "https://service.example/manifest.json",
+                    text: $store.managedInfrastructureURL
+                )
+                .disabled(!store.managedInfrastructureEnabled)
+                SettingsTextFieldRow(
+                    title: "Operator public key",
+                    prompt: "128 hexadecimal characters",
+                    text: $store.managedInfrastructurePublicKey,
+                    monospaced: true
+                )
+                .disabled(!store.managedInfrastructureEnabled)
+                SettingsStateRow(
+                    title: "Verification",
+                    value: store.managedInfrastructureStatus,
+                    icon: store.managedInternetGateways.count >= 2 ? "checkmark.seal.fill" : "shield.slash",
+                    tint: store.managedInternetGateways.count >= 2 ? .green : .secondary
+                )
+                LabeledContent("Verified gateways", value: store.managedInternetGateways.count.formatted())
+                LabeledContent("Managed propagation nodes", value: store.managedPropagationNodeCount.formatted())
+                LabeledContent(
+                    "Last refresh",
+                    value: store.managedInfrastructureLastRefresh?.formatted(date: .abbreviated, time: .shortened) ?? "Never"
+                )
+                Button("Verify and Refresh") {
+                    store.configureManagedInfrastructure(
+                        enabled: store.managedInfrastructureEnabled,
+                        url: store.managedInfrastructureURL,
+                        publicKey: store.managedInfrastructurePublicKey
+                    )
+                    Task { await store.refreshManagedInfrastructure() }
+                }
+                .disabled(!store.managedInfrastructureEnabled)
+            } header: {
+                Text("Managed connectivity")
+            } footer: {
+                Text("A signed directory can provision redundant gateways, propagation nodes and a wake service without trusting DNS or the download server. Your configured endpoint remains first priority.")
+            }
+
             Section("Current connection") {
                 SettingsStateRow(title: "Status", value: statusText, icon: statusIcon, tint: statusColor)
                 LabeledContent("Transport", value: transportSummary)
@@ -529,6 +580,27 @@ struct SidebandSettingsView: View {
                 Text("LXMF propagation")
             } footer: {
                 Text("Propagation nodes store encrypted LXMF messages for delayed delivery when direct delivery is unavailable.")
+            }
+
+            Section {
+                Toggle("Remote message wakes", isOn: Binding(
+                    get: { store.remoteWakeEnabled },
+                    set: { store.setRemoteWakeEnabled($0) }
+                ))
+                SettingsStateRow(
+                    title: "Registration",
+                    value: store.remoteWakeStatus,
+                    icon: store.remoteWakeStatus == "Registered securely" ? "bell.badge.fill" : "bell.slash",
+                    tint: store.remoteWakeStatus == "Registered securely" ? .green : .secondary
+                )
+                Button("Register This Device") {
+                    Task { await store.registerRemoteWake() }
+                }
+                .disabled(!store.remoteWakeEnabled)
+            } header: {
+                Text("Background delivery")
+            } footer: {
+                Text("The verified managed service receives only a signed device token and your LXMF delivery identity. Message content and keys never leave Reticulum.")
             }
 
             Section("Attachment storage") {
