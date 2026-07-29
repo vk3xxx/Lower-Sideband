@@ -10,6 +10,12 @@ public enum LegacySidebandSQLiteImporter {
     private static let maximumAnnounces = 50_000
     private static let maximumTelemetryRecords = 50_000
 
+    public struct ConversationCandidate: Identifiable, Sendable, Equatable {
+        public var id: String { destinationHash }
+        public let destinationHash: String
+        public let displayName: String
+    }
+
     public struct Preview: Sendable, Equatable {
         public let sourceBytes: Int
         public let conversations: Int
@@ -17,6 +23,33 @@ public enum LegacySidebandSQLiteImporter {
         public let announces: Int
         public let telemetryRecords: Int
         public let availableTables: [String]
+        public let conversationCandidates: [ConversationCandidate]
+    }
+
+    public struct Selection: Sendable, Equatable {
+        public var selectedDestinations: Set<String>?
+        public var includesMessages: Bool
+        public var includesTelemetry: Bool
+        public var includesAnnounces: Bool
+
+        public static let all = Selection(
+            selectedDestinations: nil,
+            includesMessages: true,
+            includesTelemetry: true,
+            includesAnnounces: true
+        )
+
+        public init(
+            selectedDestinations: Set<String>?,
+            includesMessages: Bool,
+            includesTelemetry: Bool,
+            includesAnnounces: Bool
+        ) {
+            self.selectedDestinations = selectedDestinations
+            self.includesMessages = includesMessages
+            self.includesTelemetry = includesTelemetry
+            self.includesAnnounces = includesAnnounces
+        }
     }
 
     public struct Report: Sendable {
@@ -45,13 +78,31 @@ public enum LegacySidebandSQLiteImporter {
         return try withDatabase(at: url) { database in
             let tables = tableNames(in: database)
             guard tables.contains("conv"), tables.contains("lxm") else { throw ImportError.unsupportedSchema }
+            let conversationColumns = tableColumns("conv", in: database)
+            let destinationExpression = expression(in: conversationColumns, aliases: ["dest_context", "destination_hash", "destination", "dest"])
+            let nameExpression = expression(in: conversationColumns, aliases: ["name", "display_name"])
+            var candidates: [ConversationCandidate] = []
+            if destinationExpression != "NULL" {
+                try rows("SELECT \(destinationExpression),\(nameExpression) FROM conv LIMIT \(maximumConversations)", in: database) { statement in
+                    guard let destination = destinationHash(statement, 0) else { return }
+                    let hash = destination.hex
+                    let name = textOrBlobString(statement, 1)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    candidates.append(ConversationCandidate(
+                        destinationHash: hash,
+                        displayName: name?.isEmpty == false ? name! : "Imported \(hash.prefix(8))"
+                    ))
+                }
+            }
             return Preview(
                 sourceBytes: sourceBytes,
                 conversations: countRows("conv", in: database),
                 messages: countRows("lxm", in: database),
                 announces: tables.contains("announce") ? countRows("announce", in: database) : 0,
                 telemetryRecords: tables.contains("telemetry") ? countRows("telemetry", in: database) : 0,
-                availableTables: tables.sorted()
+                availableTables: tables.sorted(),
+                conversationCandidates: candidates.sorted {
+                    $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+                }
             )
         }
     }
@@ -60,6 +111,37 @@ public enum LegacySidebandSQLiteImporter {
         try withDatabase(at: url) { database in
             try load(from: database)
         }
+    }
+
+    public static func load(from url: URL, selection: Selection) throws -> Report {
+        try filtered(load(from: url), selection: selection)
+    }
+
+    private static func filtered(_ report: Report, selection: Selection) throws -> Report {
+        let selectedDestinations = selection.selectedDestinations
+        let conversations = report.snapshot.conversations.filter {
+            selectedDestinations?.contains($0.destinationHash) ?? true
+        }
+        let conversationIDs = Set(conversations.map(\.id))
+        let messages = selection.includesMessages ? report.snapshot.messages.filter { message in
+            guard conversationIDs.contains(message.conversationID) else { return false }
+            return selection.includesTelemetry || message.telemetry == nil
+        } : []
+        let importedTelemetry = messages.count { $0.telemetry != nil }
+        let discoveries = selection.includesAnnounces ? report.snapshot.discoveries : []
+        return Report(
+            snapshot: AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries),
+            skippedMessages: report.skippedMessages,
+            skippedTelemetry: report.skippedTelemetry,
+            importedAnnounces: discoveries.count,
+            importedTelemetry: importedTelemetry,
+            importedRichMessages: messages.count {
+                $0.telemetry != nil || !$0.telemetryStream.isEmpty || $0.voiceAudio != nil ||
+                $0.renderer != .plain || $0.replyTo != nil || $0.reactionTo != nil ||
+                $0.commentTo != nil || $0.continuationOf != nil || !$0.commands.isEmpty
+            },
+            warnings: report.warnings
+        )
     }
 
     private static func load(from database: OpaquePointer) throws -> Report {

@@ -183,6 +183,8 @@ public final class SidebandStore {
     public private(set) var discoveredNetworkInterfaces: [DiscoveredReticulumInterface] = []
     public private(set) var lastQuarantinedPersistenceURL: URL?
     public private(set) var canRollbackLegacyImport = false
+    public private(set) var lastLegacyImportAt: Date?
+    public private(set) var lastLegacyImportSummary: String?
     public var selectedConversationID: UUID?
     public var lastError: String?
 
@@ -196,6 +198,9 @@ public final class SidebandStore {
     private var deferredSaveTask: Task<Void, Never>?
     @ObservationIgnored private var lastValidatedPersistenceData: Data?
     @ObservationIgnored private var legacyImportRollbackData: Data?
+    private var legacyImportRollbackURL: URL {
+        persistenceURL.deletingLastPathComponent().appending(path: "LegacyImportRollback.lsb", directoryHint: .notDirectory)
+    }
     @ObservationIgnored private var lastSavedSnapshotDigest: Data?
     @ObservationIgnored private var messageIndexesAreDirty = true
     @ObservationIgnored private var messagesByConversation: [UUID: [Message]] = [:]
@@ -464,6 +469,9 @@ public final class SidebandStore {
         receivedLXMFIDs = Set((UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? []).suffix(SidebandMessageLimits.maximumRememberedMessageIDs))
         if secureStorageAvailable {
             load()
+            if FileManager.default.fileExists(atPath: legacyImportRollbackURL.path) {
+                canRollbackLegacyImport = true
+            }
         } else {
             lastError = "Secure Keychain data is temporarily unavailable. Lower Sideband will remain offline and will not read or overwrite encrypted data. Unlock the device and reopen the app."
         }
@@ -2666,9 +2674,36 @@ public final class SidebandStore {
         try LegacySidebandSQLiteImporter.preview(from: url)
     }
 
+    public enum LegacyImportConflictPolicy: String, CaseIterable, Sendable {
+        case mergeSafely
+        case newConversationsOnly
+
+        public var title: String {
+            switch self {
+            case .mergeSafely: "Merge with existing conversations"
+            case .newConversationsOnly: "Import only new conversations"
+            }
+        }
+    }
+
     @discardableResult
-    public func importLegacySidebandDatabase(at url: URL) throws -> LegacySidebandSQLiteImporter.Report {
-        let report = try LegacySidebandSQLiteImporter.load(from: url)
+    public func importLegacySidebandDatabase(
+        at url: URL,
+        selection: LegacySidebandSQLiteImporter.Selection = .all,
+        conflictPolicy: LegacyImportConflictPolicy = .mergeSafely
+    ) throws -> LegacySidebandSQLiteImporter.Report {
+        var effectiveSelection = selection
+        if conflictPolicy == .newConversationsOnly {
+            let existing = Set(conversations.map(\.destinationHash))
+            let selected: Set<String>
+            if let explicitlySelected = selection.selectedDestinations {
+                selected = explicitlySelected
+            } else {
+                selected = Set(try LegacySidebandSQLiteImporter.preview(from: url).conversationCandidates.map(\.destinationHash))
+            }
+            effectiveSelection.selectedDestinations = selected.subtracting(existing)
+        }
+        let report = try LegacySidebandSQLiteImporter.load(from: url, selection: effectiveSelection)
         let rollback = try exportSnapshotData()
         let local = AppSnapshot(
             conversations: conversations, messages: messages, discoveries: discoveries,
@@ -2681,16 +2716,31 @@ public final class SidebandStore {
         save()
         syncUnreadBadge()
         legacyImportRollbackData = rollback
+        let encryptedRollback = try localDataCipher.seal(rollback, context: "legacy-import-rollback-v1")
+        try encryptedRollback.write(to: legacyImportRollbackURL, options: [.atomic, .completeFileProtection])
         canRollbackLegacyImport = true
+        lastLegacyImportAt = .now
+        lastLegacyImportSummary = "\(report.snapshot.conversations.count) conversations · \(report.snapshot.messages.count) messages · \(report.importedTelemetry) telemetry · \(report.importedAnnounces) announces"
         return report
     }
 
     @discardableResult
     public func rollbackLastLegacyImport() throws -> Bool {
-        guard let legacyImportRollbackData else { return false }
-        try restoreSnapshotData(legacyImportRollbackData)
+        let rollback: Data?
+        if let legacyImportRollbackData {
+            rollback = legacyImportRollbackData
+        } else if let encrypted = try? Data(contentsOf: legacyImportRollbackURL) {
+            rollback = try localDataCipher.open(encrypted, context: "legacy-import-rollback-v1")
+        } else {
+            rollback = nil
+        }
+        guard let rollback else { return false }
+        try restoreSnapshotData(rollback)
         self.legacyImportRollbackData = nil
+        try? FileManager.default.removeItem(at: legacyImportRollbackURL)
         canRollbackLegacyImport = false
+        lastLegacyImportAt = nil
+        lastLegacyImportSummary = nil
         return true
     }
 

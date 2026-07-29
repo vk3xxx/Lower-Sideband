@@ -123,6 +123,9 @@ struct ContentView: View {
     @State private var showingLegacyDatabaseImporter = false
     @State private var pendingLegacyImportURL: URL?
     @State private var pendingLegacyImportPreview: LegacySidebandSQLiteImporter.Preview?
+    @State private var legacyImportSelection = LegacySidebandSQLiteImporter.Selection.all
+    @State private var legacyImportConflictPolicy = SidebandStore.LegacyImportConflictPolicy.mergeSafely
+    @State private var showingLegacyMigrationCenter = false
     @State private var pendingRestoreData: Data?
 
     var body: some View {
@@ -404,30 +407,21 @@ struct ContentView: View {
         } message: {
             Text("Current conversations, messages, discoveries, and drafts will be replaced with the validated backup contents.")
         }
-        .alert(
-            "Import Python Sideband Data?",
-            isPresented: Binding(
-                get: { pendingLegacyImportPreview != nil },
-                set: {
-                    if !$0 {
-                        pendingLegacyImportPreview = nil
-                        pendingLegacyImportURL = nil
-                    }
-                }
-            )
-        ) {
-            Button("Cancel", role: .cancel) {
-                pendingLegacyImportPreview = nil
-                pendingLegacyImportURL = nil
-            }
-            Button("Import") {
-                if let url = pendingLegacyImportURL { importLegacyDatabase(from: url) }
-                pendingLegacyImportPreview = nil
-                pendingLegacyImportURL = nil
-            }
-        } message: {
+        .sheet(isPresented: $showingLegacyMigrationCenter, onDismiss: {
+            pendingLegacyImportPreview = nil
+            pendingLegacyImportURL = nil
+        }) {
             if let preview = pendingLegacyImportPreview {
-                Text("\(preview.conversations) conversations, \(preview.messages) messages, \(preview.telemetryRecords) telemetry records and \(preview.announces) announces will be merged from a read-only \(ByteCountFormatter.string(fromByteCount: Int64(preview.sourceBytes), countStyle: .file)) database. You can undo this import until the app closes.")
+                LegacyMigrationCenterView(
+                    preview: preview,
+                    selection: $legacyImportSelection,
+                    conflictPolicy: $legacyImportConflictPolicy,
+                    onCancel: { showingLegacyMigrationCenter = false },
+                    onImport: {
+                        if let url = pendingLegacyImportURL { importLegacyDatabase(from: url) }
+                        showingLegacyMigrationCenter = false
+                    }
+                )
             }
         }
         .task {
@@ -604,7 +598,11 @@ struct ContentView: View {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
-            let report = try store.importLegacySidebandDatabase(at: url)
+            let report = try store.importLegacySidebandDatabase(
+                at: url,
+                selection: legacyImportSelection,
+                conflictPolicy: legacyImportConflictPolicy
+            )
             let conversationCount = report.snapshot.conversations.count
             let messageCount = report.snapshot.messages.count
             let warningSummary = report.warnings.isEmpty ? "" : " \(report.warnings.joined(separator: " "))"
@@ -620,10 +618,104 @@ struct ContentView: View {
         do {
             pendingLegacyImportPreview = try store.previewLegacySidebandDatabase(at: url)
             pendingLegacyImportURL = url
+            legacyImportSelection = .all
+            legacyImportConflictPolicy = .mergeSafely
+            showingLegacyMigrationCenter = true
         } catch {
             store.lastError = "Could not inspect Python Sideband database: \(error.localizedDescription)"
         }
     }
+
+private struct LegacyMigrationCenterView: View {
+    let preview: LegacySidebandSQLiteImporter.Preview
+    @Binding var selection: LegacySidebandSQLiteImporter.Selection
+    @Binding var conflictPolicy: SidebandStore.LegacyImportConflictPolicy
+    let onCancel: () -> Void
+    let onImport: () -> Void
+    @State private var searchText = ""
+
+    private var selectedDestinations: Set<String> {
+        selection.selectedDestinations ?? Set(preview.conversationCandidates.map(\.destinationHash))
+    }
+
+    private var filteredCandidates: [LegacySidebandSQLiteImporter.ConversationCandidate] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return preview.conversationCandidates }
+        return preview.conversationCandidates.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query) ||
+            $0.destinationHash.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Source validation") {
+                    LabeledContent("Database size", value: ByteCountFormatter.string(fromByteCount: Int64(preview.sourceBytes), countStyle: .file))
+                    LabeledContent("Supported tables", value: preview.availableTables.joined(separator: ", "))
+                    Label("Opened read-only; the source file will not be modified", systemImage: "checkmark.shield.fill")
+                        .foregroundStyle(.green)
+                }
+                Section("Content") {
+                    Toggle("Messages (\(preview.messages.formatted()))", isOn: $selection.includesMessages)
+                    Toggle("Telemetry (\(preview.telemetryRecords.formatted()))", isOn: $selection.includesTelemetry)
+                        .disabled(!selection.includesMessages)
+                    Toggle("Announces (\(preview.announces.formatted()))", isOn: $selection.includesAnnounces)
+                }
+                Section("Conflict handling") {
+                    Picker("Existing conversations", selection: $conflictPolicy) {
+                        ForEach(SidebandStore.LegacyImportConflictPolicy.allCases, id: \.self) {
+                            Text($0.title).tag($0)
+                        }
+                    }
+                    Text(conflictPolicy == .mergeSafely
+                         ? "Existing data is retained and imported history is deduplicated."
+                         : "Any destination already present in Lower Sideband is skipped.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section {
+                    HStack {
+                        Button("Select All") { selection.selectedDestinations = nil }
+                        Button("Select None") { selection.selectedDestinations = [] }
+                        Spacer()
+                        Text("\(selectedDestinations.count) selected").foregroundStyle(.secondary)
+                    }
+                    ForEach(filteredCandidates) { candidate in
+                        Toggle(isOn: Binding(
+                            get: { selectedDestinations.contains(candidate.destinationHash) },
+                            set: { selected in
+                                var values = selectedDestinations
+                                if selected { values.insert(candidate.destinationHash) }
+                                else { values.remove(candidate.destinationHash) }
+                                selection.selectedDestinations = values
+                            }
+                        )) {
+                            VStack(alignment: .leading) {
+                                Text(candidate.displayName)
+                                Text(candidate.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Conversations")
+                }
+            }
+            .searchable(text: $searchText, prompt: "Search imported conversations")
+            .navigationTitle("Migration & Restore")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: onCancel) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Import", action: onImport).disabled(selectedDestinations.isEmpty)
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 560, minHeight: 620)
+        #else
+        .presentationDetents([.large])
+        #endif
+    }
+}
 
     private func rollbackLegacyImport() {
         do {

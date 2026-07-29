@@ -4357,6 +4357,8 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(preview.messages == 1)
     #expect(preview.announces == 1)
     #expect(preview.telemetryRecords == 1)
+    #expect(preview.conversationCandidates.first?.destinationHash == "00112233445566778899aabbccddeeff")
+    #expect(preview.conversationCandidates.first?.displayName == "Legacy Peer")
     #expect(Set(preview.availableTables).isSuperset(of: ["conv", "lxm", "announce", "telemetry"]))
     let report = try LegacySidebandSQLiteImporter.load(from: url)
     #expect(report.snapshot.conversations.count == 1)
@@ -4373,6 +4375,18 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(report.importedAnnounces == 1)
     #expect(report.snapshot.discoveries.first?.destinationHash == "102132435465768798a9bacbdcedfe0f")
     #expect(report.snapshot.discoveries.first?.isValidated == false)
+    let contactsOnly = try LegacySidebandSQLiteImporter.load(
+        from: url,
+        selection: .init(
+            selectedDestinations: ["00112233445566778899aabbccddeeff"],
+            includesMessages: false,
+            includesTelemetry: false,
+            includesAnnounces: false
+        )
+    )
+    #expect(contactsOnly.snapshot.conversations.count == 1)
+    #expect(contactsOnly.snapshot.messages.isEmpty)
+    #expect(contactsOnly.snapshot.discoveries.isEmpty)
     #expect(try Data(contentsOf: url) == before)
 }
 
@@ -4476,10 +4490,12 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     _ = try store.importLegacySidebandDatabase(at: databaseURL)
     #expect(store.canRollbackLegacyImport)
     #expect(store.conversations.contains { $0.displayName == "Imported Peer" })
-    #expect(try store.rollbackLastLegacyImport())
-    #expect(!store.canRollbackLegacyImport)
-    #expect(Set(store.conversations.map(\.destinationHash)) == originalDestinations)
-    #expect(try !store.rollbackLastLegacyImport())
+    let relaunched = SidebandStore(persistenceURL: storeURL)
+    #expect(relaunched.canRollbackLegacyImport)
+    #expect(try relaunched.rollbackLastLegacyImport())
+    #expect(!relaunched.canRollbackLegacyImport)
+    #expect(Set(relaunched.conversations.map(\.destinationHash)) == originalDestinations)
+    #expect(try !relaunched.rollbackLastLegacyImport())
 }
 
 @Test func chunkedRNodeFlasherWritesInOrderAndVerifiesDigest() async throws {

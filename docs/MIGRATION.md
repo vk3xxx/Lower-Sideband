@@ -1,5 +1,20 @@
 # Migrating from Python Sideband
 
+## Migration & Restore centre
+
+After selecting a historical `sideband.db`, Lower Sideband validates the file
+read-only and opens a migration centre. You can:
+
+- choose individual conversations;
+- include or exclude message history, telemetry and announces;
+- safely merge with existing conversations or import only destinations that
+  are not already present; and
+- review source size and supported tables before committing the import.
+
+The app creates an encrypted rollback snapshot before applying the migration.
+**Undo Last Python Import** remains available after relaunch until it is used
+or superseded by a later import. The source SQLite file is never modified.
+
 Lower Sideband can inspect and merge a historical Python Sideband
 `sideband.db` without Python and without modifying the source database.
 
