@@ -4960,6 +4960,30 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(devices.first(where: { $0.id == other })?.queuedMessageCount == 1)
 }
 
+@Test func conversationMediaIndexerFindsAttachmentsTelemetryAndLinks() {
+    let conversationID = UUID()
+    let attachment = Attachment(
+        filename: "photo.jpg",
+        mimeType: "image/jpeg",
+        byteCount: 42,
+        relativePath: "photo.jpg",
+        state: .available
+    )
+    let message = Message(
+        conversationID: conversationID,
+        body: "See https://example.com/test",
+        direction: .incoming,
+        state: .delivered,
+        attachments: [attachment],
+        telemetry: SidebandTelemetry(location: .init(latitude: -37.8, longitude: 145.0))
+    )
+    let items = ConversationMediaIndexer.index(messages: [message], conversationID: conversationID)
+    #expect(items.map(\.kind).contains(.image))
+    #expect(items.map(\.kind).contains(.telemetry))
+    #expect(items.map(\.kind).contains(.link))
+    #expect(items.first(where: { $0.kind == .link })?.url?.host == "example.com")
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }

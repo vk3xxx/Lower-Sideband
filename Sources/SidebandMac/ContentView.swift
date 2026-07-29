@@ -2234,6 +2234,7 @@ private struct ConversationView: View {
     @State private var inspectedMessage: Message?
     @State private var messageToForward: Message?
     @State private var showingRename = false
+    @State private var showingMediaBrowser = false
     @State private var renameDraft = ""
     @State private var isVisible = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -2340,6 +2341,7 @@ private struct ConversationView: View {
                 .accessibilityLabel("Start encrypted voice call")
                 Menu {
                     Button("Rename Conversation", systemImage: "pencil") { beginRename() }
+                    Button("Media, Links & Files", systemImage: "photo.on.rectangle.angled") { showingMediaBrowser = true }
                     Divider()
                     Button("Search Messages", systemImage: "magnifyingglass") { focusedField = .search }
                         .keyboardShortcut("f", modifiers: .command)
@@ -2745,6 +2747,9 @@ private struct ConversationView: View {
             if let contactLink = store.contactLink(for: conversation.id) {
                 ContactQRCodeView(name: conversation.displayName, link: contactLink.url)
             }
+        }
+        .sheet(isPresented: $showingMediaBrowser) {
+            ConversationMediaView(store: store, conversation: conversation)
         }
         .sheet(isPresented: $showingIdentityVerification) {
             ContactIdentityVerificationView(store: store, conversation: conversation)

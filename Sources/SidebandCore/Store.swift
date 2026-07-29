@@ -735,6 +735,10 @@ public final class SidebandStore {
         messages(for: conversationID).flatMap(\.attachments).reduce(0) { $0 + max(0, $1.byteCount) }
     }
 
+    public func mediaItems(for conversationID: UUID) -> [ConversationMediaItem] {
+        ConversationMediaIndexer.index(messages: messages, conversationID: conversationID)
+    }
+
     public func refreshAttachmentStorageReport() async {
         attachmentStorageReport = await attachmentStore.storageReport(for: messages.flatMap(\.attachments))
     }
