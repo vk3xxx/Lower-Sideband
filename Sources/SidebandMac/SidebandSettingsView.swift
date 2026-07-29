@@ -161,6 +161,7 @@ struct SidebandSettingsView: View {
             }
             .navigationTitle("Settings")
             .searchable(text: $searchText, prompt: "Search settings")
+            .accessibilityIdentifier("settings-navigation")
             .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
         } detail: {
             detailPage(selection ?? .overview)
@@ -228,6 +229,7 @@ struct SidebandSettingsView: View {
             }
             .navigationTitle("Settings")
             .searchable(text: $searchText, prompt: "Search settings")
+            .accessibilityIdentifier("settings-navigation")
             .navigationDestination(for: SettingsDestination.self) { destination in
                 detailPage(destination)
             }
@@ -260,6 +262,7 @@ struct SidebandSettingsView: View {
             }
             .navigationTitle("Settings")
             .searchable(text: $searchText, prompt: "Search settings")
+            .accessibilityIdentifier("settings-navigation")
             .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 360)
             .toolbar {
                 if showsCloseButton {
@@ -1011,6 +1014,7 @@ struct SidebandSettingsView: View {
                 } label: {
                     Label("Export Redacted Support Report", systemImage: "square.and.arrow.up")
                 }
+                .accessibilityIdentifier("export-redacted-support-report")
                 Button("Copy Attachment Report") { settingsCopy(store.attachmentStorageDiagnostics) }
             } header: {
                 Text("Diagnostics")
@@ -1041,6 +1045,7 @@ struct SidebandSettingsView: View {
                 } label: {
                     Label("Export Acceptance Report", systemImage: "doc.badge.arrow.up")
                 }
+                .accessibilityIdentifier("export-device-acceptance-report")
                 Button("Reset Acceptance Results", role: .destructive) {
                     store.deviceAcceptance.reset()
                 }
@@ -1129,6 +1134,8 @@ struct SidebandSettingsView: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(scenario.title), \(acceptanceOutcomeDescription(result.outcome))")
+        .accessibilityHint(scenario.instructions)
     }
 
     private func acceptanceIcon(_ outcome: SidebandAcceptanceOutcome) -> String {
@@ -1144,6 +1151,14 @@ struct SidebandSettingsView: View {
         case .notRun: .secondary
         case .passed: .green
         case .failed: .red
+        }
+    }
+
+    private func acceptanceOutcomeDescription(_ outcome: SidebandAcceptanceOutcome) -> String {
+        switch outcome {
+        case .notRun: "not run"
+        case .passed: "passed"
+        case .failed: "failed"
         }
     }
 

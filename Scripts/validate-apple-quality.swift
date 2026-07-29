@@ -25,7 +25,9 @@ do {
         "Lower Sideband", "New conversation", "Message", "Send message",
         "Settings", "Network Settings", "Connecting securely", "Current route: %@",
         "Import Python Sideband Database", "Undo Last Python Import",
-        "Remote message wakes", "Background delivery", "Register This Device"
+        "Remote message wakes", "Background delivery", "Register This Device",
+        "Migration & Restore", "Export Redacted Support Report",
+        "Apple device acceptance", "Export Acceptance Report"
     ] where strings[key] == nil {
         findings.append("Missing localisable critical string: \(key)")
     }
@@ -35,6 +37,7 @@ do {
 
 let content = try text("Sources/SidebandMac/ContentView.swift")
 let map = try text("Sources/SidebandMac/NetworkMapView.swift")
+let settings = try text("Sources/SidebandMac/SidebandSettingsView.swift")
 for identifier in [
     "app-settings", "new-conversation", "new-conversation-address",
     "create-conversation", "message-search", "message-composer", "send-message"
@@ -44,6 +47,19 @@ for identifier in [
 for identifier in ["network-map-full-screen", "network-map-toggle-destinations"]
 where !map.contains("accessibilityIdentifier(\"\(identifier)\")") {
     findings.append("Missing network-map accessibility identifier: \(identifier)")
+}
+for identifier in [
+    "settings-navigation", "export-redacted-support-report",
+    "export-device-acceptance-report"
+] where !settings.contains("accessibilityIdentifier(\"\(identifier)\")") {
+    findings.append("Missing settings accessibility identifier: \(identifier)")
+}
+for identifier in ["legacy-migration-centre", "legacy-migration-import"]
+where !content.contains("accessibilityIdentifier(\"\(identifier)\")") {
+    findings.append("Missing migration accessibility identifier: \(identifier)")
+}
+if !map.contains("@Environment(\\.accessibilityReduceMotion)") {
+    findings.append("Network map does not respect Reduce Motion.")
 }
 
 let info = try PropertyListSerialization.propertyList(

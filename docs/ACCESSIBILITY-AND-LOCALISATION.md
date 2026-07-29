@@ -4,6 +4,11 @@ Lower Sideband uses semantic SwiftUI controls and text styles so macOS and iOS
 inherit VoiceOver, keyboard navigation, Dynamic Type, contrast, reduced-motion
 and right-to-left behaviour from the operating system.
 
+The network map disables viewport and panel animation when Reduce Motion is
+enabled. Migration, support-export and device-acceptance workflows expose
+stable automation identifiers, explicit outcome labels and task instructions
+without relying on colour alone.
+
 Conversation rows expose complete spoken summaries and VoiceOver actions for
 read state, pinning and archiving. Primary messaging, settings, network status,
 attachments, maps, voice controls and identity actions have explicit labels,
@@ -22,6 +27,14 @@ concatenated English fragments should be avoided. Before adding a translation:
 
 The English catalog is the reviewed source language. Additional languages
 should only be marked complete after native-language review.
+
+Development and release review must also exercise:
+
+- right-to-left pseudolocalisation;
+- accessibility text sizes without clipped actions;
+- Increase Contrast, Differentiate Without Colour and Reduce Motion;
+- Full Keyboard Access on iPad and macOS; and
+- VoiceOver rotor navigation through settings, migration and acceptance rows.
 
 `Scripts/validate-apple-quality.swift` fails when critical messaging,
 settings, network-map or migration strings leave the shared catalog, when

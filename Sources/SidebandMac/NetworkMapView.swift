@@ -10,6 +10,7 @@ import UIKit
 struct NetworkMapView: View {
     @Bindable var store: SidebandStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var snapshot = NetworkMapSnapshot.empty
     @State private var searchQuery = ""
     @State private var maximumHops = 4
@@ -70,7 +71,7 @@ struct NetworkMapView: View {
             .toolbar {
                 ToolbarItemGroup {
                     Button {
-                        withAnimation(.snappy) { showControls.toggle() }
+                        animate { showControls.toggle() }
                     } label: {
                         Label(showControls ? "Hide controls" : "Show controls", systemImage: "slider.horizontal.3")
                     }
@@ -92,7 +93,7 @@ struct NetworkMapView: View {
                     .help("Refresh paths, interfaces and destinations now")
 
                     Button {
-                        withAnimation(.snappy) {
+                        animate {
                             showDestinations.toggle()
                             clearHiddenSelection()
                         }
@@ -353,7 +354,7 @@ struct NetworkMapView: View {
             Spacer()
         }
         .padding()
-        .animation(.snappy, value: showControls)
+        .animation(reduceMotion ? nil : .snappy, value: showControls)
     }
 
     private var legend: some View {
@@ -424,7 +425,7 @@ struct NetworkMapView: View {
         }
         .padding()
         .transition(.move(edge: .trailing).combined(with: .opacity))
-        .animation(.snappy, value: selectedNodeID)
+        .animation(reduceMotion ? nil : .snappy, value: selectedNodeID)
     }
 
     @ViewBuilder
@@ -506,16 +507,21 @@ struct NetworkMapView: View {
     }
 
     private func selectNode(at location: CGPoint, size: CGSize) {
-        withAnimation(.snappy) {
+        animate {
             selectedNodeID = hitNode(at: location, size: size)?.id
         }
     }
 
     private func resetViewport() {
-        withAnimation(.snappy) {
+        animate {
             zoom = 1
             pan = .zero
         }
+    }
+
+    private func animate(_ changes: () -> Void) {
+        if reduceMotion { changes() }
+        else { withAnimation(.snappy) { changes() } }
     }
 
     private func clearHiddenSelection() {

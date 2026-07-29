@@ -702,10 +702,15 @@ private struct LegacyMigrationCenterView: View {
             }
             .searchable(text: $searchText, prompt: "Search imported conversations")
             .navigationTitle("Migration & Restore")
+            .accessibilityIdentifier("legacy-migration-centre")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: onCancel) }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Import", action: onImport).disabled(selectedDestinations.isEmpty)
+                        .accessibilityIdentifier("legacy-migration-import")
+                        .keyboardShortcut(.defaultAction)
                 }
             }
         }
