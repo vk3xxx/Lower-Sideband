@@ -4880,6 +4880,45 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(health.lastMetricPayloadAt == start.addingTimeInterval(12))
 }
 
+@Test func deliveryActivityBuildsActionableNewestFirstTimeline() {
+    let conversation = Conversation(destinationHash: String(repeating: "ab", count: 16), displayName: "Ada")
+    var failed = Message(
+        conversationID: conversation.id,
+        body: "Retry me",
+        timestamp: Date(timeIntervalSince1970: 20),
+        direction: .outgoing,
+        state: .failed
+    )
+    failed.deliveryAttemptCount = 3
+    failed.lastDeliveryFailure = "Proof timed out"
+    failed.lastDeliveryAttemptAt = Date(timeIntervalSince1970: 40)
+    let delivered = Message(
+        conversationID: conversation.id,
+        body: "Done",
+        timestamp: Date(timeIntervalSince1970: 30),
+        direction: .outgoing,
+        state: .delivered
+    )
+    let items = DeliveryActivityBuilder.build(
+        messages: [delivered, failed],
+        conversations: [conversation],
+        diagnostics: [],
+        routes: [
+            conversation.destinationHash: ConnectedRoute(
+                interfaceName: "Public TCP",
+                endpoint: "example.net:4242",
+                hops: 2,
+                updatedAt: .now
+            )
+        ]
+    )
+    #expect(items.count == 2)
+    #expect(items.first?.kind == .failed)
+    #expect(items.first?.detail == "Proof timed out")
+    #expect(items.first?.route?.contains("example.net:4242") == true)
+    #expect(items.last?.kind == .delivered)
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }

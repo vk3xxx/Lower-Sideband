@@ -191,6 +191,15 @@ public final class SidebandStore {
     public var selectedConversationID: UUID?
     public var lastError: String?
 
+    public var deliveryActivity: [DeliveryActivityItem] {
+        DeliveryActivityBuilder.build(
+            messages: messages,
+            conversations: conversations,
+            diagnostics: deliveryDiagnosticEvents,
+            routes: connectedRoutes
+        )
+    }
+
     private let transport: any MessageTransport
     private let persistenceURL: URL
     private let localDataCipher: LocalDataCipher

@@ -99,6 +99,7 @@ struct ContentView: View {
     @State private var showingCallHistory = false
     @State private var showingNetworkMap = false
     @State private var showingSituationMap = false
+    @State private var showingDeliveryActivity = false
     @State private var conversationSearch = ""
     @State private var showingArchived = false
     @State private var conversationFilter: ConversationFilter = .all
@@ -174,6 +175,10 @@ struct ContentView: View {
                     Button { showingSituationMap = true } label: {
                         Label("Situation map", systemImage: "map")
                     }.help("Show the latest trusted telemetry from every contact and any installed offline GeoJSON overlay")
+                    Button { showingDeliveryActivity = true } label: {
+                        Label("Delivery activity", systemImage: "checkmark.circle.badge.questionmark")
+                    }
+                    .help("Review queued, delivered and failed messages, delivery proofs, retries and active routes")
                     Button {
                         #if os(macOS)
                         openWindow(id: "network-map")
@@ -298,6 +303,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
         .sheet(isPresented: $showingNetwork) { SidebandSettingsView(store: store, showsCloseButton: true) }
+        .sheet(isPresented: $showingDeliveryActivity) { DeliveryActivityView(store: store) }
         .sheet(isPresented: $showingCallHistory) { CallHistoryView(store: store) }
         #if os(macOS)
         .sheet(isPresented: $showingNetworkMap) { NetworkMapView(store: store) }
