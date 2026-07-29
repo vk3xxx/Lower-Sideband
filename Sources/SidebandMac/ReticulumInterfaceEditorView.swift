@@ -30,6 +30,11 @@ struct ReticulumInterfaceProfilesView: View {
                                     Text(stateDescription(snapshot.state))
                                         .font(.caption2)
                                         .foregroundStyle(stateColor(snapshot.state))
+                                    if let listener = snapshot.listener {
+                                        Text("\(listener.host):\(listener.port) · \(listener.connectedPeers.count)/\(listener.maximumPeers) clients · \(listener.packetsReceived) received · \(listener.packetsSent) sent")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 } else if profile.enabled {
                                     Text("Starts with the network engine")
                                         .font(.caption2)
@@ -78,6 +83,12 @@ struct ReticulumInterfaceProfilesView: View {
                 }
             }
         }
+        .task {
+            while !Task.isCancelled {
+                await store.refreshConfiguredInterfaceSnapshots()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
     }
 
     private var availableKinds: [ReticulumInterfaceKind] {
@@ -93,6 +104,7 @@ struct ReticulumInterfaceProfilesView: View {
     private func defaultProfile(kind: ReticulumInterfaceKind) -> ReticulumInterfaceProfile {
         var profile = ReticulumInterfaceProfile(name: kind.title, kind: kind)
         if kind.applicableFields.contains(.port) { profile.port = 4_242 }
+        if kind == .tcpServer { profile.maximumClients = 64 }
         if kind.applicableFields.contains(.listenHost) { profile.listenHost = "0.0.0.0" }
         if kind == .webSocketClient { profile.url = URL(string: "ws://127.0.0.1:4242/") }
         if kind == .httpClient { profile.url = URL(string: "http://127.0.0.1:4242/") }
@@ -163,6 +175,12 @@ private struct ReticulumInterfaceEditorView: View {
                         }
                         if fields.contains(.polling) {
                             TextField("Polling interval", value: $draft.pollInterval, format: .number)
+                        }
+                        if fields.contains(.maximumClients) {
+                            TextField("Maximum clients", value: $draft.maximumClients, format: .number.grouping(.never))
+                            Text("New connections are refused once this limit is reached. Existing clients remain connected.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }

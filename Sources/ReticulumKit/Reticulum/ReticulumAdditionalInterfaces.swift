@@ -113,42 +113,141 @@ public actor ReticulumUDPInterface {
 
 public actor ReticulumTCPServer {
     public enum State: Equatable, Sendable { case stopped, listening(UInt16), failed(String) }
+    public struct Client: Identifiable, Equatable, Sendable {
+        public let id: String
+        public let endpoint: String
+        public let connectedAt: Date
+    }
+    public struct Metrics: Equatable, Sendable {
+        public let state: State
+        public let listenHost: String
+        public let requestedPort: UInt16
+        public let clients: [Client]
+        public let maximumClients: Int
+        public let acceptedClients: UInt64
+        public let rejectedClients: UInt64
+        public let packetsReceived: UInt64
+        public let packetsSent: UInt64
+        public let bytesReceived: UInt64
+        public let bytesSent: UInt64
+    }
     public private(set) var state: State = .stopped
     public private(set) var clientCount = 0
+    private let listenHost: String
     private let requestedPort: UInt16
+    private let maximumClients: Int
     private let queue = DispatchQueue(label: "sideband.reticulum.tcp-server")
     private var listener: NWListener?
     private var clients: [ObjectIdentifier: NWConnection] = [:]
+    private var clientMetadata: [ObjectIdentifier: Client] = [:]
     private var decoders: [ObjectIdentifier: HDLCDecoder] = [:]
+    private var acceptedClients: UInt64 = 0
+    private var rejectedClients: UInt64 = 0
+    private var packetsReceived: UInt64 = 0
+    private var packetsSent: UInt64 = 0
+    private var bytesReceived: UInt64 = 0
+    private var bytesSent: UInt64 = 0
     private let ifac: ReticulumIFAC?
     private let packetHandler: @Sendable (ReticulumPacket) async -> Void
 
-    public init(port: UInt16, ifac: ReticulumIFAC? = nil, packetHandler: @escaping @Sendable (ReticulumPacket) async -> Void) {
-        requestedPort = port; self.ifac = ifac; self.packetHandler = packetHandler
+    public init(
+        listenHost: String = "0.0.0.0",
+        port: UInt16,
+        maximumClients: Int = 64,
+        ifac: ReticulumIFAC? = nil,
+        packetHandler: @escaping @Sendable (ReticulumPacket) async -> Void
+    ) {
+        self.listenHost = listenHost
+        requestedPort = port
+        self.maximumClients = min(max(maximumClients, 1), 256)
+        self.ifac = ifac
+        self.packetHandler = packetHandler
     }
 
     public func start() throws {
-        guard listener == nil, requestedPort > 0, let port = NWEndpoint.Port(rawValue: requestedPort) else { return }
+        guard listener == nil else { return }
         let options = NWProtocolTCP.Options(); options.noDelay = true; options.enableKeepalive = true
-        let listener = try NWListener(using: NWParameters(tls: nil, tcp: options), on: port)
+        let parameters = NWParameters(tls: nil, tcp: options)
+        let normalizedHost = listenHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedHost.isEmpty, normalizedHost != "0.0.0.0", normalizedHost != "::" {
+            guard let port = NWEndpoint.Port(rawValue: requestedPort) else { throw Error.invalidEndpoint }
+            parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(normalizedHost), port: port)
+        }
+        let listener: NWListener
+        if requestedPort == 0 {
+            listener = try NWListener(using: parameters)
+        } else {
+            guard let port = NWEndpoint.Port(rawValue: requestedPort) else { throw Error.invalidEndpoint }
+            listener = try NWListener(using: parameters, on: port)
+        }
         self.listener = listener
         listener.newConnectionHandler = { [weak self] client in Task { await self?.accept(client) } }
         listener.stateUpdateHandler = { [weak self] value in Task { await self?.update(value) } }
         listener.start(queue: queue)
     }
 
-    public func stop() { listener?.cancel(); listener = nil; clients.values.forEach { $0.cancel() }; clients.removeAll(); decoders.removeAll(); clientCount = 0; state = .stopped }
+    public func stop() {
+        listener?.cancel()
+        listener = nil
+        clients.values.forEach { $0.cancel() }
+        clients.removeAll()
+        clientMetadata.removeAll()
+        decoders.removeAll()
+        clientCount = 0
+        state = .stopped
+    }
 
     public func broadcast(_ rawPacket: Data) async {
         guard let outbound = try? ifac?.protect(rawPacket) ?? rawPacket else { return }
         let framed = HDLC.frame(outbound)
-        for connection in clients.values { connection.send(content: framed, completion: .idempotent) }
+        let destinations = clients.values
+        for connection in destinations { connection.send(content: framed, completion: .idempotent) }
+        packetsSent &+= UInt64(destinations.count)
+        bytesSent &+= UInt64(framed.count * destinations.count)
+    }
+
+    public func metrics() -> Metrics {
+        Metrics(
+            state: state,
+            listenHost: listenHost,
+            requestedPort: requestedPort,
+            clients: clientMetadata.values.sorted { $0.connectedAt < $1.connectedAt },
+            maximumClients: maximumClients,
+            acceptedClients: acceptedClients,
+            rejectedClients: rejectedClients,
+            packetsReceived: packetsReceived,
+            packetsSent: packetsSent,
+            bytesReceived: bytesReceived,
+            bytesSent: bytesSent
+        )
     }
 
     private func accept(_ client: NWConnection) {
-        let id = ObjectIdentifier(client); clients[id] = client; decoders[id] = HDLCDecoder(); clientCount = clients.count
-        client.stateUpdateHandler = { [weak self] value in if case .cancelled = value { Task { await self?.remove(id) } } }
-        client.start(queue: queue); receive(client, id: id)
+        guard clients.count < maximumClients else {
+            rejectedClients &+= 1
+            client.cancel()
+            return
+        }
+        let id = ObjectIdentifier(client)
+        clients[id] = client
+        clientMetadata[id] = Client(
+            id: String(describing: id),
+            endpoint: String(describing: client.endpoint),
+            connectedAt: .now
+        )
+        decoders[id] = HDLCDecoder()
+        clientCount = clients.count
+        acceptedClients &+= 1
+        client.stateUpdateHandler = { [weak self] value in
+            switch value {
+            case .failed, .cancelled:
+                Task { await self?.remove(id) }
+            default:
+                break
+            }
+        }
+        client.start(queue: queue)
+        receive(client, id: id)
     }
     private func receive(_ client: NWConnection, id: ObjectIdentifier) {
         client.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, complete, error in
@@ -164,13 +263,26 @@ public actor ReticulumTCPServer {
         let frames = decoder.consume(data); decoders[id] = decoder
         for frame in frames {
             guard let raw = try? ifac?.unprotect(frame) ?? frame, let packet = try? ReticulumPacket(raw: raw) else { continue }
+            packetsReceived &+= 1
+            bytesReceived &+= UInt64(frame.count)
             await packetHandler(packet)
         }
     }
-    private func remove(_ id: ObjectIdentifier) { clients.removeValue(forKey: id)?.cancel(); decoders.removeValue(forKey: id); clientCount = clients.count }
-    private func update(_ value: NWListener.State) {
-        switch value { case .ready: state = .listening(requestedPort); case .failed(let e): state = .failed(e.localizedDescription); case .cancelled: state = .stopped; default: break }
+    private func remove(_ id: ObjectIdentifier) {
+        clients.removeValue(forKey: id)?.cancel()
+        clientMetadata.removeValue(forKey: id)
+        decoders.removeValue(forKey: id)
+        clientCount = clients.count
     }
+    private func update(_ value: NWListener.State) {
+        switch value {
+        case .ready: state = .listening(listener?.port?.rawValue ?? requestedPort)
+        case .failed(let e): state = .failed(e.localizedDescription)
+        case .cancelled: state = .stopped
+        default: break
+        }
+    }
+    public enum Error: Swift.Error { case invalidEndpoint }
 }
 
 private extension Data {

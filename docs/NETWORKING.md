@@ -47,6 +47,12 @@ Reticulum is delay tolerant. Offline destinations, expired paths, radio duty-cyc
 | USB serial RNode | Yes | No | Direct macOS serial radio |
 | Generic serial/KISS/AX.25 KISS | Yes | No | Serial modem interfaces with READY flow control and AX.25 UI envelopes |
 | UDP client and listener | Yes | Yes | Datagram listener/forwarder with optional IFAC |
+
+The macOS interface editor exposes the native TCP server as a normal
+ReticulumKit transport. Operators can choose the bind address, port, Reticulum
+mode, IFAC credentials and a bounded client limit. The settings list reports
+the active listener, connected clients and packet/byte counters without
+requiring a separate Reticulum process.
 | Weave TCP endpoint | Yes | Yes | Device Control Link discovery, connection and packet lifecycle |
 | Pipe | Yes | No | External packet process |
 | Transport Instance | Yes | No | Forward routes between active Mac interfaces |

@@ -93,6 +93,7 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
     public var remoteEndpointID: Data?
     public var pipeArguments: [String]?
     public var pipeEnvironment: [String: String]?
+    public var maximumClients: Int?
 
     public init(
         id: UUID = UUID(),
@@ -130,7 +131,8 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         localEndpointID: Data? = nil,
         remoteEndpointID: Data? = nil,
         pipeArguments: [String]? = nil,
-        pipeEnvironment: [String: String]? = nil
+        pipeEnvironment: [String: String]? = nil,
+        maximumClients: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -168,6 +170,7 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         self.remoteEndpointID = remoteEndpointID
         self.pipeArguments = pipeArguments
         self.pipeEnvironment = pipeEnvironment
+        self.maximumClients = maximumClients
     }
 
     public func validated() throws -> Self {
@@ -198,6 +201,9 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
             }
         case .tcpServer, .backboneServer:
             guard let port, port > 0 else { throw ValidationError.missingPort }
+            if kind == .tcpServer, let maximumClients, !(1...256).contains(maximumClients) {
+                throw ValidationError.invalidMaximumClients
+            }
         case .udp:
             guard let port, port > 0 else { throw ValidationError.missingPort }
             _ = try ReticulumUDPListenerConfiguration(
@@ -315,6 +321,7 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         case invalidPipeExecutable
         case invalidPipeArguments
         case invalidPipeEnvironment
+        case invalidMaximumClients
 
         public var errorDescription: String? {
             switch self {
@@ -331,6 +338,7 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
             case .invalidPipeExecutable: "Choose an executable using its absolute path."
             case .invalidPipeArguments: "Pipe arguments are invalid or exceed the safe limit."
             case .invalidPipeEnvironment: "Pipe environment entries are invalid or exceed the safe limit."
+            case .invalidMaximumClients: "Maximum clients must be between 1 and 256."
             }
         }
     }
@@ -342,6 +350,7 @@ public enum ReticulumInterfaceField: String, CaseIterable, Sendable {
     case listenHost, forwardHost, forwardPort, callsign, ssid, kissPort, flowControl
     case switchID, localEndpointID, remoteEndpointID
     case pipeArguments, pipeEnvironment
+    case maximumClients
 }
 
 public extension ReticulumInterfaceKind {
@@ -350,7 +359,7 @@ public extension ReticulumInterfaceKind {
         switch self {
         case .auto: fields.formUnion([.groupID])
         case .tcpClient: fields.formUnion([.host, .port, .timeout, .reconnect, .mtu])
-        case .tcpServer: fields.formUnion([.listenHost, .port, .mtu])
+        case .tcpServer: fields.formUnion([.listenHost, .port, .mtu, .maximumClients])
         case .backboneClient: fields.formUnion([.host, .port, .timeout, .reconnect, .transportIdentity])
         case .backboneServer: fields.formUnion([.listenHost, .port, .transportIdentity])
         case .i2p: fields.formUnion([.host, .sam, .timeout, .reconnect])

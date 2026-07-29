@@ -10,6 +10,36 @@ public actor ReticulumConfiguredInterfaceRuntime {
         public let kind: ReticulumInterfaceKind
         public let mode: ReticulumInterfaceMode
         public let state: State
+        public let listener: ListenerDiagnostics?
+
+        public init(
+            id: UUID,
+            name: String,
+            kind: ReticulumInterfaceKind,
+            mode: ReticulumInterfaceMode,
+            state: State,
+            listener: ListenerDiagnostics? = nil
+        ) {
+            self.id = id
+            self.name = name
+            self.kind = kind
+            self.mode = mode
+            self.state = state
+            self.listener = listener
+        }
+    }
+
+    public struct ListenerDiagnostics: Equatable, Sendable {
+        public let host: String
+        public let port: UInt16
+        public let connectedPeers: [ReticulumTCPServer.Client]
+        public let maximumPeers: Int
+        public let acceptedPeers: UInt64
+        public let rejectedPeers: UInt64
+        public let packetsReceived: UInt64
+        public let packetsSent: UInt64
+        public let bytesReceived: UInt64
+        public let bytesSent: UInt64
     }
 
     public enum State: Equatable, Sendable {
@@ -60,8 +90,35 @@ public actor ReticulumConfiguredInterfaceRuntime {
         }
     }
 
-    public func currentSnapshots() -> [Snapshot] {
-        snapshots.values.sorted {
+    public func currentSnapshots() async -> [Snapshot] {
+        var current = snapshots
+        for (id, server) in tcpServers {
+            guard let snapshot = current[id] else { continue }
+            let metrics = await server.metrics()
+            let port: UInt16
+            if case .listening(let activePort) = metrics.state { port = activePort }
+            else { port = metrics.requestedPort }
+            current[id] = Snapshot(
+                id: snapshot.id,
+                name: snapshot.name,
+                kind: snapshot.kind,
+                mode: snapshot.mode,
+                state: snapshot.state,
+                listener: ListenerDiagnostics(
+                    host: metrics.listenHost,
+                    port: port,
+                    connectedPeers: metrics.clients,
+                    maximumPeers: metrics.maximumClients,
+                    acceptedPeers: metrics.acceptedClients,
+                    rejectedPeers: metrics.rejectedClients,
+                    packetsReceived: metrics.packetsReceived,
+                    packetsSent: metrics.packetsSent,
+                    bytesReceived: metrics.bytesReceived,
+                    bytesSent: metrics.bytesSent
+                )
+            )
+        }
+        return current.values.sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
@@ -168,7 +225,13 @@ public actor ReticulumConfiguredInterfaceRuntime {
             tcpClients[id] = interface
             await interface.start()
         case .tcpServer, .backboneServer:
-            let interface = ReticulumTCPServer(port: profile.port!, ifac: ifac, packetHandler: receive)
+            let interface = ReticulumTCPServer(
+                listenHost: profile.listenHost ?? "0.0.0.0",
+                port: profile.port!,
+                maximumClients: profile.maximumClients ?? 64,
+                ifac: ifac,
+                packetHandler: receive
+            )
             tcpServers[id] = interface
             try await interface.start()
             setReady(profile)

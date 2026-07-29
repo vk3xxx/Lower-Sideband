@@ -451,6 +451,63 @@ struct ReticulumKitTransportRuntimeTests {
         await runtime.stopAll()
     }
 
+    @Test("TCP server binds explicitly and reports live client and traffic diagnostics")
+    func tcpServerDiagnostics() async throws {
+        let serverReceived = PacketCounter()
+        let clientReceived = PacketCounter()
+        let server = ReticulumTCPServer(
+            listenHost: "127.0.0.1",
+            port: 0,
+            maximumClients: 1,
+            packetHandler: { await serverReceived.add($0.raw) }
+        )
+        try await server.start()
+        try await waitUntil {
+            if case .listening = await server.metrics().state { return true }
+            return false
+        }
+        let activePort: UInt16
+        if case .listening(let port) = await server.metrics().state {
+            activePort = port
+        } else {
+            throw RNodeError.transport("TCP server did not publish its listener port")
+        }
+
+        let clientStates = TCPStateRecorder()
+        let client = ReticulumTCPInterface(
+            host: "127.0.0.1",
+            port: activePort,
+            packetHandler: { await clientReceived.add($0.raw) },
+            stateHandler: { await clientStates.add($0) }
+        )
+        await client.start()
+        try await waitUntil {
+            let ready = await clientStates.isReady
+            let count = await server.clientCount
+            return ready && count == 1
+        }
+
+        let inbound = packet(payload: "tcp-server-inbound", destinationByte: 0x61)
+        try await client.send(rawPacket: inbound)
+        try await waitUntil { await serverReceived.combined == inbound }
+        let outbound = packet(payload: "tcp-server-outbound", destinationByte: 0x62)
+        await server.broadcast(outbound)
+        try await waitUntil { await clientReceived.combined == outbound }
+
+        let metrics = await server.metrics()
+        #expect(metrics.listenHost == "127.0.0.1")
+        #expect(metrics.maximumClients == 1)
+        #expect(metrics.clients.count == 1)
+        #expect(metrics.acceptedClients == 1)
+        #expect(metrics.packetsReceived == 1)
+        #expect(metrics.packetsSent == 1)
+        #expect(metrics.bytesReceived > 0)
+        #expect(metrics.bytesSent > 0)
+
+        await client.stop()
+        await server.stop()
+    }
+
     @Test("I2P SAM session and stream lifecycle carries Reticulum packets")
     func i2pSAMLifecycle() async throws {
         let fixture = try LocalSAMFixture()

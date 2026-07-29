@@ -1726,6 +1726,10 @@ public final class SidebandStore {
 
     private func restartConfiguredInterfaces() async {
         await configuredInterfaceRuntime.apply(reticulumInterfaceProfiles)
+        await refreshConfiguredInterfaceSnapshots()
+    }
+
+    public func refreshConfiguredInterfaceSnapshots() async {
         configuredInterfaceSnapshots = await configuredInterfaceRuntime.currentSnapshots()
         reticulumInterfaceProfileErrors = Dictionary(uniqueKeysWithValues: configuredInterfaceSnapshots.compactMap {
             if case .failed(let reason) = $0.state { return ($0.id, reason) }

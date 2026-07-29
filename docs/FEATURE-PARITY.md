@@ -28,7 +28,7 @@ The detailed upstream comparison and exact pinned versions are in
 | Interface | Runtime | Configuration model | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | TCP client | macOS/iOS | Yes | Unit, simulator, LAN and public-Internet interoperability | Complete |
-| TCP server | macOS/iOS | Core API | Unit and native forwarding tests | Core complete; settings UI pending |
+| TCP server | macOS/iOS | Unified interface editor with bind address, mode, IFAC, client limit and live peer/traffic diagnostics | Unit, native forwarding and live diagnostics tests | Complete |
 | Shared Instance | macOS/iOS | Yes | Local TCP/HDLC tests | Complete |
 | AutoInterface | macOS; restricted on iOS | Yes | Authentication, expiry and peer tests | Complete where multicast is permitted |
 | UDP | macOS/iOS | Unified interface editor | Bidirectional listener/client and IFAC tests | Complete listener, forwarder and client lifecycle |

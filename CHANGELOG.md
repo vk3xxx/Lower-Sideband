@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.58
+
+- Completed the native TCP server settings workflow with explicit bind-address
+  enforcement, bounded client admission and live peer/packet/byte diagnostics.
+- Added a bidirectional listener acceptance test covering the published port,
+  client state and traffic counters.
+
 ## 1.3.57 (95) - 2026-07-29
 
 - Completed the macOS Pipe interface in the unified editor and configured
