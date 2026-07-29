@@ -31,20 +31,20 @@ The detailed upstream comparison and exact pinned versions are in
 | TCP server | macOS/iOS | Core API | Unit and native forwarding tests | Core complete; settings UI pending |
 | Shared Instance | macOS/iOS | Yes | Local TCP/HDLC tests | Complete |
 | AutoInterface | macOS; restricted on iOS | Yes | Authentication, expiry and peer tests | Complete where multicast is permitted |
-| UDP | macOS/iOS | Core API | Datagram/IFAC tests | Client complete; listener configuration pending |
+| UDP | macOS/iOS | Unified interface editor | Bidirectional listener/client and IFAC tests | Complete listener, forwarder and client lifecycle |
 | WebSocket client | macOS/iOS | URL override and portable profile | MeshChatX-compatible binary packet tests | Complete |
-| WebSocket server | — | Profile only | — | Not implemented |
+| WebSocket server | macOS | Unified interface editor | RFC 6455 masked-client and binary-server frame tests | Complete native listener |
 | HTTP tunnel client | macOS/iOS | URL override and portable profile | MeshChatX-compatible HDLC POST/poll tests | Complete |
-| HTTP tunnel server | — | Profile only | — | Not implemented |
+| HTTP tunnel server | macOS | Unified interface editor | Bidirectional POST/poll session tests | Complete native listener |
 | RNode BLE | macOS/iOS | Yes via ReticulumKit | Protocol conformance; physical device pending | Implemented, not hardware-certified |
 | RNode TCP/Wi-Fi | macOS/iOS | Yes via ReticulumKit | Official vectors, TCP lifecycle, 10k fuzz, 2.5k flow-control soak | Automated production gate complete |
 | RNode serial | macOS | Yes via ReticulumKit | Protocol conformance; physical device pending | Implemented, not hardware-certified |
 | RNodeMulti virtual ports | `RNodeMultiInterface` | Native virtual-port selection, per-port radio configuration/state, flow control and shared BLE/TCP/serial transport | Exact framing, all 12 virtual ports and simulator coverage | Implemented in ReticulumKit; physical multi-radio device acceptance remains required |
-| Generic KISS / AX.25 KISS | macOS | Core API | Framing, commands and chunk tests | Complete core; advanced UI pending |
+| Generic KISS / AX.25 KISS | macOS | Unified interface editor | Framing, commands, flow control, AX.25 UI and chunk tests | Complete host lifecycle; physical TNC acceptance remains |
 | Pipe | macOS | Core API | Process lifecycle and HDLC tests | Complete core; settings UI pending |
 | I2P | `I2PInterface` | Native SAM v3 session ownership plus STREAM CONNECT/ACCEPT lifecycle, HDLC, timeout and reconnect support | Live local SAM bridge lifecycle and bidirectional packet test | Implemented in ReticulumKit; external I2P-router acceptance remains required |
 | Backbone connector/listener | `BackboneInterface` | TCP/HDLC-compatible connector, multi-peer listener and signed discovery transport-identity binding | Live connector/listener packet test and discovery identity validation | Implemented in ReticulumKit |
-| Weave | — | Frame codec only | Bounds and frame tests | Not implemented end-to-end |
+| Weave | macOS/iOS | Unified interface editor | Bounds, frame and configured-runtime lifecycle tests | Complete TCP endpoint lifecycle; physical switch acceptance remains |
 
 ## External acceptance still required
 

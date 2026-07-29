@@ -13,7 +13,7 @@ public enum KISSModem {
 
     public enum Command: UInt8, Codable, Sendable {
         case data = 0x00, txDelay = 0x01, persistence = 0x02, slotTime = 0x03
-        case txTail = 0x04, fullDuplex = 0x05, setHardware = 0x06, returnToHost = 0x0F
+        case txTail = 0x04, fullDuplex = 0x05, setHardware = 0x06, ready = 0x0F
     }
 
     public static func frame(port: UInt8 = 0, command: Command = .data, payload: Data = Data()) -> Data {
@@ -75,7 +75,7 @@ public struct KISSModemDecoder: Sendable {
 }
 
 public struct KISSModemConfiguration: Codable, Equatable, Identifiable, Sendable {
-    public enum Framing: String, Codable, CaseIterable, Sendable { case kiss, hdlc }
+    public enum Framing: String, Codable, CaseIterable, Sendable { case kiss, ax25Kiss, hdlc }
     public var id = UUID()
     public var name = "KISS modem"
     public var serialPath = ""
@@ -86,6 +86,14 @@ public struct KISSModemConfiguration: Codable, Equatable, Identifiable, Sendable
     public var slotTime: UInt8 = 10
     public var txTail: UInt8 = 30
     public var fullDuplex = false
+    public var flowControl = false
+    public var flowControlTimeout: TimeInterval = 5
+    public var callsign = ""
+    public var ssid: UInt8 = 0
+    public var destinationCallsign = "APZRNS"
+    public var destinationSSID: UInt8 = 0
+    public var beaconCallsign: String?
+    public var beaconInterval: TimeInterval?
     public var framing: Framing = .kiss
     public var interfaceMode: ReticulumInterfaceMode = .full
     public var ifacNetworkName: String?
@@ -102,10 +110,66 @@ public struct KISSModemConfiguration: Codable, Equatable, Identifiable, Sendable
         }
         guard port < 16 else { throw ValidationError.invalidPort }
         guard (1...64).contains(ifacSize) else { throw ValidationError.invalidIFACSize }
+        guard flowControlTimeout > 0, flowControlTimeout <= 60 else { throw ValidationError.invalidFlowControlTimeout }
+        if framing == .ax25Kiss {
+            guard AX25UIFrame.isValidCallsign(callsign), ssid < 16,
+                  AX25UIFrame.isValidCallsign(destinationCallsign), destinationSSID < 16 else {
+                throw ValidationError.invalidAX25Address
+            }
+        }
+        if let beaconCallsign, !beaconCallsign.isEmpty {
+            guard AX25UIFrame.isValidCallsign(beaconCallsign),
+                  let beaconInterval, beaconInterval >= 60 else { throw ValidationError.invalidBeacon }
+        }
         return self
     }
 
-    public enum ValidationError: Error { case missingPath, unsupportedBaudRate, invalidPort, invalidIFACSize }
+    public enum ValidationError: Error {
+        case missingPath, unsupportedBaudRate, invalidPort, invalidIFACSize
+        case invalidFlowControlTimeout, invalidAX25Address, invalidBeacon
+    }
+}
+
+/// AX.25 UI-frame envelope used by Reticulum's AX25KISSInterface. FCS is
+/// intentionally omitted because KISS TNCs add and verify it on-air.
+public enum AX25UIFrame {
+    public static let headerSize = 16
+    public static let controlUI: UInt8 = 0x03
+    public static let pidNoLayer3: UInt8 = 0xF0
+
+    public static func isValidCallsign(_ value: String) -> Bool {
+        let ascii = value.uppercased().utf8
+        return (3...6).contains(ascii.count) && ascii.allSatisfy {
+            (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains($0) || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0)
+        }
+    }
+
+    public static func encode(
+        payload: Data,
+        sourceCallsign: String,
+        sourceSSID: UInt8,
+        destinationCallsign: String = "APZRNS",
+        destinationSSID: UInt8 = 0
+    ) throws -> Data {
+        guard isValidCallsign(sourceCallsign), isValidCallsign(destinationCallsign),
+              sourceSSID < 16, destinationSSID < 16 else { throw Error.invalidAddress }
+        return try address(destinationCallsign, ssid: destinationSSID, final: false)
+            + address(sourceCallsign, ssid: sourceSSID, final: true)
+            + Data([controlUI, pidNoLayer3]) + payload
+    }
+
+    public static func decode(_ frame: Data) throws -> Data {
+        guard frame.count > headerSize, frame[14] == controlUI, frame[15] == pidNoLayer3,
+              frame[6] & 0x01 == 0, frame[13] & 0x01 == 1 else { throw Error.invalidFrame }
+        return Data(frame.dropFirst(headerSize))
+    }
+
+    private static func address(_ callsign: String, ssid: UInt8, final: Bool) throws -> Data {
+        guard isValidCallsign(callsign), ssid < 16 else { throw Error.invalidAddress }
+        let padded = callsign.uppercased().padding(toLength: 6, withPad: " ", startingAt: 0)
+        return Data(padded.utf8.map { $0 << 1 }) + Data([0x60 | (ssid << 1) | (final ? 1 : 0)])
+    }
+    public enum Error: Swift.Error { case invalidAddress, invalidFrame }
 }
 
 #if os(macOS)
@@ -121,6 +185,11 @@ public actor ReticulumSerialPacketInterface {
     private var kissDecoder = KISSModemDecoder()
     private var hdlcDecoder = HDLCDecoder()
     private let ifac: ReticulumIFAC?
+    private var outboundQueue: [Data] = []
+    private var interfaceReady = true
+    private var flowControlTimeoutTask: Task<Void, Never>?
+    private var beaconTask: Task<Void, Never>?
+    private var lastNonBeaconTransmission: Date?
 
     public init(
         configuration: KISSModemConfiguration,
@@ -162,7 +231,8 @@ public actor ReticulumSerialPacketInterface {
             guard !bytes.isEmpty else { return }
             Task { await self?.consume(bytes) }
         }
-        if configuration.framing == .kiss { try? configureKISSModem() }
+        if configuration.framing != .hdlc { try? configureKISSModem() }
+        startBeaconLifecycle()
         await stateHandler(.ready)
     }
 
@@ -170,16 +240,33 @@ public actor ReticulumSerialPacketInterface {
         fileHandle?.readabilityHandler = nil
         try? fileHandle?.close()
         fileHandle = nil
+        flowControlTimeoutTask?.cancel(); flowControlTimeoutTask = nil
+        beaconTask?.cancel(); beaconTask = nil
+        outboundQueue.removeAll(); interfaceReady = true
         await stateHandler(.stopped)
     }
 
     public func send(rawPacket: Data) async throws {
-        guard let fileHandle else { throw InterfaceError.notConnected }
+        guard fileHandle != nil else { throw InterfaceError.notConnected }
         let raw = try ifac?.protect(rawPacket) ?? rawPacket
-        let framed = configuration.framing == .kiss
-            ? KISSModem.frame(port: configuration.port, payload: raw)
-            : HDLC.frame(raw)
-        try fileHandle.write(contentsOf: framed)
+        let payload = configuration.framing == .ax25Kiss
+            ? try AX25UIFrame.encode(
+                payload: raw,
+                sourceCallsign: configuration.callsign,
+                sourceSSID: configuration.ssid,
+                destinationCallsign: configuration.destinationCallsign,
+                destinationSSID: configuration.destinationSSID
+            )
+            : raw
+        let framed = configuration.framing == .hdlc
+            ? HDLC.frame(payload)
+            : KISSModem.frame(port: configuration.port, payload: payload)
+        if configuration.flowControl, !interfaceReady {
+            guard outboundQueue.count < 256 else { throw InterfaceError.queueFull }
+            outboundQueue.append(framed)
+            return
+        }
+        try write(framed, isBeacon: false)
     }
 
     private func configureKISSModem() throws {
@@ -192,13 +279,21 @@ public actor ReticulumSerialPacketInterface {
         for (command, value) in commands {
             try fileHandle.write(contentsOf: KISSModem.frame(port: configuration.port, command: command, payload: Data([value])))
         }
+        try fileHandle.write(contentsOf: KISSModem.frame(port: configuration.port, command: .ready, payload: Data([configuration.flowControl ? 1 : 0])))
     }
 
     private func consume(_ bytes: Data) async {
         let frames: [Data]
-        if configuration.framing == .kiss {
-            frames = kissDecoder.consume(bytes).compactMap {
-                $0.port == configuration.port && $0.command == .data ? $0.payload : nil
+        if configuration.framing != .hdlc {
+            frames = kissDecoder.consume(bytes).compactMap { frame in
+                guard frame.port == configuration.port else { return nil }
+                if frame.command == .ready {
+                    releaseFlowControl()
+                    return nil
+                }
+                guard frame.command == .data else { return nil }
+                if configuration.framing == .ax25Kiss { return try? AX25UIFrame.decode(frame.payload) }
+                return frame.payload
             }
         } else { frames = hdlcDecoder.consume(bytes) }
         for frame in frames {
@@ -206,6 +301,49 @@ public actor ReticulumSerialPacketInterface {
                   let packet = try? ReticulumPacket(raw: raw) else { continue }
             await packetHandler(packet)
         }
+    }
+
+    private func write(_ frame: Data, isBeacon: Bool) throws {
+        guard let fileHandle else { throw InterfaceError.notConnected }
+        try fileHandle.write(contentsOf: frame)
+        if !isBeacon { lastNonBeaconTransmission = .now }
+        guard configuration.flowControl else { return }
+        interfaceReady = false
+        flowControlTimeoutTask?.cancel()
+        let timeout = configuration.flowControlTimeout
+        flowControlTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            guard !Task.isCancelled else { return }
+            await self?.releaseFlowControl()
+        }
+    }
+
+    private func releaseFlowControl() {
+        flowControlTimeoutTask?.cancel(); flowControlTimeoutTask = nil
+        interfaceReady = true
+        guard !outboundQueue.isEmpty else { return }
+        let next = outboundQueue.removeFirst()
+        try? write(next, isBeacon: false)
+    }
+
+    private func startBeaconLifecycle() {
+        guard let callsign = configuration.beaconCallsign,
+              let interval = configuration.beaconInterval else { return }
+        beaconTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval))
+                guard !Task.isCancelled else { return }
+                await self?.sendBeaconIfIdle(callsign: callsign, interval: interval)
+            }
+        }
+    }
+
+    private func sendBeaconIfIdle(callsign: String, interval: TimeInterval) {
+        guard lastNonBeaconTransmission.map({ Date.now.timeIntervalSince($0) >= interval }) == true else { return }
+        var data = Data(callsign.utf8)
+        while data.count < 15 { data.append(0) }
+        let frame = KISSModem.frame(port: configuration.port, payload: data)
+        try? write(frame, isBeacon: true)
     }
 
     private static func serialSpeed(_ baud: Int) -> speed_t {
@@ -217,6 +355,10 @@ public actor ReticulumSerialPacketInterface {
         }
     }
 
-    public enum InterfaceError: Error { case notConnected }
+    public enum InterfaceError: Error { case notConnected, queueFull }
 }
 #endif
+
+private extension Data {
+    static func + (lhs: Data, rhs: Data) -> Data { var value = lhs; value.append(rhs); return value }
+}

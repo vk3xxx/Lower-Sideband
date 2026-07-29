@@ -152,6 +152,9 @@ public final class SidebandStore {
     public private(set) var connectionMode: NetworkConnectionMode
     public var internetOnlyEnabled: Bool
     public var autoInterfaceEnabled: Bool
+    public private(set) var reticulumInterfaceProfiles: [ReticulumInterfaceProfile] = []
+    public private(set) var reticulumInterfaceProfileErrors: [UUID: String] = [:]
+    public private(set) var configuredInterfaceSnapshots: [ReticulumConfiguredInterfaceRuntime.Snapshot] = []
     public private(set) var transportInstanceEnabled: Bool
     public private(set) var transportInstanceSnapshot = ReticulumTransportSnapshot(
         enabled: false, knownRoutes: 0, forwardedPackets: 0, duplicatePackets: 0,
@@ -202,6 +205,10 @@ public final class SidebandStore {
     @ObservationIgnored private var transcriptCache: [UUID: String] = [:]
     @ObservationIgnored private var cloudUploadedAttachmentHashes: [UUID: Data] = [:]
     @ObservationIgnored private var deletedConversationDestinations: [String: Date] = [:]
+    @ObservationIgnored private lazy var configuredInterfaceRuntime = ReticulumConfiguredInterfaceRuntime {
+        [weak self] packet, interfaceID in
+        await self?.receiveFromInterface(packet, interfaceID: interfaceID)
+    }
     private var iCloudSyncInProgress = false
     private var isApplyingCloudSnapshot = false
     private var networkInterfacePool: ReticulumTCPInterfacePool?
@@ -364,6 +371,11 @@ public final class SidebandStore {
             }
         }
         if !localDataCipher.isAvailable { secureStorageAvailable = false }
+        if let encryptedProfiles = UserDefaults.standard.data(forKey: "reticulumInterfaceProfiles.v1"),
+           let profileData = try? localDataCipher.open(encryptedProfiles, context: "reticulum-interface-profiles-v1"),
+           let profiles = try? JSONDecoder.sideband.decode([ReticulumInterfaceProfile].self, from: profileData) {
+            reticulumInterfaceProfiles = Array(profiles.prefix(64))
+        }
         networkHost = UserDefaults.standard.string(forKey: "reticulumHost") ?? ""
         networkIPv6Host = UserDefaults.standard.string(forKey: "reticulumIPv6Host") ?? ""
         networkInternetHost = UserDefaults.standard.string(forKey: "reticulumInternetHost") ?? ""
@@ -1668,9 +1680,66 @@ public final class SidebandStore {
         transportState = await transport.state
         await transportInstance.setEnabled(transportInstanceEnabled)
         transportInstanceSnapshot = await transportInstance.snapshot()
+        await restartConfiguredInterfaces()
     }
 
     public func clearError() { lastError = nil }
+
+    public func saveReticulumInterfaceProfile(_ profile: ReticulumInterfaceProfile) throws {
+        let validated = try profile.validated()
+        var profiles = reticulumInterfaceProfiles
+        if let index = profiles.firstIndex(where: { $0.id == validated.id }) { profiles[index] = validated }
+        else {
+            guard profiles.count < 64 else { throw InterfaceProfileError.tooManyProfiles }
+            profiles.append(validated)
+        }
+        let conflicts = ReticulumInterfacePreflight.conflictingProfileIDs(in: profiles)
+        guard conflicts.isEmpty else { throw InterfaceProfileError.listenerConflict }
+        reticulumInterfaceProfiles = profiles.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        reticulumInterfaceProfileErrors.removeValue(forKey: validated.id)
+        try persistReticulumInterfaceProfiles()
+        Task { await restartConfiguredInterfaces() }
+    }
+
+    public func removeReticulumInterfaceProfile(id: UUID) throws {
+        reticulumInterfaceProfiles.removeAll { $0.id == id }
+        reticulumInterfaceProfileErrors.removeValue(forKey: id)
+        try persistReticulumInterfaceProfiles()
+        Task { await restartConfiguredInterfaces() }
+    }
+
+    public func setReticulumInterfaceProfileEnabled(id: UUID, enabled: Bool) throws {
+        guard let profile = reticulumInterfaceProfiles.first(where: { $0.id == id }) else { return }
+        var updated = profile; updated.enabled = enabled
+        try saveReticulumInterfaceProfile(updated)
+    }
+
+    private func persistReticulumInterfaceProfiles() throws {
+        let plaintext = try JSONEncoder.sideband.encode(reticulumInterfaceProfiles)
+        let encrypted = try localDataCipher.seal(plaintext, context: "reticulum-interface-profiles-v1")
+        UserDefaults.standard.set(encrypted, forKey: "reticulumInterfaceProfiles.v1")
+    }
+
+    private func restartConfiguredInterfaces() async {
+        await configuredInterfaceRuntime.apply(reticulumInterfaceProfiles)
+        configuredInterfaceSnapshots = await configuredInterfaceRuntime.currentSnapshots()
+        reticulumInterfaceProfileErrors = Dictionary(uniqueKeysWithValues: configuredInterfaceSnapshots.compactMap {
+            if case .failed(let reason) = $0.state { return ($0.id, reason) }
+            return nil
+        })
+    }
+
+    public enum InterfaceProfileError: LocalizedError {
+        case tooManyProfiles, listenerConflict
+        public var errorDescription: String? {
+            switch self {
+            case .tooManyProfiles: "A maximum of 64 interface profiles can be stored."
+            case .listenerConflict: "Two enabled listener interfaces cannot use the same TCP port."
+            }
+        }
+    }
 
     /// Removes artifacts from earlier automated delivery runs without touching
     /// the currently requested run or ordinary user messages. A terminated
@@ -3220,6 +3289,7 @@ public final class SidebandStore {
         if let pool = networkInterfacePool {
             interfaces += await pool.readyInterfaceIDs().map { ReticulumTransportInterfaceDescriptor(id: $0, mode: .full) }
         }
+        interfaces += await configuredInterfaceRuntime.readyInterfaceDescriptors()
         interfaces += rnodeManager.readyInterfaceIDs.map { ReticulumTransportInterfaceDescriptor(id: "rnode:\($0.uuidString)", mode: .full) }
         if autoInterfaceDiscovery.isListening, !autoInterfaceDiscovery.peers.isEmpty {
             interfaces.append(ReticulumTransportInterfaceDescriptor(id: "auto", mode: .internalMode))
@@ -3235,7 +3305,9 @@ public final class SidebandStore {
     }
 
     private func transmitTransportForward(_ forward: ReticulumTransportForward) async {
-        if forward.interfaceID.hasPrefix("rnode:"),
+        if ReticulumConfiguredInterfaceRuntime.profileID(from: forward.interfaceID) != nil {
+            try? await configuredInterfaceRuntime.send(rawPacket: forward.rawPacket, on: forward.interfaceID)
+        } else if forward.interfaceID.hasPrefix("rnode:"),
            let id = UUID(uuidString: String(forward.interfaceID.dropFirst("rnode:".count))) {
             try? await rnodeManager.send(rawPacket: forward.rawPacket, on: id)
         } else if forward.interfaceID == "auto" {
@@ -4348,7 +4420,15 @@ public final class SidebandStore {
         var transmitted = false
         var finalError: Error?
         let linkedInterfaceID = (try? ReticulumPacket(raw: packet)).flatMap { linkInterfaceIDs[$0.destinationHash.hex] }
-        if let linkedInterfaceID, linkedInterfaceID.hasPrefix("rnode:"),
+        if let linkedInterfaceID,
+           ReticulumConfiguredInterfaceRuntime.profileID(from: linkedInterfaceID) != nil {
+            do {
+                try await configuredInterfaceRuntime.send(rawPacket: packet, on: linkedInterfaceID)
+                transmitted = true
+            } catch {
+                finalError = error
+            }
+        } else if let linkedInterfaceID, linkedInterfaceID.hasPrefix("rnode:"),
            let id = UUID(uuidString: String(linkedInterfaceID.dropFirst("rnode:".count))) {
             do { try await rnodeManager.send(rawPacket: packet, on: id); transmitted = true }
             catch { finalError = error }
@@ -4365,6 +4445,11 @@ public final class SidebandStore {
             do { _ = try await rnodeManager.send(rawPacket: packet); transmitted = true }
             catch { finalError = error }
         }
+        if linkedInterfaceID == nil {
+            if await configuredInterfaceRuntime.broadcast(rawPacket: packet) > 0 {
+                transmitted = true
+            }
+        }
         for peer in autoInterfaceDiscovery.peers {
             autoInterfaceDiscovery.send(rawPacket: packet, to: peer)
             transmitted = true
@@ -4376,6 +4461,10 @@ public final class SidebandStore {
     /// received. Reticulum reverse-path state is interface-specific, so proofs
     /// must not be broadcast across unrelated public gateways.
     private func transmitRawPacket(_ packet: Data, on interfaceID: String) async throws {
+        if ReticulumConfiguredInterfaceRuntime.profileID(from: interfaceID) != nil {
+            try await configuredInterfaceRuntime.send(rawPacket: packet, on: interfaceID)
+            return
+        }
         if interfaceID.hasPrefix("rnode:"),
            let id = UUID(uuidString: String(interfaceID.dropFirst("rnode:".count))) {
             try await rnodeManager.send(rawPacket: packet, on: id)
@@ -4411,6 +4500,18 @@ public final class SidebandStore {
         redundantRoutes: Bool = false
     ) async throws {
         var transmitted = false
+        let configuredInterfaceIDs = await configuredInterfaceRuntime.readyInterfaceIDs()
+        let configuredRoutes = await pathTable.paths(to: destinationHash).filter {
+            $0.interfaceID.map(configuredInterfaceIDs.contains) == true
+        }
+        if let route = configuredRoutes.first, let interfaceID = route.interfaceID {
+            let routedPacket = (try? ReticulumPacket(raw: packet).prepared(for: route)) ?? packet
+            if (try? await configuredInterfaceRuntime.send(rawPacket: routedPacket, on: interfaceID)) != nil {
+                transmitted = true
+            }
+        } else if await configuredInterfaceRuntime.broadcast(rawPacket: packet) > 0 {
+            transmitted = true
+        }
         if let networkInterfacePool, tcpNetworkState == .ready {
             let interfaceIDs = await networkInterfacePool.readyInterfaceIDs()
             var tcpSent = false

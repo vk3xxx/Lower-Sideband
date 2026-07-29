@@ -16,7 +16,8 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 - Native Reticulum packet, identity, announce, path, link, proof, tunnel, and Resource handling
 - LXMF direct, opportunistic, propagation-node, attachment, telemetry, stamps/tickets, ratchets, and low-bandwidth voice delivery
 - Automatic local-first gateway discovery with public Internet fallback, IPv6 preference, and IPv4 fallback
-- Concurrent TCP, AutoInterface, RNode, serial, Bluetooth LE, Wi-Fi, and generic KISS interfaces
+- Concurrent TCP, WebSocket, HTTP tunnel, UDP, I2P, Weave, AutoInterface,
+  RNode, serial, Bluetooth LE, Wi-Fi, KISS and AX.25 KISS interfaces
 - Native RNode configuration, diagnostics, beaconing, framebuffer, ROM inspection, signed firmware catalogues, and verified update packages
 - Standalone `ReticulumKit` framework with production-gated RNode TCP/KISS framing, configuration, telemetry, bounded flow control, and reconnect handling
 - Encrypted text, images, files, voice notes, voice calls, replies, reactions, and scheduled messages
@@ -79,7 +80,7 @@ Scripts/test-rnode.sh protocol
 - [Porting status and known gaps](PORTING.md)
 - [Native feature parity](docs/FEATURE-PARITY.md)
 
-All Reticulum packet, link, resource and interface implementations now live in
+All Reticulum packet, link, resource and interface implementations live in
 the standalone `ReticulumKit` module. The app and LXMF layer consume that module
 instead of carrying a second transport implementation.
 - [Pinned Sideband / MeshChatX transport audit](docs/UPSTREAM-PARITY-AUDIT-2026-07-28.md)

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.56 (94) - 2026-07-29
+
+- Added native ReticulumKit WebSocket and HTTP tunnel listeners with bounded
+  peer/session lifecycles, IFAC protection and bidirectional packet tests.
+- Added one adaptive Apple-style interface editor shared by macOS, iPhone and
+  iPad, including encrypted profile persistence, validation, listener conflict
+  detection and live runtime state.
+- Completed native UDP listener/forwarder, advanced KISS flow control and
+  AX.25 UI envelopes, plus a Weave TCP endpoint lifecycle.
+- Routed all configured interface traffic through a single ReticulumKit runtime
+  and verified that no socket or Reticulum framing implementation remains in
+  the application layer.
+
 ## 1.3.55 (93)
 
 - Consolidated the native Reticulum implementation into `ReticulumKit` as the

@@ -11,6 +11,7 @@ import UIKit
 private enum SettingsDestination: String, CaseIterable, Identifiable {
     case overview
     case connection
+    case interfaces
     case delivery
     case syncPrivacy
     case notifications
@@ -25,6 +26,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .overview: "Overview"
         case .connection: "Connection"
+        case .interfaces: "Interfaces"
         case .delivery: "Delivery"
         case .syncPrivacy: "Sync & Privacy"
         case .notifications: "Notifications"
@@ -39,6 +41,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .overview: "Identity and current service health"
         case .connection: "Automatic discovery and gateways"
+        case .interfaces: "Reticulum transports and listeners"
         case .delivery: "Message routing and attachments"
         case .syncPrivacy: "iCloud, authentication and content safety"
         case .notifications: "Alerts, previews and sounds"
@@ -53,6 +56,7 @@ private enum SettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .overview: "checkmark.circle"
         case .connection: "network"
+        case .interfaces: "point.3.connected.trianglepath.dotted"
         case .delivery: "paperplane"
         case .syncPrivacy: "lock.shield"
         case .notifications: "bell"
@@ -254,6 +258,7 @@ struct SidebandSettingsView: View {
             switch destination {
             case .overview: overviewSettings
             case .connection: connectionSettings
+            case .interfaces: ReticulumInterfaceProfilesView(store: store)
             case .delivery: deliverySettings
             case .syncPrivacy: syncPrivacySettings
             case .notifications: notificationSettings

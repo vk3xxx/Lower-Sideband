@@ -41,28 +41,28 @@ MeshChatX extension and the Reticulum wire protocol differ.
 | AutoInterface | Native implementation present |
 | TCP client/server | Native implementation present |
 | Shared Instance | Uses native TCP/HDLC connection to the local instance |
-| UDP | Native client present; listener/settings breadth remains |
+| UDP | Native listener, forwarder and client with unified settings |
 | RNode BLE/TCP/serial | Native implementation present |
 | RNodeMulti | Complete in ReticulumKit: virtual-port selection, independent per-port configuration/state, flow control and simulator coverage. Physical multi-radio hardware acceptance is still required. |
-| Serial, KISS, AX.25 KISS | Native macOS core present; advanced settings breadth remains |
+| Serial, KISS, AX.25 KISS | Native macOS lifecycle and advanced unified settings complete; physical acceptance remains |
 | Pipe | Native macOS core present |
 | WebSocket client | Added in this audit |
-| WebSocket server | Gap |
+| WebSocket server | Native macOS listener complete |
 | HTTP tunnel client | Added in this audit |
-| HTTP tunnel server | Gap |
+| HTTP tunnel server | Native macOS listener complete |
 | I2P | Complete in ReticulumKit: SAM v3 session ownership, STREAM CONNECT/ACCEPT, HDLC transport, timeout and reconnect lifecycle. External-router acceptance remains required. |
 | Backbone connector/listener | Complete in ReticulumKit: reference-compatible TCP/HDLC connector, spawned peer listener semantics and signed discovery transport-identity binding. |
-| Weave | Gap: codec exists but no complete switch/endpoint lifecycle |
+| Weave | Native TCP endpoint lifecycle complete; physical switch acceptance remains |
 
 ## Prioritised remaining work
 
 1. Run physical multi-radio RNodeMulti acceptance on supported hardware.
 2. Run external I2P-router interoperability acceptance.
-3. Continue Weave runtime compatibility work.
-4. Add WebSocket and HTTP server modes on macOS.
-5. Add a single Apple-style interface editor that exposes only options valid
-   for each transport and performs port-conflict checks before saving.
-6. Complete UDP listener, advanced KISS/AX.25 and Weave runtime lifecycles.
+3. Completed: Weave TCP endpoint lifecycle in ReticulumKit.
+4. Completed: WebSocket and HTTP server modes on macOS.
+5. Completed: one Apple-style interface editor exposing transport-valid
+   options with pre-save port-conflict checks.
+6. Completed: UDP listener, advanced KISS/AX.25 and Weave runtime lifecycles.
 7. Run physical-device and public-Internet acceptance matrices before moving
    any row from partial to complete.
 

@@ -37,19 +37,22 @@ Reticulum is delay tolerant. Offline destinations, expired paths, radio duty-cyc
 | --- | :---: | :---: | --- |
 | TCP client | Yes | Yes | Local or Internet Reticulum gateway |
 | WebSocket client | Yes | Yes | Raw Reticulum packets over `ws`/`wss` |
+| WebSocket server | Yes | No | Native RFC 6455 binary Reticulum listener |
 | HTTP tunnel client | Yes | Yes | HDLC packets over HTTP POST/poll |
+| HTTP tunnel server | Yes | No | Native bounded POST/poll session listener |
 | Bonjour discovery | Yes | Yes | Local TCP gateway discovery |
 | AutoInterface | Yes | Limited | Authenticated local multicast/UDP peers |
 | RNode Bluetooth LE | Yes | Yes | Direct LoRa radio |
 | RNode Wi-Fi/TCP | Yes | Yes | Network-connected RNode |
 | USB serial RNode | Yes | No | Direct macOS serial radio |
-| Generic serial/KISS | Yes | No | Compatible modem interfaces |
-| UDP client | Yes | Yes | Datagram interface with optional IFAC |
+| Generic serial/KISS/AX.25 KISS | Yes | No | Serial modem interfaces with READY flow control and AX.25 UI envelopes |
+| UDP client and listener | Yes | Yes | Datagram listener/forwarder with optional IFAC |
+| Weave TCP endpoint | Yes | Yes | Device Control Link discovery, connection and packet lifecycle |
 | Pipe | Yes | No | External packet process |
 | Transport Instance | Yes | No | Forward routes between active Mac interfaces |
 
-Physical RNodeMulti hardware acceptance, external I2P-router acceptance, Weave runtime,
-WebSocket server and HTTP tunnel server are tracked gaps, not silently mapped
+Physical RNodeMulti hardware acceptance, external I2P-router acceptance and
+physical Weave-switch/serial-TNC acceptance remain tracked gates, not silently mapped
 to ordinary TCP.
 
 Physical iOS multicast behaviour requires Apple's restricted multicast entitlement. The distributed app does not claim unsupported entitlement access.

@@ -20,6 +20,7 @@ public enum ReticulumInterfaceKind: String, Codable, CaseIterable, Sendable {
     case webSocketServer
     case httpClient
     case httpServer
+    case weave
 
     public var title: String {
         switch self {
@@ -40,12 +41,13 @@ public enum ReticulumInterfaceKind: String, Codable, CaseIterable, Sendable {
         case .webSocketServer: "WebSocket server"
         case .httpClient: "HTTP tunnel client"
         case .httpServer: "HTTP tunnel server"
+        case .weave: "Weave endpoint"
         }
     }
 
     public var isListener: Bool {
         switch self {
-        case .tcpServer, .backboneServer, .webSocketServer, .httpServer: true
+        case .tcpServer, .backboneServer, .udp, .webSocketServer, .httpServer: true
         default: false
         }
     }
@@ -79,6 +81,16 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
     public var samPort: UInt16?
     public var sessionID: String?
     public var virtualPorts: [RNodeVirtualPortConfiguration]?
+    public var listenHost: String?
+    public var forwardHost: String?
+    public var forwardPort: UInt16?
+    public var callsign: String?
+    public var ssid: UInt8?
+    public var kissPort: UInt8?
+    public var flowControl: Bool?
+    public var switchID: Data?
+    public var localEndpointID: Data?
+    public var remoteEndpointID: Data?
 
     public init(
         id: UUID = UUID(),
@@ -104,7 +116,17 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         samHost: String? = nil,
         samPort: UInt16? = nil,
         sessionID: String? = nil,
-        virtualPorts: [RNodeVirtualPortConfiguration]? = nil
+        virtualPorts: [RNodeVirtualPortConfiguration]? = nil,
+        listenHost: String? = nil,
+        forwardHost: String? = nil,
+        forwardPort: UInt16? = nil,
+        callsign: String? = nil,
+        ssid: UInt8? = nil,
+        kissPort: UInt8? = nil,
+        flowControl: Bool? = nil,
+        switchID: Data? = nil,
+        localEndpointID: Data? = nil,
+        remoteEndpointID: Data? = nil
     ) {
         self.id = id
         self.name = name
@@ -130,6 +152,16 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         self.samPort = samPort
         self.sessionID = sessionID
         self.virtualPorts = virtualPorts
+        self.listenHost = listenHost
+        self.forwardHost = forwardHost
+        self.forwardPort = forwardPort
+        self.callsign = callsign
+        self.ssid = ssid
+        self.kissPort = kissPort
+        self.flowControl = flowControl
+        self.switchID = switchID
+        self.localEndpointID = localEndpointID
+        self.remoteEndpointID = remoteEndpointID
     }
 
     public func validated() throws -> Self {
@@ -158,8 +190,17 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
             if let transportIdentity, !transportIdentity.isEmpty {
                 _ = try ReticulumBackboneTransportIdentity(hex: transportIdentity)
             }
-        case .tcpServer, .backboneServer, .udp:
+        case .tcpServer, .backboneServer:
             guard let port, port > 0 else { throw ValidationError.missingPort }
+        case .udp:
+            guard let port, port > 0 else { throw ValidationError.missingPort }
+            _ = try ReticulumUDPListenerConfiguration(
+                listenHost: listenHost ?? "0.0.0.0",
+                listenPort: port,
+                forwardHost: forwardHost,
+                forwardPort: forwardPort,
+                allowBroadcast: forwardHost == "255.255.255.255"
+            ).validated()
         case .webSocketClient:
             try requireURL(schemes: ["ws", "wss"])
         case .httpClient:
@@ -170,6 +211,16 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
             guard device?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 throw ValidationError.missingDevice
             }
+            var configuration = KISSModemConfiguration()
+            configuration.name = name
+            configuration.serialPath = device!
+            configuration.baudRate = bitrate ?? 115_200
+            configuration.port = kissPort ?? 0
+            configuration.framing = kind == .serial ? .hdlc : (kind == .ax25Kiss ? .ax25Kiss : .kiss)
+            configuration.callsign = callsign ?? ""
+            configuration.ssid = ssid ?? 0
+            configuration.flowControl = flowControl ?? false
+            _ = try configuration.validated()
         case .i2p:
             guard host?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 throw ValidationError.missingHost
@@ -189,6 +240,15 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
                 transport: .serial,
                 target: device ?? "configured",
                 ports: virtualPorts
+            ).validated()
+        case .weave:
+            _ = try ReticulumWeaveConfiguration(
+                host: host ?? "",
+                port: port ?? 0,
+                switchID: switchID ?? Data(),
+                localEndpointID: localEndpointID ?? Data(),
+                remoteEndpointID: remoteEndpointID,
+                reconnect: reconnect
             ).validated()
         case .auto, .rnode, .pipe:
             break
@@ -242,6 +302,38 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
             case .missingVirtualPorts: "Configure at least one RNode virtual port."
             }
         }
+    }
+}
+
+public enum ReticulumInterfaceField: String, CaseIterable, Sendable {
+    case name, enabled, mode, host, port, url, device, groupID, timeout, reconnect
+    case mtu, bitrate, polling, ifac, transportIdentity, sam, virtualPorts
+    case listenHost, forwardHost, forwardPort, callsign, ssid, kissPort, flowControl
+    case switchID, localEndpointID, remoteEndpointID
+}
+
+public extension ReticulumInterfaceKind {
+    var applicableFields: Set<ReticulumInterfaceField> {
+        var fields: Set<ReticulumInterfaceField> = [.name, .enabled, .mode, .ifac]
+        switch self {
+        case .auto: fields.formUnion([.groupID])
+        case .tcpClient: fields.formUnion([.host, .port, .timeout, .reconnect, .mtu])
+        case .tcpServer: fields.formUnion([.listenHost, .port, .mtu])
+        case .backboneClient: fields.formUnion([.host, .port, .timeout, .reconnect, .transportIdentity])
+        case .backboneServer: fields.formUnion([.listenHost, .port, .transportIdentity])
+        case .i2p: fields.formUnion([.host, .sam, .timeout, .reconnect])
+        case .udp: fields.formUnion([.listenHost, .port, .forwardHost, .forwardPort, .mtu])
+        case .rnode: fields.formUnion([.device, .bitrate])
+        case .rnodeMulti: fields.formUnion([.device, .virtualPorts])
+        case .serial: fields.formUnion([.device, .bitrate])
+        case .kiss: fields.formUnion([.device, .bitrate, .kissPort, .flowControl])
+        case .ax25Kiss: fields.formUnion([.device, .bitrate, .kissPort, .flowControl, .callsign, .ssid])
+        case .pipe: fields.formUnion([.device, .reconnect])
+        case .webSocketClient, .httpClient: fields.formUnion([.url, .timeout, .reconnect, .mtu, .polling])
+        case .webSocketServer, .httpServer: fields.formUnion([.listenHost, .port, .mtu, .polling])
+        case .weave: fields.formUnion([.host, .port, .switchID, .localEndpointID, .remoteEndpointID, .reconnect])
+        }
+        return fields
     }
 }
 

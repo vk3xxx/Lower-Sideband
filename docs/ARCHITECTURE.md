@@ -30,13 +30,21 @@ LXMF                                   Reticulum
 
 ### `ReticulumKit`
 
-`Sources/ReticulumKit` is a standalone Swift framework and Swift Package library for reusable Reticulum networking. Its first completed subsystem is the RNode host runtime: official KISS command framing, incremental stream decoding, radio configuration and telemetry, bounded `CMD_READY` flow control, lifecycle-safe Network.framework TCP, and shared transport contracts. It has no dependency on `SidebandCore` or Python.
+`Sources/ReticulumKit` is a standalone Swift framework and Swift Package
+library for reusable Reticulum networking. It owns every Reticulum socket,
+wire codec and interface lifecycle, including TCP, WebSocket, HTTP tunnel, UDP,
+I2P, Weave, AutoInterface, RNode, serial, KISS and AX.25 KISS. Its RNode host
+runtime includes official command framing, incremental stream decoding, radio
+configuration and telemetry, bounded `CMD_READY` flow control, lifecycle-safe
+Network.framework TCP and shared transport contracts. It has no dependency on
+`SidebandCore` or Python.
 
 ### `SidebandCore`
 
-`Sources/SidebandCore` contains platform-neutral models and native protocol implementations:
+`Sources/SidebandCore` contains platform-neutral application and LXMF models:
 
-- Reticulum identity, packet, announce, path, link, proof, token, tunnel, Resource, and interface logic;
+- orchestration of the ReticulumKit identities, packets, links, paths,
+  resources and configured interface runtime;
 - LXMF packing, signing, direct/opportunistic/propagation delivery, commands, telemetry, attachments, and voice payloads;
 - encrypted persistence, attachment storage, CloudKit merge models, notifications, and background coordination;
 - plugin manifests, permissions, service lifecycle, telemetry providers, execution limits, and audit records.
@@ -50,7 +58,7 @@ The Xcode project creates separate iOS and macOS framework targets from the same
 
 ## Network pipeline
 
-1. Interface bytes arrive from TCP, AutoInterface, RNode, or generic KISS.
+1. Interface bytes arrive through a configured ReticulumKit transport.
 2. HDLC/KISS framing produces bounded Reticulum packets.
 3. Packet headers, lengths, contexts, hashes, and transport fields are validated.
 4. Announces are signature-checked before they can update paths or identities.

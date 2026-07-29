@@ -281,6 +281,165 @@ struct RNodeTCPRuntimeTests {
 
 @Suite("ReticulumKit transport runtimes")
 struct ReticulumKitTransportRuntimeTests {
+    @Test("WebSocket server framing accepts masked clients and emits binary server frames")
+    func webSocketServerFraming() async throws {
+        let payload = packet(payload: "websocket-client")
+        let mask = Data([0x12, 0x34, 0x56, 0x78])
+        var masked = Data()
+        for (index, byte) in payload.enumerated() {
+            masked.append(byte ^ mask[index % 4])
+        }
+        var clientFrame = Data([0x82, 0x80 | UInt8(payload.count)])
+        clientFrame.append(mask)
+        clientFrame.append(masked)
+        let frames = try ReticulumWebSocketFrameCodec.consumeClientFrames(buffer: &clientFrame)
+        #expect(frames.count == 1)
+        #expect(frames.first?.opcode == .binary)
+        #expect(frames.first?.payload == payload)
+        #expect(clientFrame.isEmpty)
+
+        let serverFrame = try ReticulumWebSocketFrameCodec.serverFrame(opcode: .binary, payload: payload)
+        #expect(serverFrame.prefix(2) == Data([0x82, UInt8(payload.count)]))
+        #expect(serverFrame.dropFirst(2) == payload)
+
+        let received = PacketCounter()
+        let server = ReticulumWebSocketServer(port: 0) { _, packet in
+            await received.add(packet.raw)
+        }
+        try await server.start()
+        try await waitUntil {
+            if case .listening = await server.state { return true }
+            return false
+        }
+        guard case let .listening(port) = await server.state else {
+            Issue.record("WebSocket listener did not become ready.")
+            return
+        }
+        let bytes = PacketCounter()
+        let client = LocalRawConnectionFixture(port: port) { data in await bytes.add(data) }
+        try await client.start()
+        try await client.send(Data(
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n".utf8
+        ))
+        try await waitUntil {
+            String(data: await bytes.combined, encoding: .utf8)?.contains("101 Switching Protocols") == true
+        }
+        try await client.send(Data([0x82, 0x80 | UInt8(payload.count)]) + mask + masked)
+        try await waitUntil { await received.combined == payload }
+        try await server.broadcast(payload)
+        try await waitUntil { await bytes.combined.suffix(serverFrame.count) == serverFrame }
+        await client.stop()
+        await server.stop()
+    }
+
+    @Test("HTTP tunnel server and client carry Reticulum packets bidirectionally")
+    func httpServerLifecycle() async throws {
+        let serverReceived = PacketCounter()
+        let clientReceived = PacketCounter()
+        let server = ReticulumHTTPServer(port: 0) { _, packet in
+            await serverReceived.add(packet.raw)
+        }
+        try await server.start()
+        try await waitUntil {
+            if case .listening = await server.state { return true }
+            return false
+        }
+        guard case let .listening(port) = await server.state else {
+            Issue.record("HTTP server did not begin listening.")
+            return
+        }
+        let client = ReticulumHTTPInterface(
+            url: URL(string: "http://127.0.0.1:\(port)/")!,
+            pollInterval: 0.05,
+            packetHandler: { packet in await clientReceived.add(packet.raw) }
+        )
+        await client.start()
+        try await waitUntil { await client.state == .ready }
+
+        let outbound = packet(payload: "http-client")
+        try await client.send(rawPacket: outbound)
+        try await waitUntil { await serverReceived.combined == outbound }
+
+        let inbound = packet(payload: "http-server", destinationByte: 0x35)
+        try await server.broadcast(inbound)
+        try await waitUntil { await clientReceived.combined == inbound }
+
+        await client.stop()
+        await server.stop()
+    }
+
+    @Test("UDP listener carries packets in both directions")
+    func udpListenerLifecycle() async throws {
+        let serverReceived = PacketCounter()
+        let clientReceived = PacketCounter()
+        let server = try ReticulumUDPListener(
+            configuration: ReticulumUDPListenerConfiguration(listenHost: "127.0.0.1", listenPort: 0)
+        ) { _, packet in
+            await serverReceived.add(packet.raw)
+        }
+        try await server.start()
+        try await waitUntil {
+            if case .listening = await server.state { return true }
+            return false
+        }
+        guard case let .listening(port) = await server.state else {
+            Issue.record("UDP server did not begin listening.")
+            return
+        }
+        let client = ReticulumUDPInterface(host: "127.0.0.1", port: port) { packet in
+            await clientReceived.add(packet.raw)
+        }
+        await client.start()
+        try await waitUntil { await client.state == .ready }
+
+        let outbound = packet(payload: "udp-client")
+        try await client.send(outbound)
+        try await waitUntil { await serverReceived.combined == outbound }
+
+        let inbound = packet(payload: "udp-server", destinationByte: 0x36)
+        try await server.broadcast(inbound)
+        try await waitUntil { await clientReceived.combined == inbound }
+
+        await client.stop()
+        await server.stop()
+    }
+
+    @Test("AX.25 KISS UI envelope matches the Reticulum address rules")
+    func ax25KISSEnvelope() throws {
+        let raw = packet(payload: "ax25")
+        let frame = try AX25UIFrame.encode(
+            payload: raw,
+            sourceCallsign: "VK3XXX",
+            sourceSSID: 7,
+            destinationCallsign: "APZRNS",
+            destinationSSID: 0
+        )
+        #expect(frame.count == raw.count + AX25UIFrame.headerSize)
+        #expect(frame[14] == AX25UIFrame.controlUI)
+        #expect(frame[15] == AX25UIFrame.pidNoLayer3)
+        #expect(try AX25UIFrame.decode(frame) == raw)
+    }
+
+    @Test("Configured runtime provides one ReticulumKit interface boundary")
+    func configuredRuntimeBoundary() async throws {
+        let profile = ReticulumInterfaceProfile(
+            name: "UDP test",
+            kind: .udp,
+            port: 54_321,
+            listenHost: "127.0.0.1"
+        )
+        let runtime = ReticulumConfiguredInterfaceRuntime { _, _ in }
+        await runtime.apply([profile])
+        let snapshots = await runtime.currentSnapshots()
+        #expect(snapshots.count == 1)
+        #expect(snapshots.first?.kind == .udp)
+        #expect(snapshots.first?.mode == .full)
+        #expect(await runtime.readyInterfaceIDs() == [
+            ReticulumConfiguredInterfaceRuntime.interfaceID(for: profile.id)
+        ])
+        await runtime.stopAll()
+    }
+
     @Test("I2P SAM session and stream lifecycle carries Reticulum packets")
     func i2pSAMLifecycle() async throws {
         let fixture = try LocalSAMFixture()
@@ -354,6 +513,13 @@ struct ReticulumKitTransportRuntimeTests {
             }
             try await Task.sleep(for: .milliseconds(10))
         }
+    }
+
+    private func packet(payload: String, destinationByte: UInt8 = 0x42) -> Data {
+        Data([0x00, 0x00])
+            + Data(repeating: destinationByte, count: 16)
+            + Data([0x00])
+            + Data(payload.utf8)
     }
 }
 
@@ -552,6 +718,58 @@ private final class LocalTCPFixture: @unchecked Sendable {
             guard let self else { return }
             if let data, !data.isEmpty { Task { await self.receive(data) } }
             if error == nil, !complete { self.receiveNext(connection) }
+        }
+    }
+}
+
+private final class LocalRawConnectionFixture: @unchecked Sendable {
+    private let connection: NWConnection
+    private let queue = DispatchQueue(label: "ReticulumKitTests.RawConnection")
+    private let receive: @Sendable (Data) async -> Void
+
+    init(port: UInt16, receive: @escaping @Sendable (Data) async -> Void) {
+        connection = NWConnection(
+            host: "127.0.0.1",
+            port: NWEndpoint.Port(rawValue: port)!,
+            using: .tcp
+        )
+        self.receive = receive
+    }
+
+    func start() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let resumed = LockedFlag()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready where resumed.claim():
+                    continuation.resume()
+                case let .failed(error) where resumed.claim():
+                    continuation.resume(throwing: error)
+                default:
+                    break
+                }
+            }
+            connection.start(queue: queue)
+            receiveNext()
+        }
+    }
+
+    func send(_ data: Data) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            })
+        }
+    }
+
+    func stop() async { connection.cancel() }
+
+    private func receiveNext() {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, complete, error in
+            guard let self else { return }
+            if let data, !data.isEmpty { Task { await self.receive(data) } }
+            if error == nil, !complete { self.receiveNext() }
         }
     }
 }
