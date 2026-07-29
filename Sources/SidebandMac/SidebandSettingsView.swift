@@ -800,6 +800,39 @@ struct SidebandSettingsView: View {
                 Text("Data is encrypted by Lower Sideband before it enters your private iCloud database. Gateway choices remain local to each device.")
             }
 
+            Section {
+                ForEach(store.continuityDevices) { device in
+                    HStack {
+                        Image(systemName: device.isCurrent ? "laptopcomputer.and.iphone" : "desktopcomputer")
+                            .foregroundStyle(device.isCurrent ? .blue : .secondary)
+                        VStack(alignment: .leading) {
+                            Text(device.name).fontWeight(device.isCurrent ? .semibold : .regular)
+                            Text("Last seen \(device.lastSeen.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if device.queuedMessageCount > 0 {
+                            Text("\(device.queuedMessageCount) pending")
+                                .font(.caption).foregroundStyle(.orange)
+                        }
+                        if !device.isCurrent {
+                            Button("Forget") { store.forgetContinuityDevice(device.id) }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                }
+                Button("Continue Pending Messages on This Device") {
+                    Task { await store.continueOutboxOnThisDevice() }
+                }
+                .disabled(!store.messages.contains {
+                    $0.direction == .outgoing && ($0.state == .queued || $0.state == .failed)
+                })
+            } header: {
+                Text("Multi-device continuity")
+            } footer: {
+                Text("Pending-message ownership prevents duplicate sends. Taking over moves all queued work to this device and resumes delivery.")
+            }
+
             Section("App access") {
                 Toggle("Require device authentication", isOn: Binding(
                     get: { store.privacyLock.isEnabled },

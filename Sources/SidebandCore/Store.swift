@@ -129,6 +129,7 @@ public final class SidebandStore {
     public private(set) var iCloudSyncEnabled = false
     public private(set) var iCloudSyncStatus: ICloudSyncStatus = .disabled
     public private(set) var lastICloudSync: Date?
+    public private(set) var knownSyncDevices: [String: Date] = [:]
     public private(set) var voiceCall: VoiceCall?
     public private(set) var voiceCallHistory: [VoiceCall] = []
     public private(set) var pluginConfigurationRevision = 0
@@ -200,6 +201,11 @@ public final class SidebandStore {
             diagnostics: deliveryDiagnosticEvents,
             routes: connectedRoutes
         )
+    }
+
+    public var currentSyncDeviceID: String { syncDeviceID }
+    public var continuityDevices: [SidebandContinuityDevice] {
+        ContinuityDeviceBuilder.build(currentID: syncDeviceID, knownDevices: knownSyncDevices, messages: messages)
     }
 
     private let transport: any MessageTransport
@@ -455,6 +461,12 @@ public final class SidebandStore {
         telemetryCollectorEnabled = UserDefaults.standard.bool(forKey: "telemetryCollectorEnabled")
         telemetryCollectorHash = UserDefaults.standard.string(forKey: "telemetryCollectorHash") ?? ""
         telemetryCollectorLatestOnly = UserDefaults.standard.object(forKey: "telemetryCollectorLatestOnly") as? Bool ?? true
+        if let encrypted = UserDefaults.standard.data(forKey: "sidebandKnownSyncDevices.v1"),
+           let data = try? localDataCipher.open(encrypted, context: "sideband-known-sync-devices-v1"),
+           let known = try? JSONDecoder.sideband.decode([String: Date].self, from: data) {
+            knownSyncDevices = known
+        }
+        knownSyncDevices[syncDeviceID] = .now
         if let encrypted = UserDefaults.standard.data(forKey: "sidebandNetworkProfiles.v1"),
            let data = try? localDataCipher.open(encrypted, context: "sideband-network-profiles-v1"),
            let custom = try? JSONDecoder.sideband.decode([SidebandNetworkProfile].self, from: data) {
@@ -2318,6 +2330,7 @@ public final class SidebandStore {
             var merged: AppSnapshot
             let remotePayload = try await cloudSync.fetchSnapshot()
             if let payload = remotePayload {
+                knownSyncDevices[payload.deviceID] = payload.modifiedAt
                 let remote = try validatedSnapshot(from: payload.data)
                 merged = local.mergingCloudSnapshot(remote)
             } else {
@@ -2339,12 +2352,42 @@ public final class SidebandStore {
                 try await cloudSync.saveSnapshot(CloudSnapshotPayload(data: mergedData, modifiedAt: now, deviceID: syncDeviceID))
             }
             lastICloudSync = now
+            knownSyncDevices[syncDeviceID] = now
+            persistKnownSyncDevices()
             UserDefaults.standard.set(now, forKey: "iCloudLastSuccessfulSync")
             iCloudSyncStatus = .synced(now)
         } catch {
             isApplyingCloudSnapshot = false
             iCloudSyncStatus = .failed(error.localizedDescription)
         }
+    }
+
+    public func continueOutboxOnThisDevice() async {
+        var changed = false
+        for index in messages.indices where messages[index].direction == .outgoing &&
+            (messages[index].state == .queued || messages[index].state == .failed) {
+            messages[index].outboxOwnerID = syncDeviceID
+            messages[index].outboxOwnerUpdatedAt = .now
+            if messages[index].state == .failed { messages[index].state = .queued }
+            changed = true
+        }
+        guard changed else { return }
+        knownSyncDevices[syncDeviceID] = .now
+        persistKnownSyncDevices()
+        save()
+        await flushQueuedMessages()
+    }
+
+    public func forgetContinuityDevice(_ id: String) {
+        guard id != syncDeviceID else { return }
+        knownSyncDevices.removeValue(forKey: id)
+        persistKnownSyncDevices()
+    }
+
+    private func persistKnownSyncDevices() {
+        guard let data = try? JSONEncoder.sideband.encode(knownSyncDevices),
+              let encrypted = try? localDataCipher.seal(data, context: "sideband-known-sync-devices-v1") else { return }
+        UserDefaults.standard.set(encrypted, forKey: "sidebandKnownSyncDevices.v1")
     }
 
     private func synchronizeCloudAttachments(in snapshot: AppSnapshot, local: AppSnapshot) async -> AppSnapshot {

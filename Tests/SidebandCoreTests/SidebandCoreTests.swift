@@ -4937,6 +4937,29 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(SidebandNetworkProfile.builtIns.count == 3)
 }
 
+@Test func continuityDevicesExposeOwnershipWithoutDuplicates() {
+    let current = "CURRENT-DEVICE"
+    let other = "OTHER-DEVICE"
+    let conversation = UUID()
+    let pending = Message(
+        conversationID: conversation,
+        body: "Pending",
+        timestamp: Date(timeIntervalSince1970: 50),
+        direction: .outgoing,
+        state: .queued,
+        outboxOwnerID: other,
+        outboxOwnerUpdatedAt: Date(timeIntervalSince1970: 60)
+    )
+    let devices = ContinuityDeviceBuilder.build(
+        currentID: current,
+        knownDevices: [other: Date(timeIntervalSince1970: 20)],
+        messages: [pending]
+    )
+    #expect(devices.count == 2)
+    #expect(devices.first?.isCurrent == true)
+    #expect(devices.first(where: { $0.id == other })?.queuedMessageCount == 1)
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }
