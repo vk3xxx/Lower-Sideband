@@ -11,6 +11,8 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
   background-mode, MetricKit, serial-test, and Release-build quality gates
   green. Continue native-speaker review, assistive-technology testing, and
   long-running memory/power profiling on physical devices.
+- Keep the versioned redacted support-report schema current as new runtime
+  health counters are added.
 - Strengthen public endpoint health data and operator documentation without embedding private infrastructure assumptions.
 - Expand automated migration fixtures as new upstream historical schemas are found.
 

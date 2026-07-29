@@ -2543,6 +2543,54 @@ public final class SidebandStore {
         ].joined(separator: "\n")
     }
 
+    public var supportHealth: SidebandSupportHealth {
+        let state: String
+        switch networkState {
+        case .stopped: state = "stopped"
+        case .connecting: state = "connecting"
+        case .ready: state = "ready"
+        case .failed: state = "failed"
+        }
+        return SidebandSupportHealth(
+            networkState: state,
+            conversations: conversations.count,
+            messages: messages.count,
+            queuedMessages: queuedMessageCount,
+            failedMessages: failedMessageCount,
+            activeLinks: activeLinkCount,
+            knownPaths: knownPathCount,
+            attachmentTransfers: activeAttachmentTransferCount,
+            memoryPressureEvents: runtimeHealth.memoryPressureEvents,
+            backgroundWakeAttempts: runtimeHealth.backgroundWakeAttempts,
+            backgroundWakeSuccesses: runtimeHealth.backgroundWakeSuccesses,
+            lowPowerMode: runtimeHealth.isLowPowerModeEnabled,
+            thermalState: runtimeHealth.thermalState.rawValue
+        )
+    }
+
+    public func exportRedactedSupportBundleData(now: Date = .now) throws -> Data {
+        let version = [
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        ].compactMap { $0 }.joined(separator: " (") + ((Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) == nil ? "" : ")")
+        let bundle = SidebandSupportBundle(
+            generatedAt: now,
+            applicationVersion: version.isEmpty ? "development" : version,
+            operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+            health: supportHealth,
+            networkReport: SidebandSupportRedactor.redact(
+                networkDiagnosticsReport.replacingOccurrences(of: "Local name: \(localDisplayName)", with: "Local name: <redacted>")
+            ),
+            attachmentReport: attachmentStorageReport == nil
+                ? "Attachment storage has not been inspected."
+                : SidebandSupportRedactor.redact(attachmentStorageDiagnostics)
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(bundle)
+    }
+
     public func cleanOrphanedAttachments() async -> Int {
         let referencedPaths = Set(messages.flatMap(\.attachments).map(\.relativePath))
         return (try? await attachmentStore.removeOrphans(referencedRelativePaths: referencedPaths)) ?? 0

@@ -1,6 +1,7 @@
 import SwiftUI
 import SidebandCore
 import ReticulumKit
+import UniformTypeIdentifiers
 
 #if os(macOS)
 import AppKit
@@ -103,6 +104,19 @@ private enum SettingsConfirmation {
     }
 }
 
+private struct SupportBundleDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    let data: Data
+
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
 struct SidebandSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -113,13 +127,26 @@ struct SidebandSettingsView: View {
     @State private var searchText = ""
     @State private var editingRNode: RNodeConfiguration?
     @State private var confirmation: SettingsConfirmation?
+    @State private var supportBundleDocument: SupportBundleDocument?
+    @State private var showingSupportBundleExporter = false
 
     var body: some View {
-        #if os(macOS)
-        macSettings
-        #else
-        mobileSettings
-        #endif
+        Group {
+            #if os(macOS)
+            macSettings
+            #else
+            mobileSettings
+            #endif
+        }
+        .fileExporter(
+            isPresented: $showingSupportBundleExporter,
+            document: supportBundleDocument,
+            contentType: .json,
+            defaultFilename: "Lower-Sideband-Support-\(Date.now.formatted(.iso8601.year().month().day()))"
+        ) { result in
+            if case .failure(let error) = result { store.lastError = "Support report export failed: \(error.localizedDescription)" }
+            supportBundleDocument = nil
+        }
     }
 
     #if os(macOS)
@@ -978,11 +1005,16 @@ struct SidebandSettingsView: View {
 
             Section {
                 diagnosticsButton
+                Button {
+                    exportSupportBundle()
+                } label: {
+                    Label("Export Redacted Support Report", systemImage: "square.and.arrow.up")
+                }
                 Button("Copy Attachment Report") { settingsCopy(store.attachmentStorageDiagnostics) }
             } header: {
                 Text("Diagnostics")
             } footer: {
-                Text("Diagnostic reports contain technical state and endpoint information. Review them before sharing.")
+                Text("The exported support report contains health counters and redacted technical state. It never includes message content, private keys, exact identities, addresses, or attachment payloads.")
             }
         }
     }
@@ -1007,6 +1039,15 @@ struct SidebandSettingsView: View {
             Label("Copy Diagnostics", systemImage: "stethoscope")
         }
         .help("Copy the current connection, routing and runtime state for troubleshooting.")
+    }
+
+    private func exportSupportBundle() {
+        do {
+            supportBundleDocument = SupportBundleDocument(data: try store.exportRedactedSupportBundleData())
+            showingSupportBundleExporter = true
+        } catch {
+            store.lastError = "Support report export failed: \(error.localizedDescription)"
+        }
     }
 
     @ViewBuilder

@@ -1618,6 +1618,41 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(!report.localizedCaseInsensitiveContains("private key"))
 }
 
+@MainActor @Test func supportBundleIsStructuredAndRedactsSensitiveNetworkContext() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let store = SidebandStore(persistenceURL: url)
+    store.setLocalDisplayName("Private Operator Name")
+    let data = try store.exportRedactedSupportBundleData(now: Date(timeIntervalSince1970: 123))
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let bundle = try decoder.decode(SidebandSupportBundle.self, from: data)
+    let text = String(decoding: data, as: UTF8.self)
+
+    #expect(bundle.schemaVersion == SidebandSupportBundle.currentSchemaVersion)
+    #expect(bundle.generatedAt == Date(timeIntervalSince1970: 123))
+    #expect(bundle.health.messages == 0)
+    #expect(!text.contains("Private Operator Name"))
+    #expect(!text.contains(store.messagingIdentityHash))
+    #expect(!text.contains(store.localDeliveryHash))
+    #expect(!text.localizedCaseInsensitiveContains("private key"))
+    #expect(text.contains("<id-"))
+}
+
+@Test func supportRedactorCorrelatesWithoutExposingAddressesOrPaths() {
+    let source = """
+    endpoint 10.20.20.133 and 10.20.20.133
+    destination aabbccddeeff00112233445566778899
+    host rns.example.net
+    file /Users/example/private/report.log
+    """
+    let redacted = SidebandSupportRedactor.redact(source, homeDirectory: "/Users/example")
+    #expect(!redacted.contains("10.20.20.133"))
+    #expect(!redacted.contains("aabbccddeeff00112233445566778899"))
+    #expect(!redacted.contains("rns.example.net"))
+    #expect(!redacted.contains("/Users/example"))
+    #expect(redacted.components(separatedBy: "<ipv4-").count == 3)
+}
+
 @MainActor @Test func inboundDeliveryProofReturnsOnLinkIngressInterface() {
     let linkID = "0123456789abcdef0123456789abcdef"
     let interfaces = [
