@@ -14,8 +14,6 @@
 	<string>automatic</string>
 	<key>teamID</key>
 	<string>DLV44BUBE7</string>
-	<key>testFlightInternalTestingOnly</key>
-	<true/>
 	<key>uploadSymbols</key>
 	<true/>
 </dict>
