@@ -304,6 +304,7 @@ public final class SidebandStore {
     public var managedInfrastructurePublicKey: String
     public var remoteWakeEnabled: Bool
     public private(set) var remoteWakeStatus = "Not configured"
+    public private(set) var remoteWakeLastRegisteredAt: Date?
     private var networkConnectionStartedAt: Date?
     private var deferredPathRequests: Set<String> = []
     private var answeredLocalPathRequestTags: [Data: Date] = [:]
@@ -408,6 +409,7 @@ public final class SidebandStore {
         managedInfrastructureURL = UserDefaults.standard.string(forKey: "managedInfrastructureURL") ?? ""
         managedInfrastructurePublicKey = UserDefaults.standard.string(forKey: "managedInfrastructurePublicKey") ?? ""
         remoteWakeEnabled = UserDefaults.standard.bool(forKey: "remoteWakeEnabled")
+        remoteWakeLastRegisteredAt = UserDefaults.standard.object(forKey: "sidebandAPNsLastRegisteredAt") as? Date
         autoInterfaceEnabled = UserDefaults.standard.bool(forKey: "reticulumAutoInterface")
         #if os(macOS)
         transportInstanceEnabled = UserDefaults.standard.bool(forKey: "reticulumTransportInstanceEnabled")
@@ -1977,6 +1979,7 @@ public final class SidebandStore {
         await syncPropagationNow()
         if networkState == .ready { await flushQueuedMessages() }
         if iCloudSyncEnabled { await syncICloudNow() }
+        if remoteWakeEnabled { await registerRemoteWake() }
     }
 
     public func applicationDidBecomeInactive() {
@@ -2327,6 +2330,28 @@ public final class SidebandStore {
         if enabled { Task { await registerRemoteWake() } }
     }
 
+    public func updateRemoteWakeDeviceToken(_ token: String) async {
+        let normalized = token.lowercased()
+        guard Data(hexadecimal: normalized)?.count == 32 else {
+            remoteWakeStatus = "APNs token invalid"
+            return
+        }
+        let defaults = UserDefaults.standard
+        let changed = defaults.string(forKey: "sidebandAPNsDeviceToken") != normalized
+        defaults.set(normalized, forKey: "sidebandAPNsDeviceToken")
+        defaults.removeObject(forKey: "sidebandAPNsRegistrationError")
+        if remoteWakeEnabled {
+            remoteWakeStatus = changed ? "Token updated" : remoteWakeStatus
+            await registerRemoteWake(force: changed)
+        }
+    }
+
+    public func remoteWakeRegistrationFailed(_ message: String) {
+        let reason = String(message.prefix(240))
+        UserDefaults.standard.set(reason, forKey: "sidebandAPNsRegistrationError")
+        remoteWakeStatus = "APNs registration unavailable"
+    }
+
     public func refreshManagedInfrastructure(force: Bool = true, surfaceErrors: Bool = true) async {
         guard managedInfrastructureEnabled else {
             managedInfrastructureStatus = "Disabled"
@@ -2367,7 +2392,7 @@ public final class SidebandStore {
         }
     }
 
-    public func registerRemoteWake() async {
+    public func registerRemoteWake(force: Bool = false) async {
         guard remoteWakeEnabled else {
             remoteWakeStatus = "Disabled"
             return
@@ -2380,13 +2405,25 @@ public final class SidebandStore {
             remoteWakeStatus = "Waiting for APNs token"
             return
         }
-        remoteWakeStatus = "Registering…"
         do {
             #if DEBUG
             let environment = "sandbox"
             #else
             let environment = "production"
             #endif
+            let registrationKey = ReticulumIdentity.fullHash(
+                Data("\(endpoint.absoluteString)|\(environment)|\(token)|\(localDeliveryHash)".utf8)
+            ).hex
+            let defaults = UserDefaults.standard
+            if !force,
+               defaults.string(forKey: "sidebandAPNsRegistrationKey") == registrationKey,
+               let lastRegistered = defaults.object(forKey: "sidebandAPNsLastRegisteredAt") as? Date,
+               Date().timeIntervalSince(lastRegistered) < 24 * 60 * 60 {
+                remoteWakeLastRegisteredAt = lastRegistered
+                remoteWakeStatus = "Registered securely"
+                return
+            }
+            remoteWakeStatus = "Registering…"
             let registration = try RemoteWakeRegistration.create(
                 deviceToken: token,
                 apnsEnvironment: environment,
@@ -2394,6 +2431,11 @@ public final class SidebandStore {
                 identity: messagingIdentity
             )
             try await remoteWakeRegistrationClient.register(registration, at: endpoint)
+            let registeredAt = Date.now
+            defaults.set(registrationKey, forKey: "sidebandAPNsRegistrationKey")
+            defaults.set(registeredAt, forKey: "sidebandAPNsLastRegisteredAt")
+            defaults.removeObject(forKey: "sidebandAPNsRegistrationError")
+            remoteWakeLastRegisteredAt = registeredAt
             remoteWakeStatus = "Registered securely"
         } catch {
             remoteWakeStatus = "Registration failed"

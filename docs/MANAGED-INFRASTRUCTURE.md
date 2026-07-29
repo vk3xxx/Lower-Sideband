@@ -78,6 +78,13 @@ destination, use collapse IDs and silent notifications, rate-limit wake
 requests, and delete stale APNs tokens. APNs only wakes the client; encrypted
 messages remain exclusively on Reticulum/LXMF.
 
+Lower Sideband automatically re-registers rotated APNs tokens, binds every
+registration destination to the signing Reticulum identity, refreshes a valid
+registration at most once per day, coalesces simultaneous wakes, and treats a
+cold-launch deferred wake as accepted instead of incorrectly reporting a
+background failure to iOS. Only silent pushes with `aps.content-available = 1`
+start the bounded propagation/cloud/outbox synchronisation.
+
 ## Deployment checklist
 
 1. Deploy at least two independently hosted Reticulum TCP/Backbone gateways,

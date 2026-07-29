@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.65
+
+- Automatically propagated APNs token rotation to the signed managed wake
+  service and added bounded daily registration refresh.
+- Bound wake registrations cryptographically to the exact LXMF delivery
+  destination derived from the signing Reticulum identity.
+- Coalesced cold-launch silent wakes without reporting safe startup deferral as
+  an iOS background failure, and ignored non-silent notification payloads.
+
 ## 1.3.64
 
 - Added a fail-closed public-Internet delivery certification gate requiring

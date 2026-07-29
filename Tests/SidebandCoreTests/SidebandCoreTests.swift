@@ -4465,10 +4465,12 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
 
 @Test func remoteWakeRegistrationIsSignedAndContainsNoMessageContent() throws {
     let identity = ReticulumIdentity()
+    let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+    let deliveryDestination = ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex
     let registration = try RemoteWakeRegistration.create(
         deviceToken: String(repeating: "01", count: 32),
         apnsEnvironment: "sandbox",
-        deliveryDestination: String(repeating: "cd", count: 16),
+        deliveryDestination: deliveryDestination,
         identity: identity,
         issuedAt: Date(timeIntervalSince1970: 1_800_000_000),
         nonce: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
@@ -4479,6 +4481,18 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(!text.localizedCaseInsensitiveContains("message"))
     #expect(!text.localizedCaseInsensitiveContains("attachment"))
     #expect(!text.localizedCaseInsensitiveContains("private"))
+
+    let forgedDestination = RemoteWakeRegistration(
+        schemaVersion: registration.schemaVersion,
+        deviceToken: registration.deviceToken,
+        apnsEnvironment: registration.apnsEnvironment,
+        deliveryDestination: String(repeating: "cd", count: 16),
+        identityPublicKey: registration.identityPublicKey,
+        issuedAt: registration.issuedAt,
+        nonce: registration.nonce,
+        signature: registration.signature
+    )
+    #expect(!forgedDestination.validates())
 }
 
 @MainActor @Test func runtimeHealthTracksLifecycleAndWakeReliability() {

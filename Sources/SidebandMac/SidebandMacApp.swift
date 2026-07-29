@@ -52,7 +52,9 @@ struct SidebandApp: App {
                     await store.notifications.prepare()
                     RemoteWakeBridge.shared.install(
                         wake: { [store] in await store.performRemoteWakeSync() },
-                        memoryPressure: { [store] in store.handleMemoryPressure() }
+                        memoryPressure: { [store] in store.handleMemoryPressure() },
+                        deviceToken: { [store] token in await store.updateRemoteWakeDeviceToken(token) },
+                        registrationFailure: { [store] message in store.remoteWakeRegistrationFailed(message) }
                     )
                     UIApplication.shared.registerForRemoteNotifications()
                 }
@@ -382,14 +384,33 @@ private final class RemoteWakeBridge {
     static let shared = RemoteWakeBridge()
     private var handler: (@MainActor () async -> Bool)?
     private var memoryPressureHandler: (@MainActor () -> Void)?
+    private var deviceTokenHandler: (@MainActor (String) async -> Void)?
+    private var registrationFailureHandler: (@MainActor (String) -> Void)?
     private var hasDeferredWake = false
+    private var pendingDeviceToken: String?
+    private var pendingRegistrationFailure: String?
 
-    func install(wake handler: @escaping @MainActor () async -> Bool, memoryPressure: @escaping @MainActor () -> Void) {
+    func install(
+        wake handler: @escaping @MainActor () async -> Bool,
+        memoryPressure: @escaping @MainActor () -> Void,
+        deviceToken: @escaping @MainActor (String) async -> Void,
+        registrationFailure: @escaping @MainActor (String) -> Void
+    ) {
         self.handler = handler
         memoryPressureHandler = memoryPressure
+        deviceTokenHandler = deviceToken
+        registrationFailureHandler = registrationFailure
         if hasDeferredWake {
             hasDeferredWake = false
             Task { _ = await handler() }
+        }
+        if let pendingDeviceToken {
+            self.pendingDeviceToken = nil
+            Task { await deviceToken(pendingDeviceToken) }
+        }
+        if let pendingRegistrationFailure {
+            self.pendingRegistrationFailure = nil
+            registrationFailure(pendingRegistrationFailure)
         }
     }
     func perform() async -> Bool {
@@ -404,6 +425,18 @@ private final class RemoteWakeBridge {
         return await handler()
     }
     func handleMemoryPressure() { memoryPressureHandler?() }
+    func receivedDeviceToken(_ token: String) {
+        pendingDeviceToken = token
+        guard let deviceTokenHandler else { return }
+        pendingDeviceToken = nil
+        Task { await deviceTokenHandler(token) }
+    }
+    func registrationFailed(_ message: String) {
+        pendingRegistrationFailure = message
+        guard let registrationFailureHandler else { return }
+        pendingRegistrationFailure = nil
+        registrationFailureHandler(message)
+    }
 }
 
 @MainActor
@@ -417,12 +450,11 @@ final class SidebandAppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        UserDefaults.standard.set(deviceToken.map { String(format: "%02x", $0) }.joined(), forKey: "sidebandAPNsDeviceToken")
-        UserDefaults.standard.removeObject(forKey: "sidebandAPNsRegistrationError")
+        RemoteWakeBridge.shared.receivedDeviceToken(deviceToken.map { String(format: "%02x", $0) }.joined())
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        UserDefaults.standard.set(error.localizedDescription, forKey: "sidebandAPNsRegistrationError")
+        RemoteWakeBridge.shared.registrationFailed(error.localizedDescription)
     }
 
     func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
@@ -434,9 +466,17 @@ final class SidebandAppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+        guard let aps = userInfo["aps"] as? [String: Any],
+              (aps["content-available"] as? NSNumber)?.intValue == 1 else {
+            completionHandler(.noData)
+            return
+        }
         Task { @MainActor in
             let success = await RemoteWakeBridge.shared.perform()
-            completionHandler(success ? .newData : .failed)
+            // A cold-launch wake can be safely deferred until SwiftUI installs
+            // the store bridge. Reporting `.failed` would unnecessarily train
+            // iOS to reduce future background delivery opportunities.
+            completionHandler(success ? .newData : .noData)
         }
     }
 }

@@ -610,9 +610,12 @@ struct SidebandSettingsView: View {
                     tint: store.remoteWakeStatus == "Registered securely" ? .green : .secondary
                 )
                 Button("Register This Device") {
-                    Task { await store.registerRemoteWake() }
+                    Task { await store.registerRemoteWake(force: true) }
                 }
                 .disabled(!store.remoteWakeEnabled)
+                if let registered = store.remoteWakeLastRegisteredAt {
+                    LabeledContent("Last registered", value: registered.formatted(date: .abbreviated, time: .shortened))
+                }
             } header: {
                 Text("Background delivery")
             } footer: {

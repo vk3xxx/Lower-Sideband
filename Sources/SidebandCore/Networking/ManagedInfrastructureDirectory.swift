@@ -271,6 +271,13 @@ public struct RemoteWakeRegistration: Codable, Equatable, Sendable {
         issuedAt: Date = .now,
         nonce: UUID = UUID()
     ) throws -> Self {
+        guard Data(strictHex: deviceToken)?.count == 32,
+              ["sandbox", "production"].contains(apnsEnvironment),
+              DestinationHash.isValid(deliveryDestination),
+              deliveryDestination.lowercased() == deliveryDestinationHash(for: identity),
+              issuedAt.timeIntervalSince1970 > 0 else {
+            throw RegistrationError.invalidRegistration
+        }
         let payload = Payload(
             schemaVersion: 1,
             deviceToken: deviceToken.lowercased(),
@@ -296,8 +303,27 @@ public struct RemoteWakeRegistration: Codable, Equatable, Sendable {
     public func validates() -> Bool {
         guard let publicKey = Data(strictHex: identityPublicKey),
               let signatureData = Data(strictHex: signature),
-              let identity = try? ReticulumIdentity(publicKey: publicKey) else { return false }
+              let identity = try? ReticulumIdentity(publicKey: publicKey),
+              schemaVersion == 1,
+              Data(strictHex: deviceToken)?.count == 32,
+              ["sandbox", "production"].contains(apnsEnvironment),
+              DestinationHash.isValid(deliveryDestination),
+              deliveryDestination == Self.deliveryDestinationHash(for: identity),
+              issuedAt.timeIntervalSince1970 > 0,
+              UUID(uuidString: nonce) != nil else { return false }
         return identity.validate(signature: signatureData, message: (try? Self.encoder.encode(payload)) ?? Data())
+    }
+
+    public enum RegistrationError: LocalizedError {
+        case invalidRegistration
+        public var errorDescription: String? {
+            "The APNs token, environment, or LXMF delivery identity is invalid."
+        }
+    }
+
+    private static func deliveryDestinationHash(for identity: ReticulumIdentity) -> String {
+        let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+        return ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex
     }
 
     fileprivate var payload: Payload {
