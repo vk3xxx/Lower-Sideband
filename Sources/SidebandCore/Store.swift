@@ -477,6 +477,7 @@ public final class SidebandStore {
             return await self.performBackgroundRefresh()
         }
         runtimeHealth.start()
+        runtimeHealth.recordForeground()
         Task { try? await resourceStagingStore.removeStale(olderThan: Date(timeIntervalSinceNow: -86_400)) }
         Task { [weak self] in _ = await self?.cleanOrphanedAttachments() }
         syncUnreadBadge()
@@ -489,6 +490,11 @@ public final class SidebandStore {
     /// Drops rebuildable indexes and transcript data after an operating-system
     /// memory warning. Encrypted durable messages and attachments are retained.
     public func handleMemoryPressure() {
+        releaseRebuildableCaches()
+        runtimeHealth.recordMemoryPressure()
+    }
+
+    private func releaseRebuildableCaches() {
         transcriptCache.removeAll(keepingCapacity: false)
         messagesByConversation.removeAll(keepingCapacity: false)
         latestMessageByConversation.removeAll(keepingCapacity: false)
@@ -496,7 +502,6 @@ public final class SidebandStore {
         latestMessageDateByConversation.removeAll(keepingCapacity: false)
         reactionCountsByConversationAndTarget.removeAll(keepingCapacity: false)
         messageIndexesAreDirty = true
-        runtimeHealth.recordMemoryPressure()
     }
 
     public var localVoiceHash: String { LXSTVoice.destinationHash(for: messagingIdentity).hex }
@@ -1955,6 +1960,7 @@ public final class SidebandStore {
     public func applicationDidBecomeActive() async {
         await pluginRegistry.startEnabledServices()
         isApplicationActive = true
+        runtimeHealth.recordForeground()
         let recoveredConversations = recoverStaleSentMessages()
         for conversationID in recoveredConversations {
             await attemptDelivery(for: conversationID)
@@ -1978,7 +1984,9 @@ public final class SidebandStore {
 
     public func applicationDidEnterBackground() {
         isApplicationActive = false
+        runtimeHealth.recordBackground()
         flushDeferredSave()
+        releaseRebuildableCaches()
         stopPeriodicPropagationSync()
         backgroundRefresh.schedule(earliest: nextScheduledMessageDate)
     }
@@ -2031,12 +2039,17 @@ public final class SidebandStore {
 
     private func runWakeSync(networkTimeout: TimeInterval) async -> Bool {
         let startedAt = Date.now
+        var wakeSucceeded = false
         defer {
-            let succeeded = !Task.isCancelled && networkState == .ready
+            let succeeded = wakeSucceeded && !Task.isCancelled
             lastBackgroundRefreshAt = startedAt
             lastBackgroundRefreshSucceeded = succeeded
             UserDefaults.standard.set(startedAt, forKey: "sidebandLastBackgroundRefreshAt")
             UserDefaults.standard.set(succeeded, forKey: "sidebandLastBackgroundRefreshSucceeded")
+            runtimeHealth.recordBackgroundWake(
+                succeeded: succeeded,
+                duration: Date.now.timeIntervalSince(startedAt)
+            )
             backgroundRefresh.schedule()
         }
         if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
@@ -2070,6 +2083,7 @@ public final class SidebandStore {
             await propagateQueued(for: conversation.id)
         }
         if iCloudSyncEnabled { await syncICloudNow() }
+        wakeSucceeded = true
         return true
     }
 
@@ -2216,7 +2230,8 @@ public final class SidebandStore {
         guard propagationSyncTask == nil else { return }
         propagationSyncTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
+                let interval = self?.runtimeHealth.shouldReduceBackgroundWork == true ? 180 : 60
+                try? await Task.sleep(for: .seconds(interval))
                 guard !Task.isCancelled else { return }
                 let recoveredConversations = self?.recoverStaleSentMessages() ?? []
                 for conversationID in recoveredConversations {
@@ -3384,6 +3399,7 @@ public final class SidebandStore {
     }
 
     private func reachabilityChanged(_ status: NetworkReachability.Status) {
+        runtimeHealth.recordReachabilityTransition()
         guard autoConnectEnabled else { return }
         if status == .available, tcpNetworkState != .ready, tcpNetworkState != .connecting {
             reconnectTask?.cancel()

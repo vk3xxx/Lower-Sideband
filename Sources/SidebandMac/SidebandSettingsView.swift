@@ -330,6 +330,22 @@ struct SidebandSettingsView: View {
                     tint: store.rnodeManager.hasReadyInterface ? .green : .secondary
                 )
                 LabeledContent("Last background refresh", value: backgroundRefreshSummary)
+                LabeledContent(
+                    "Background wake success",
+                    value: store.runtimeHealth.backgroundWakeSuccessRate?.formatted(.percent.precision(.fractionLength(1))) ?? "No wake attempts"
+                )
+                LabeledContent("Memory warnings", value: store.runtimeHealth.memoryPressureEvents.formatted())
+                LabeledContent("Network changes", value: store.runtimeHealth.reachabilityTransitions.formatted())
+                LabeledContent(
+                    "Foreground runtime",
+                    value: "\(Int(store.runtimeHealth.currentForegroundSeconds / 3_600)) hr \(Int(store.runtimeHealth.currentForegroundSeconds / 60) % 60) min"
+                )
+                SettingsStateRow(
+                    title: "Workload",
+                    value: store.runtimeHealth.shouldReduceBackgroundWork ? "Energy-conserving" : "Normal",
+                    icon: store.runtimeHealth.shouldReduceBackgroundWork ? "leaf.fill" : "gauge.with.dots.needle.50percent",
+                    tint: store.runtimeHealth.shouldReduceBackgroundWork ? .green : .secondary
+                )
             }
         }
     }

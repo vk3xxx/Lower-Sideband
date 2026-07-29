@@ -79,6 +79,7 @@ Scripts/test-rnode.sh protocol
 - [Testing and interoperability](docs/TESTING.md)
 - [Managed connectivity infrastructure](docs/MANAGED-INFRASTRUCTURE.md)
 - [Accessibility and localisation](docs/ACCESSIBILITY-AND-LOCALISATION.md)
+- [Runtime and lifecycle hardening](docs/RUNTIME-HARDENING.md)
 - [Porting status and known gaps](PORTING.md)
 - [Native feature parity](docs/FEATURE-PARITY.md)
 

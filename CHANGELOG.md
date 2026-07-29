@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.62
+
+- Added persistent lifecycle, network-transition, memory-pressure and
+  background-wake reliability metrics.
+- Released rebuildable caches on background transitions without discarding
+  encrypted durable data.
+- Added energy-aware periodic maintenance under Low Power Mode and serious
+  thermal pressure while preserving explicit and queued delivery.
+- Surfaced operational health in the shared settings experience.
+
 ## 1.3.61
 
 - Added a shared string catalog and localisation workflow for macOS and iOS.

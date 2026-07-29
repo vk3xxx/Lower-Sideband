@@ -4422,6 +4422,26 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(!text.localizedCaseInsensitiveContains("private"))
 }
 
+@MainActor @Test func runtimeHealthTracksLifecycleAndWakeReliability() {
+    let health = SidebandRuntimeHealth()
+    let foregroundBaseline = health.foregroundTransitions
+    let backgroundBaseline = health.backgroundTransitions
+    let reachabilityBaseline = health.reachabilityTransitions
+    let wakeBaseline = health.backgroundWakeAttempts
+    let successBaseline = health.backgroundWakeSuccesses
+    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    health.recordForeground(at: start)
+    health.recordReachabilityTransition(at: start.addingTimeInterval(2))
+    health.recordBackground(at: start.addingTimeInterval(10))
+    health.recordBackgroundWake(succeeded: true, duration: 1.25)
+    #expect(health.foregroundTransitions == foregroundBaseline + 1)
+    #expect(health.backgroundTransitions == backgroundBaseline + 1)
+    #expect(health.reachabilityTransitions == reachabilityBaseline + 1)
+    #expect(health.backgroundWakeAttempts == wakeBaseline + 1)
+    #expect(health.backgroundWakeSuccesses == successBaseline + 1)
+    #expect(health.lastBackgroundWakeDuration == 1.25)
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }
