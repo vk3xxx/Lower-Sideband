@@ -43,24 +43,22 @@ MeshChatX extension and the Reticulum wire protocol differ.
 | Shared Instance | Uses native TCP/HDLC connection to the local instance |
 | UDP | Native client present; listener/settings breadth remains |
 | RNode BLE/TCP/serial | Native implementation present |
-| RNodeMulti | Gap: virtual-port selection and per-port configuration |
+| RNodeMulti | Complete in ReticulumKit: virtual-port selection, independent per-port configuration/state, flow control and simulator coverage. Physical multi-radio hardware acceptance is still required. |
 | Serial, KISS, AX.25 KISS | Native macOS core present; advanced settings breadth remains |
 | Pipe | Native macOS core present |
 | WebSocket client | Added in this audit |
 | WebSocket server | Gap |
 | HTTP tunnel client | Added in this audit |
 | HTTP tunnel server | Gap |
-| I2P | Gap: SAM strings exist but there is no complete session/stream lifecycle |
-| Backbone connector/listener | Gap: ordinary TCP must not be labelled Backbone without transport-identity semantics |
+| I2P | Complete in ReticulumKit: SAM v3 session ownership, STREAM CONNECT/ACCEPT, HDLC transport, timeout and reconnect lifecycle. External-router acceptance remains required. |
+| Backbone connector/listener | Complete in ReticulumKit: reference-compatible TCP/HDLC connector, spawned peer listener semantics and signed discovery transport-identity binding. |
 | Weave | Gap: codec exists but no complete switch/endpoint lifecycle |
 
 ## Prioritised remaining work
 
-1. Complete I2P SAM session, connect/accept and reconnect lifecycle.
-2. Implement RNodeMulti virtual-port selection, per-port state and simulator
-   coverage.
-3. Implement Backbone transport identity and listener semantics from Reticulum
-   1.4.2.
+1. Run physical multi-radio RNodeMulti acceptance on supported hardware.
+2. Run external I2P-router interoperability acceptance.
+3. Continue Weave runtime compatibility work.
 4. Add WebSocket and HTTP server modes on macOS.
 5. Add a single Apple-style interface editor that exposes only options valid
    for each transport and performs port-conflict checks before saving.

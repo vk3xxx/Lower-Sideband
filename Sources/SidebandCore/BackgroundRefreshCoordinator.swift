@@ -1,3 +1,4 @@
+import ReticulumKit
 import Foundation
 #if os(iOS)
 import BackgroundTasks

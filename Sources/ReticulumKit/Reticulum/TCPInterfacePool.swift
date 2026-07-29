@@ -11,6 +11,8 @@ public actor ReticulumTCPInterfacePool {
     public struct Endpoint: Identifiable, @unchecked Sendable {
         public enum Transport: @unchecked Sendable {
             case tcp(NWEndpoint)
+            case backbone(NWEndpoint, ReticulumBackboneTransportIdentity?)
+            case i2p(ReticulumI2PConfiguration)
             case webSocket(URL)
             case http(URL, pollInterval: TimeInterval, mtu: Int)
         }
@@ -46,6 +48,33 @@ public actor ReticulumTCPInterfacePool {
                 self.host = nil
                 self.port = nil
             }
+            self.isBootstrap = isBootstrap
+            self.interfaceMode = interfaceMode
+            self.ifac = ifac
+        }
+
+        public init(id: String, name: String, backboneEndpoint: NWEndpoint, transportIdentity: ReticulumBackboneTransportIdentity? = nil, isBootstrap: Bool = false, interfaceMode: ReticulumInterfaceMode = .full, ifac: ReticulumIFAC? = nil) {
+            self.id = id
+            self.name = name
+            transport = .backbone(backboneEndpoint, transportIdentity)
+            if case let .hostPort(host, port) = backboneEndpoint {
+                self.host = "\(host)"
+                self.port = port.rawValue
+            } else {
+                self.host = nil
+                self.port = nil
+            }
+            self.isBootstrap = isBootstrap
+            self.interfaceMode = interfaceMode
+            self.ifac = ifac
+        }
+
+        public init(id: String, name: String, i2pConfiguration: ReticulumI2PConfiguration, isBootstrap: Bool = false, interfaceMode: ReticulumInterfaceMode = .full, ifac: ReticulumIFAC? = nil) {
+            self.id = id
+            self.name = name
+            transport = .i2p(i2pConfiguration)
+            host = i2pConfiguration.samHost
+            port = i2pConfiguration.samPort
             self.isBootstrap = isBootstrap
             self.interfaceMode = interfaceMode
             self.ifac = ifac
@@ -99,12 +128,16 @@ public actor ReticulumTCPInterfacePool {
 
     private enum InterfaceDriver {
         case tcp(ReticulumTCPInterface)
+        case backbone(ReticulumBackboneClient)
+        case i2p(ReticulumI2PInterface)
         case webSocket(ReticulumWebSocketInterface)
         case http(ReticulumHTTPInterface)
 
         func start() async {
             switch self {
             case let .tcp(interface): await interface.start()
+            case let .backbone(interface): await interface.start()
+            case let .i2p(interface): await interface.start()
             case let .webSocket(interface): await interface.start()
             case let .http(interface): await interface.start()
             }
@@ -113,6 +146,8 @@ public actor ReticulumTCPInterfacePool {
         func stop() async {
             switch self {
             case let .tcp(interface): await interface.stop()
+            case let .backbone(interface): await interface.stop()
+            case let .i2p(interface): await interface.stop()
             case let .webSocket(interface): await interface.stop()
             case let .http(interface): await interface.stop()
             }
@@ -121,6 +156,10 @@ public actor ReticulumTCPInterfacePool {
         func send(rawPacket: Data) async throws {
             switch self {
             case let .tcp(interface):
+                try await interface.send(rawPacket: rawPacket)
+            case let .backbone(interface):
+                try await interface.send(rawPacket: rawPacket)
+            case let .i2p(interface):
                 try await interface.send(rawPacket: rawPacket)
             case let .webSocket(interface):
                 try await interface.send(rawPacket: rawPacket)
@@ -253,6 +292,25 @@ public actor ReticulumTCPInterfacePool {
         switch endpoint.transport {
         case let .tcp(networkEndpoint):
             interface = .tcp(ReticulumTCPInterface(endpoint: networkEndpoint, ifac: endpoint.ifac) { [weak self] packet in
+                await self?.received(packet, on: endpoint.id)
+            } stateHandler: { [weak self] state in
+                await self?.stateChanged(state, on: endpoint.id)
+            })
+        case let .backbone(networkEndpoint, transportIdentity):
+            interface = .backbone(ReticulumBackboneClient(
+                endpoint: networkEndpoint,
+                transportIdentity: transportIdentity,
+                ifac: endpoint.ifac
+            ) { [weak self] packet in
+                await self?.received(packet, on: endpoint.id)
+            } stateHandler: { [weak self] state in
+                await self?.stateChanged(state, on: endpoint.id)
+            })
+        case let .i2p(configuration):
+            interface = .i2p(ReticulumI2PInterface(
+                configuration: configuration,
+                ifac: endpoint.ifac
+            ) { [weak self] packet in
                 await self?.received(packet, on: endpoint.id)
             } stateHandler: { [weak self] state in
                 await self?.stateChanged(state, on: endpoint.id)

@@ -1,3 +1,4 @@
+import ReticulumKit
 import Foundation
 
 public enum SidebandPluginPermission: String, Codable, Hashable, Sendable {

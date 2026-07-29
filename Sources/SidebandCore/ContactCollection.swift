@@ -1,3 +1,4 @@
+import ReticulumKit
 import Foundation
 
 public struct SidebandContactCollection: Codable, Sendable {

@@ -3,14 +3,14 @@ import Foundation
 import Security
 #endif
 
-enum SecureIdentityStore {
-    enum StoreError: Error, Equatable {
+public enum SecureIdentityStore {
+    public enum StoreError: Error, Equatable {
         case readFailed(Int32)
         case writeFailed(Int32)
         case invalidStoredMaterial
     }
 
-    static func loadOrCreate(account: String, legacyDefaultsKey: String, synchronizable: Bool = false) -> Result<Data, StoreError> {
+    public static func loadOrCreate(account: String, legacyDefaultsKey: String, synchronizable: Bool = false) -> Result<Data, StoreError> {
 #if os(iOS) || os(macOS)
         let result = resolveKeychainRead(readKeychain(account: account, synchronizable: synchronizable)) {
             let localKeychainMaterial: Data?
@@ -48,7 +48,7 @@ enum SecureIdentityStore {
 #endif
     }
 
-    static func replace(_ material: Data, account: String, synchronizable: Bool = false) -> Result<Void, StoreError> {
+    public static func replace(_ material: Data, account: String, synchronizable: Bool = false) -> Result<Void, StoreError> {
         guard material.count == 64 else { return .failure(.invalidStoredMaterial) }
 #if os(iOS) || os(macOS)
         return writeKeychain(material, account: account, synchronizable: synchronizable)

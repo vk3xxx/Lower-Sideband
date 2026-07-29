@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.55 (93)
+
+- Consolidated the native Reticulum implementation into `ReticulumKit` as the
+  sole packet, link, resource and interface transport layer.
+- Added a complete I2P SAM v3 session plus STREAM CONNECT/ACCEPT lifecycle with
+  HDLC framing, timeouts and pool-managed reconnects.
+- Added RNodeMulti virtual-port selection, independent per-port configuration,
+  state, flow control and simulator/protocol coverage.
+- Added reference-compatible Backbone connector/listener behavior with
+  independent peer sockets and authenticated discovery transport identities.
+
 ## 1.3.54 (92) - 2026-07-29
 
 - Expanded searched multi-hop destinations into a complete hop-position view:

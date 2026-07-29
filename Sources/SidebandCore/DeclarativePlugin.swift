@@ -1,3 +1,4 @@
+import ReticulumKit
 import Foundation
 
 /// A data-only plugin format. It cannot load code, launch processes, access files,

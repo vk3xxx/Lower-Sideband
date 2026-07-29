@@ -23,6 +23,22 @@ public struct ReticulumTransportSnapshot: Equatable, Sendable {
     public let duplicatePackets: Int
     public let ignoredPackets: Int
     public let lastForwardedAt: Date?
+
+    public init(
+        enabled: Bool,
+        knownRoutes: Int,
+        forwardedPackets: Int,
+        duplicatePackets: Int,
+        ignoredPackets: Int,
+        lastForwardedAt: Date?
+    ) {
+        self.enabled = enabled
+        self.knownRoutes = knownRoutes
+        self.forwardedPackets = forwardedPackets
+        self.duplicatePackets = duplicatePackets
+        self.ignoredPackets = ignoredPackets
+        self.lastForwardedAt = lastForwardedAt
+    }
 }
 
 /// A compact native Reticulum transport plane for bridging interfaces owned by

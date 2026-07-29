@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import CryptoKit
+import Network
 import ReticulumKit
 
 public enum NetworkConnectionMode: String, CaseIterable, Sendable {
@@ -1811,6 +1812,17 @@ public final class SidebandStore {
             }
         }
         guard !value.isEmpty, gateway.port > 0 else { return nil }
+        if let rawIdentity = gateway.backboneTransportIdentity,
+           let identity = try? ReticulumBackboneTransportIdentity(hash: rawIdentity),
+           let port = NWEndpoint.Port(rawValue: gateway.port) {
+            return ReticulumTCPInterfacePool.Endpoint(
+                id: gateway.id,
+                name: gateway.name,
+                backboneEndpoint: .hostPort(host: NWEndpoint.Host(value), port: port),
+                transportIdentity: identity,
+                isBootstrap: isBootstrap
+            )
+        }
         return ReticulumTCPInterfacePool.Endpoint(
             id: gateway.id,
             name: gateway.name,

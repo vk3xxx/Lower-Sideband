@@ -1,3 +1,4 @@
+import ReticulumKit
 import Foundation
 import Network
 import Observation
@@ -110,11 +111,13 @@ public struct InternetGateway: Identifiable, Hashable, Sendable {
     public let name: String
     public let host: String
     public let port: UInt16
+    public let backboneTransportIdentity: Data?
 
-    public init(name: String, host: String, port: UInt16) {
+    public init(name: String, host: String, port: UInt16, backboneTransportIdentity: Data? = nil) {
         self.name = name
         self.host = host
         self.port = port
+        self.backboneTransportIdentity = backboneTransportIdentity
     }
 }
 

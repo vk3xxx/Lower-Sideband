@@ -10,10 +10,10 @@ private func bz2BufferDecompress(
     _ verbosity: Int32
 ) -> Int32
 
-enum BZip2 {
+public enum BZip2 {
     private static let success: Int32 = 0
 
-    static func decompress(_ data: Data, maximumOutputBytes: Int) throws -> Data {
+    public static func decompress(_ data: Data, maximumOutputBytes: Int) throws -> Data {
         guard !data.isEmpty,
               maximumOutputBytes > 0,
               maximumOutputBytes <= ReticulumResourceLimits.maximumAttachmentBytes + 65_536,

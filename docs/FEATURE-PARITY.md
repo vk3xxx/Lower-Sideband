@@ -39,11 +39,11 @@ The detailed upstream comparison and exact pinned versions are in
 | RNode BLE | macOS/iOS | Yes via ReticulumKit | Protocol conformance; physical device pending | Implemented, not hardware-certified |
 | RNode TCP/Wi-Fi | macOS/iOS | Yes via ReticulumKit | Official vectors, TCP lifecycle, 10k fuzz, 2.5k flow-control soak | Automated production gate complete |
 | RNode serial | macOS | Yes via ReticulumKit | Protocol conformance; physical device pending | Implemented, not hardware-certified |
-| RNodeMulti virtual ports | — | Profile only | Reference protocol audited | Not implemented |
+| RNodeMulti virtual ports | `RNodeMultiInterface` | Native virtual-port selection, per-port radio configuration/state, flow control and shared BLE/TCP/serial transport | Exact framing, all 12 virtual ports and simulator coverage | Implemented in ReticulumKit; physical multi-radio device acceptance remains required |
 | Generic KISS / AX.25 KISS | macOS | Core API | Framing, commands and chunk tests | Complete core; advanced UI pending |
 | Pipe | macOS | Core API | Process lifecycle and HDLC tests | Complete core; settings UI pending |
-| I2P | — | SAM command model only | Command validation tests | Not implemented end-to-end |
-| Backbone connector/listener | — | Profile only | TCP transport does not implement Backbone identity semantics | Not implemented |
+| I2P | `I2PInterface` | Native SAM v3 session ownership plus STREAM CONNECT/ACCEPT lifecycle, HDLC, timeout and reconnect support | Live local SAM bridge lifecycle and bidirectional packet test | Implemented in ReticulumKit; external I2P-router acceptance remains required |
+| Backbone connector/listener | `BackboneInterface` | TCP/HDLC-compatible connector, multi-peer listener and signed discovery transport-identity binding | Live connector/listener packet test and discovery identity validation | Implemented in ReticulumKit |
 | Weave | — | Frame codec only | Bounds and frame tests | Not implemented end-to-end |
 
 ## External acceptance still required

@@ -1,9 +1,10 @@
 import Foundation
+import CryptoKit
 
 public actor ReticulumResourceStagingStore {
     private struct Transfer { let totalSegments: Int; let totalSize: Int; var received: Set<Int> = [] }
     public let directory: URL
-    private let localDataCipher = LocalDataCipher()
+    private let localDataCipher = ReticulumStagingCipher()
     private var transfers: [String: Transfer] = [:]
 
     public init(directory: URL) { self.directory = directory }
@@ -71,3 +72,37 @@ public actor ReticulumResourceStagingStore {
 }
 
 private extension Data { var hex: String { map { String(format: "%02x", $0) }.joined() } }
+
+private struct ReticulumStagingCipher: Sendable {
+    enum CipherError: Error { case keyUnavailable, invalidCiphertext }
+    private static let magic = Data("RRS1".utf8)
+    private let key: SymmetricKey?
+
+    init() {
+        switch SecureIdentityStore.loadOrCreate(
+            account: "reticulum.resource.staging",
+            legacyDefaultsKey: "reticulumResourceStagingKey"
+        ) {
+        case let .success(material):
+            key = SymmetricKey(data: SHA256.hash(
+                data: Data("ReticulumKit resource staging key v1".utf8) + material
+            ))
+        case .failure:
+            key = nil
+        }
+    }
+
+    func seal(_ plaintext: Data, context: String) throws -> Data {
+        guard let key else { throw CipherError.keyUnavailable }
+        let box = try AES.GCM.seal(plaintext, using: key, authenticating: Data(context.utf8))
+        guard let combined = box.combined else { throw CipherError.invalidCiphertext }
+        return Self.magic + combined
+    }
+
+    func open(_ ciphertext: Data, context: String) throws -> Data {
+        guard let key else { throw CipherError.keyUnavailable }
+        guard ciphertext.starts(with: Self.magic) else { throw CipherError.invalidCiphertext }
+        let box = try AES.GCM.SealedBox(combined: ciphertext.dropFirst(Self.magic.count))
+        return try AES.GCM.open(box, using: key, authenticating: Data(context.utf8))
+    }
+}

@@ -40,7 +40,8 @@ Status labels:
 | macOS Transport Instance | Validated routes, forwarding, reverse/link routes, loop suppression | Native |
 | UDP, TCP server and shared instance | Native service/interface types | Native core; settings/live matrices ongoing |
 | WebSocket and HTTP tunnel clients | Native MeshChatX-compatible transports | Native and unit tested |
-| I2P, Backbone, RNodeMulti, Weave and server extensions | Portable profiles or framing helpers | Partial; see `docs/FEATURE-PARITY.md` |
+| I2P, Backbone and RNodeMulti | Native ReticulumKit transports | Implemented with automated protocol/runtime tests; physical RNodeMulti and external I2P acceptance are tracked in `docs/FEATURE-PARITY.md` |
+| Weave and remaining server extensions | Portable profiles or framing helpers | Partial; see `docs/FEATURE-PARITY.md` |
 
 ## LXMF and Sideband workflows
 

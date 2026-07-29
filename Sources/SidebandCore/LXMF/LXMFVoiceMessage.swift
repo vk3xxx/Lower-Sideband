@@ -1,3 +1,4 @@
+import ReticulumKit
 import Foundation
 
 /// Standard LXMF FIELD_AUDIO payload: `[audio_mode, encoded_audio_bytes]`.

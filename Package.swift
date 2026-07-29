@@ -14,7 +14,11 @@ let package = Package(
     ],
     targets: [
         .binaryTarget(name: "CCodec2", path: "Vendor/Codec2.xcframework"),
-        .target(name: "ReticulumKit"),
+        .target(
+            name: "ReticulumKit",
+            dependencies: [.product(name: "Ed25519", package: "ed25519")],
+            linkerSettings: [.linkedLibrary("bz2")]
+        ),
         .target(
             name: "SidebandCore",
             dependencies: ["ReticulumKit", "CCodec2", .product(name: "Ed25519", package: "ed25519")],

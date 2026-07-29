@@ -27,9 +27,9 @@ public enum ReticulumI2PSAM {
     }
     public static func replyIsOK(_ data: Data) -> Bool {
         guard let line = String(data: data.prefix(8_192), encoding: .utf8) else { return false }
-        return line.split(whereSeparator: \.isWhitespace).contains("RESULT=OK")
+        return (try? ReticulumSAMReply(line: line).isOK) == true
     }
-    private static func validToken(_ value: String) -> Bool {
+    static func validToken(_ value: String) -> Bool {
         !value.isEmpty && value.count <= 2_048 && value.unicodeScalars.allSatisfy { !$0.properties.isWhitespace && $0.value >= 0x21 && $0.value <= 0x7e }
     }
     public enum Error: Swift.Error { case invalidValue }

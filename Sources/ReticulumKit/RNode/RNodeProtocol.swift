@@ -24,6 +24,7 @@ public enum RNodeKISS {
         case longTermAirtimeLock = 0x0C
         case promiscuous = 0x0E
         case ready = 0x0F
+        case selectInterface = 0x1F
         case receivedBytes = 0x21
         case transmittedBytes = 0x22
         case rssi = 0x23
@@ -70,6 +71,7 @@ public enum RNodeKISS {
         case configurationRead = 0x6D
         case wifiChannel = 0x6E
         case bluetoothUnpair = 0x70
+        case interfaces = 0x71
         case log = 0x80
         case time = 0x81
         case muxChain = 0x82
@@ -157,7 +159,7 @@ public struct RNodeKISSDecoder: Sendable {
     }
 }
 
-public enum RNodeTransportKind: String, Codable, CaseIterable, Sendable {
+public enum RNodeTransportKind: String, Codable, CaseIterable, Hashable, Sendable {
     case bluetoothLE
     case tcp
     case serial
@@ -173,7 +175,7 @@ public enum RNodeTransportKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
-public struct RNodeConfiguration: Codable, Equatable, Identifiable, Sendable {
+public struct RNodeConfiguration: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var name: String
     public var transport: RNodeTransportKind

@@ -78,6 +78,10 @@ Scripts/test-rnode.sh protocol
 - [Testing and interoperability](docs/TESTING.md)
 - [Porting status and known gaps](PORTING.md)
 - [Native feature parity](docs/FEATURE-PARITY.md)
+
+All Reticulum packet, link, resource and interface implementations now live in
+the standalone `ReticulumKit` module. The app and LXMF layer consume that module
+instead of carrying a second transport implementation.
 - [Pinned Sideband / MeshChatX transport audit](docs/UPSTREAM-PARITY-AUDIT-2026-07-28.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Privacy policy](PRIVACY.md)

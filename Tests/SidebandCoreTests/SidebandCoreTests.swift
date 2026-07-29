@@ -58,6 +58,57 @@ import Testing
     }
 }
 
+@Test func i2pSAMCommandsAndRepliesMatchSAMV3Lifecycle() throws {
+    let hello = String(decoding: ReticulumI2PSAM.hello(), as: UTF8.self)
+    #expect(hello == "HELLO VERSION MIN=3.1 MAX=3.3\n")
+    let session = try String(
+        decoding: ReticulumI2PSAM.createSession(id: "lower-sideband", destination: "TRANSIENT"),
+        as: UTF8.self
+    )
+    #expect(session == "SESSION CREATE STYLE=STREAM ID=lower-sideband DESTINATION=TRANSIENT\n")
+    let connect = try String(
+        decoding: ReticulumI2PSAM.connect(id: "lower-sideband", destination: "peer.b32.i2p"),
+        as: UTF8.self
+    )
+    #expect(connect == "STREAM CONNECT ID=lower-sideband DESTINATION=peer.b32.i2p SILENT=false\n")
+    let accept = try String(decoding: ReticulumI2PSAM.accept(id: "lower-sideband"), as: UTF8.self)
+    #expect(accept == "STREAM ACCEPT ID=lower-sideband SILENT=false\n")
+
+    let reply = try ReticulumSAMReply(line: "SESSION STATUS RESULT=OK DESTINATION=local.b32.i2p\n")
+    #expect(reply.isOK)
+    #expect(reply.verb == "SESSION")
+    #expect(reply.operation == "STATUS")
+    #expect(reply.parameters["DESTINATION"] == "local.b32.i2p")
+    #expect(throws: ReticulumSAMError.self) {
+        _ = try ReticulumI2PConfiguration(
+            sessionID: "contains spaces",
+            role: .accept
+        ).validated()
+    }
+}
+
+@MainActor @Test func backboneDiscoveryIdentityIsBoundWithoutChangingTCPWireSemantics() throws {
+    let hex = "0123456789abcdef0123456789abcdef"
+    let identity = try ReticulumBackboneTransportIdentity(hex: hex)
+    #expect(identity.hash.count == 16)
+    #expect(throws: ReticulumBackboneError.self) {
+        _ = try ReticulumBackboneTransportIdentity(hex: "0123")
+    }
+
+    let gateway = InternetGateway(
+        name: "Backbone",
+        host: "backbone.example",
+        port: 4242,
+        backboneTransportIdentity: identity.hash
+    )
+    let endpoint = try #require(SidebandStore.networkPoolEndpoint(for: gateway, isBootstrap: true))
+    if case let .backbone(_, boundIdentity) = endpoint.transport {
+        #expect(boundIdentity == identity)
+    } else {
+        Issue.record("Expected a Backbone endpoint")
+    }
+}
+
 @Test func reticulumInterfacePreflightFindsSharedTCPListenerPorts() {
     let tcp = ReticulumInterfaceProfile(name: "TCP", kind: .tcpServer, port: 4_242)
     let websocket = ReticulumInterfaceProfile(name: "WebSocket", kind: .webSocketServer, port: 4_242)
@@ -95,13 +146,15 @@ import Testing
         ["name": "Unsafe", "type": "TCPClientInterface", "host": "example.net/path", "port": 4242],
         ["name": "Nested", "config": ["type": "TCPClientInterface", "target_host": "nested.example", "target_port": 7822]],
         ["name": "Config text", "type": "tcp", "port": 4242, "config": "type = TCPClientInterface\ntarget_host = text.example"],
-        ["name": "Authenticated Backbone", "type": "backbone", "host": "backbone.example", "port": 4242, "transportId": "0123456789abcdef"]
+        ["name": "Authenticated Backbone", "type": "backbone", "host": "backbone.example", "port": 4242, "transportId": "0123456789abcdef0123456789abcdef"]
     ]
     let gateways = CommunityInterfaceDirectory.parseGateways(from: rows)
-    #expect(gateways.count == 3)
+    #expect(gateways.count == 4)
     #expect(gateways[0].id == "rns.example.net:4242")
     #expect(gateways[1].id == "nested.example:7822")
     #expect(gateways[2].id == "text.example:4242")
+    #expect(gateways[3].id == "backbone.example:4242")
+    #expect(gateways[3].backboneTransportIdentity?.count == 16)
 }
 
 @MainActor @Test func configuredInternetOverrideSelectsTCPWebSocketAndHTTPTransports() throws {
@@ -2934,7 +2987,7 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     let hash = Data(repeating: 0x77, count: 32)
     _ = try await store.stage(data: Data("cd".utf8), originalHash: hash, segmentIndex: 2, totalSegments: 2, totalSize: 4)
     let staged = try Data(contentsOf: root.appending(path: hash.hex).appending(path: "2.part"))
-    #expect(LocalDataCipher().isEncrypted(staged))
+    #expect(staged.starts(with: Data("RRS1".utf8)))
     #expect(!staged.contains(Data("cd".utf8)))
     _ = try await store.stage(data: Data("ab".utf8), originalHash: hash, segmentIndex: 1, totalSegments: 2, totalSize: 4)
     #expect(await store.isComplete(originalHash: hash))

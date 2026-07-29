@@ -48,7 +48,7 @@ Reticulum is delay tolerant. Offline destinations, expired paths, radio duty-cyc
 | Pipe | Yes | No | External packet process |
 | Transport Instance | Yes | No | Forward routes between active Mac interfaces |
 
-I2P, Backbone identity semantics, RNodeMulti virtual ports, Weave runtime,
+Physical RNodeMulti hardware acceptance, external I2P-router acceptance, Weave runtime,
 WebSocket server and HTTP tunnel server are tracked gaps, not silently mapped
 to ordinary TCP.
 

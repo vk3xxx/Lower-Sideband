@@ -1,3 +1,4 @@
+import ReticulumKit
 import Foundation
 
 /// Reads the public community-interface directory used by MeshChatX.
@@ -107,12 +108,16 @@ public actor CommunityInterfaceDirectory {
             let normalizedType = type.lowercased()
             let isBackbone = normalizedType.contains("backbone") || configText.localizedCaseInsensitiveContains("BackboneInterface")
             guard normalizedType.contains("tcp") || isBackbone else { continue }
-            // A Backbone entry with a transport identity is not ordinary TCP.
-            // Ignore it until native Backbone authentication is implemented.
             let transportIdentity = string(row["transportId"])
                 ?? string(config["transport_identity"])
                 ?? configValue("transport_identity", in: configText)
-            if isBackbone, transportIdentity?.isEmpty == false { continue }
+            let backboneIdentity: Data?
+            if isBackbone, let transportIdentity, !transportIdentity.isEmpty {
+                guard let identity = try? ReticulumBackboneTransportIdentity(hex: transportIdentity) else { continue }
+                backboneIdentity = identity.hash
+            } else {
+                backboneIdentity = nil
+            }
             let host = (
                 string(row["host"])
                 ?? string(row["address"])
@@ -140,7 +145,8 @@ public actor CommunityInterfaceDirectory {
             let gateway = InternetGateway(
                 name: name.isEmpty ? "Community RNS" : String(name.prefix(80)),
                 host: host,
-                port: port
+                port: port,
+                backboneTransportIdentity: backboneIdentity
             )
             if seen.insert(gateway.id).inserted {
                 gateways.append(gateway)

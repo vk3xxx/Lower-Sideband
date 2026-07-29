@@ -74,6 +74,11 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
     public var networkName: String?
     public var passphrase: String?
     public var ifacSize: Int
+    public var transportIdentity: String?
+    public var samHost: String?
+    public var samPort: UInt16?
+    public var sessionID: String?
+    public var virtualPorts: [RNodeVirtualPortConfiguration]?
 
     public init(
         id: UUID = UUID(),
@@ -94,7 +99,12 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         pollInterval: TimeInterval = 0.1,
         networkName: String? = nil,
         passphrase: String? = nil,
-        ifacSize: Int = 16
+        ifacSize: Int = 16,
+        transportIdentity: String? = nil,
+        samHost: String? = nil,
+        samPort: UInt16? = nil,
+        sessionID: String? = nil,
+        virtualPorts: [RNodeVirtualPortConfiguration]? = nil
     ) {
         self.id = id
         self.name = name
@@ -115,6 +125,11 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         self.networkName = networkName
         self.passphrase = passphrase
         self.ifacSize = ifacSize
+        self.transportIdentity = transportIdentity
+        self.samHost = samHost
+        self.samPort = samPort
+        self.sessionID = sessionID
+        self.virtualPorts = virtualPorts
     }
 
     public func validated() throws -> Self {
@@ -136,8 +151,13 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         }
 
         switch kind {
-        case .tcpClient, .backboneClient:
+        case .tcpClient:
             try requireHostAndPort()
+        case .backboneClient:
+            try requireHostAndPort()
+            if let transportIdentity, !transportIdentity.isEmpty {
+                _ = try ReticulumBackboneTransportIdentity(hex: transportIdentity)
+            }
         case .tcpServer, .backboneServer, .udp:
             guard let port, port > 0 else { throw ValidationError.missingPort }
         case .webSocketClient:
@@ -154,7 +174,23 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
             guard host?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 throw ValidationError.missingHost
             }
-        case .auto, .rnode, .rnodeMulti, .pipe:
+            _ = try ReticulumI2PConfiguration(
+                samHost: samHost ?? "127.0.0.1",
+                samPort: samPort ?? 7_656,
+                sessionID: sessionID ?? "lower-sideband",
+                role: .connect(destination: host!)
+            ).validated()
+        case .rnodeMulti:
+            guard let virtualPorts, !virtualPorts.isEmpty else {
+                throw ValidationError.missingVirtualPorts
+            }
+            _ = try RNodeMultiConfiguration(
+                name: name,
+                transport: .serial,
+                target: device ?? "configured",
+                ports: virtualPorts
+            ).validated()
+        case .auto, .rnode, .pipe:
             break
         }
         return self
@@ -190,6 +226,7 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
         case invalidPollInterval
         case invalidMTU
         case invalidIFACSize
+        case missingVirtualPorts
 
         public var errorDescription: String? {
             switch self {
@@ -202,6 +239,7 @@ public struct ReticulumInterfaceProfile: Identifiable, Codable, Hashable, Sendab
             case .invalidPollInterval: "Polling interval must be between 0.05 and 60 seconds."
             case .invalidMTU: "MTU must be between 256 and 262,144 bytes."
             case .invalidIFACSize: "IFAC size must be between 1 and 64 bytes."
+            case .missingVirtualPorts: "Configure at least one RNode virtual port."
             }
         }
     }

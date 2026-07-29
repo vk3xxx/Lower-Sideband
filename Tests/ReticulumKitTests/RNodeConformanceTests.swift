@@ -29,7 +29,8 @@ struct RNodeConformanceTests {
             .displayRecondition: 0x68, .displayInterfaceAccess: 0x69,
             .wifiMode: 0x6A, .wifiSSID: 0x6B, .wifiPSK: 0x6C,
             .configurationRead: 0x6D, .wifiChannel: 0x6E,
-            .bluetoothUnpair: 0x70, .log: 0x80, .time: 0x81,
+            .bluetoothUnpair: 0x70, .selectInterface: 0x1F, .interfaces: 0x71,
+            .log: 0x80, .time: 0x81,
             .muxChain: 0x82, .muxDiscover: 0x83, .wifiIP: 0x84,
             .wifiNetmask: 0x85, .error: 0x90, .unknown: 0xFE
         ]
@@ -38,6 +39,35 @@ struct RNodeConformanceTests {
         for command in RNodeKISS.Command.allCases {
             #expect(command.rawValue == expected[command])
         }
+    }
+
+    @Test("RNodeMulti selects and independently routes all virtual ports")
+    func multiVirtualPortRouting() throws {
+        var engine = RNodeMultiProtocolEngine()
+        let escaped = Data([0x01, 0xC0, 0xDB, 0x02])
+        var stream = Data()
+        for port in UInt8(0)..<RNodeMultiConfiguration.maximumVirtualPorts {
+            stream += RNodeKISS.frame(command: .selectInterface, payload: Data([port]))
+            stream += RNodeKISS.frame(command: .data, payload: escaped + Data([port]))
+        }
+        let events = engine.consume(stream)
+        let packets = events.compactMap { event -> (UInt8, Data)? in
+            if case let .packet(port, data) = event { return (port, data) }
+            return nil
+        }
+        #expect(packets.count == Int(RNodeMultiConfiguration.maximumVirtualPorts))
+        for (index, packet) in packets.enumerated() {
+            #expect(packet.0 == UInt8(index))
+            #expect(packet.1 == escaped + Data([UInt8(index)]))
+        }
+
+        let outbound = try engine.packetFrame(Data([0xC0, 0xDB]), port: 7)
+        var decoder = RNodeRawKISSDecoder()
+        let frames = decoder.consume(outbound)
+        #expect(frames == [
+            RNodeRawKISSFrame(command: RNodeKISS.Command.selectInterface.rawValue, payload: Data([7])),
+            RNodeRawKISSFrame(command: RNodeKISS.Command.data.rawValue, payload: Data([0xC0, 0xDB]))
+        ])
     }
 
     @Test("KISS escaping round-trips every byte with arbitrary TCP chunking")
@@ -249,6 +279,84 @@ struct RNodeTCPRuntimeTests {
     }
 }
 
+@Suite("ReticulumKit transport runtimes")
+struct ReticulumKitTransportRuntimeTests {
+    @Test("I2P SAM session and stream lifecycle carries Reticulum packets")
+    func i2pSAMLifecycle() async throws {
+        let fixture = try LocalSAMFixture()
+        let port = try await fixture.start()
+        let states = TCPStateRecorder()
+        let received = PacketCounter()
+        let interface = ReticulumI2PInterface(
+            configuration: ReticulumI2PConfiguration(
+                samPort: port,
+                sessionID: "reticulum-kit-test",
+                role: .connect(destination: "peer.b32.i2p"),
+                timeout: 2
+            ),
+            packetHandler: { packet in await received.add(packet.raw) },
+            stateHandler: { state in await states.add(state) }
+        )
+        await interface.start()
+        try await waitUntil { await states.isReady }
+
+        let raw = Data([0x00, 0x00]) + Data(repeating: 0x42, count: 16) + Data([0x00]) + Data("sam".utf8)
+        try await interface.send(rawPacket: raw)
+        try await waitUntil { await received.combined == raw }
+        #expect(fixture.sawSession)
+        #expect(fixture.sawStream)
+
+        await interface.stop()
+        await fixture.stop()
+    }
+
+    @Test("Backbone listener keeps independent peer sockets and HDLC decoders")
+    func backboneListener() async throws {
+        let listenerStates = BackboneStateRecorder()
+        let received = PacketCounter()
+        let listener = ReticulumBackboneListener(
+            port: 0,
+            packetHandler: { _, packet in await received.add(packet.raw) },
+            stateHandler: { state, peers in await listenerStates.update(state, peers: peers.count) }
+        )
+        try await listener.start()
+        try await waitUntil { await listenerStates.port != nil }
+        let port = try #require(await listenerStates.port)
+        let endpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
+        let clientStates = TCPStateRecorder()
+        let client = ReticulumBackboneClient(endpoint: endpoint, packetHandler: { _ in }) {
+            await clientStates.add($0)
+        }
+        await client.start()
+        try await waitUntil {
+            let ready = await clientStates.isReady
+            let peerCount = await listener.peers().count
+            return ready && peerCount == 1
+        }
+
+        let raw = Data([0x00, 0x00]) + Data(repeating: 0x24, count: 16) + Data([0x00]) + Data("backbone".utf8)
+        try await client.send(rawPacket: raw)
+        try await waitUntil { await received.combined == raw }
+        #expect(await listenerStates.peerCount == 1)
+
+        await client.stop()
+        await listener.stop()
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(5),
+        condition: @escaping @Sendable () async -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !(await condition()) {
+            guard ContinuousClock.now < deadline else {
+                throw RNodeError.transport("Timed out waiting for a transport test condition.")
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
 private actor PacketCounter {
     private(set) var packets: [Data] = []
     var count: Int { packets.count }
@@ -262,6 +370,124 @@ private actor TransportStateRecorder {
     var containsStopped: Bool { states.contains(.stopped) }
     var readyCount: Int { states.filter { $0 == .ready }.count }
     func add(_ state: RNodeByteTransportState) { states.append(state) }
+}
+
+private actor TCPStateRecorder {
+    private var states: [ReticulumTCPInterface.State] = []
+    var isReady: Bool { states.contains(.ready) }
+    func add(_ state: ReticulumTCPInterface.State) { states.append(state) }
+}
+
+private actor BackboneStateRecorder {
+    private(set) var port: UInt16?
+    private(set) var peerCount = 0
+    func update(_ state: ReticulumBackboneListener.State, peers: Int) {
+        if case let .listening(value) = state { port = value }
+        peerCount = peers
+    }
+}
+
+private final class LocalSAMFixture: @unchecked Sendable {
+    private struct ConnectionState {
+        var lineBuffer = Data()
+        var streamReady = false
+    }
+
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "ReticulumKitTests.SAM")
+    private let lock = NSLock()
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var states: [ObjectIdentifier: ConnectionState] = [:]
+    private var sessionSeen = false
+    private var streamSeen = false
+
+    var sawSession: Bool { lock.withLock { sessionSeen } }
+    var sawStream: Bool { lock.withLock { streamSeen } }
+
+    init() throws { listener = try NWListener(using: .tcp, on: .any) }
+
+    func start() async throws -> UInt16 {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
+            let resumed = LockedFlag()
+            listener.stateUpdateHandler = { [weak self] state in
+                guard let self else { return }
+                switch state {
+                case .ready:
+                    guard resumed.claim(), let port = self.listener.port?.rawValue else { return }
+                    continuation.resume(returning: port)
+                case let .failed(error):
+                    guard resumed.claim() else { return }
+                    continuation.resume(throwing: error)
+                default:
+                    break
+                }
+            }
+            listener.newConnectionHandler = { [weak self] connection in
+                self?.accept(connection)
+            }
+            listener.start(queue: queue)
+        }
+    }
+
+    func stop() async {
+        lock.withLock {
+            connections.values.forEach { $0.cancel() }
+            connections.removeAll()
+            states.removeAll()
+        }
+        listener.cancel()
+    }
+
+    private func accept(_ connection: NWConnection) {
+        let id = ObjectIdentifier(connection)
+        lock.withLock {
+            connections[id] = connection
+            states[id] = ConnectionState()
+        }
+        connection.start(queue: queue)
+        receive(connection, id: id)
+    }
+
+    private func receive(_ connection: NWConnection, id: ObjectIdentifier) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, complete, error in
+            guard let self else { return }
+            if let data, !data.isEmpty { self.consume(data, connection: connection, id: id) }
+            if error == nil, !complete { self.receive(connection, id: id) }
+        }
+    }
+
+    private func consume(_ data: Data, connection: NWConnection, id: ObjectIdentifier) {
+        var responses: [Data] = []
+        var echo: Data?
+        lock.withLock {
+            guard var state = states[id] else { return }
+            if state.streamReady {
+                echo = data
+            } else {
+                state.lineBuffer.append(data)
+                while let newline = state.lineBuffer.firstIndex(of: 0x0A) {
+                    let lineData = state.lineBuffer.prefix(through: newline)
+                    state.lineBuffer.removeSubrange(...newline)
+                    let line = String(decoding: lineData, as: UTF8.self)
+                    if line.hasPrefix("HELLO VERSION") {
+                        responses.append(Data("HELLO REPLY RESULT=OK VERSION=3.3\n".utf8))
+                    } else if line.hasPrefix("SESSION CREATE") {
+                        sessionSeen = true
+                        responses.append(Data("SESSION STATUS RESULT=OK DESTINATION=local.b32.i2p\n".utf8))
+                    } else if line.hasPrefix("STREAM CONNECT") || line.hasPrefix("STREAM ACCEPT") {
+                        streamSeen = true
+                        state.streamReady = true
+                        responses.append(Data("STREAM STATUS RESULT=OK\n".utf8))
+                    }
+                }
+            }
+            states[id] = state
+        }
+        for response in responses {
+            connection.send(content: response, completion: .idempotent)
+        }
+        if let echo { connection.send(content: echo, completion: .idempotent) }
+    }
 }
 
 private final class LocalTCPFixture: @unchecked Sendable {

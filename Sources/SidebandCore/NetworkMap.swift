@@ -1,3 +1,4 @@
+import ReticulumKit
 import Foundation
 
 /// A platform-neutral representation of the Reticulum topology visible to this
