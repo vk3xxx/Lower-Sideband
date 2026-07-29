@@ -53,7 +53,26 @@ This verifies bundle identifiers and versions, required Info.plist declarations,
 
 ## Upstream compatibility fixtures
 
-Pinned upstream submodules provide reference implementations. Some test vectors were generated from Python Reticulum/LXMF/Sideband and are checked by native Swift tests.
+Pinned upstream submodules provide reference implementations. The formal
+matrix refuses to run unless the exact audited tags are checked out:
+
+```sh
+Scripts/run-upstream-interoperability-matrix.sh fixtures
+Scripts/run-upstream-interoperability-matrix.sh live
+Scripts/run-upstream-interoperability-matrix.sh all
+```
+
+The fixture profile verifies the imported Python versions, regenerates the
+Sideband telemetry fixture and runs the complete native test suite. The live
+profile runs distinct Swift and stock Python identities over a local Reticulum
+TCP server, requires delivery proofs in both directions, echoes standard LXMF
+fields, transfers exact 1 MiB files/images and forces bounded reconnects. The
+default live gate sends 25 messages each way, attaches data every fifth message
+and reconnects every seventh message. Every run writes machine-readable JSON
+and separate logs beneath `.build/upstream-matrix/`.
+
+Some test vectors were generated from Python Reticulum/LXMF/Sideband and are
+also checked directly by native Swift tests.
 
 The optional telemetry generator requires a Python environment capable of importing the pinned Sideband source:
 

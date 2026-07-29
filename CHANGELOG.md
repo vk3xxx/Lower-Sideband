@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.59
+
+- Pinned the developer reference submodules to Sideband 2.0.1, Reticulum
+  1.4.2 and LXMF 1.1.0.
+- Added a deterministic upstream interoperability matrix covering reference
+  imports, all native protocol tests, bidirectional proved delivery, exact
+  1 MiB LXMF file/image fields and forced TCP reconnects.
+
 ## 1.3.58
 
 - Completed the native TCP server settings workflow with explicit bind-address

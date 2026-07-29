@@ -9,6 +9,10 @@
 | Reticulum | 1.4.2 | Authoritative packet, link, resource and interface semantics |
 | LXMF | 1.1.0 | Authoritative message and field semantics |
 
+These exact releases are now stored as the repository submodule revisions and
+enforced by `Scripts/run-upstream-interoperability-matrix.sh`; an untagged or
+stale checkout fails before compatibility tests begin.
+
 MeshChatX is used as the practical interface reference requested for this
 project. The Reticulum implementation and manual remain authoritative when a
 MeshChatX extension and the Reticulum wire protocol differ.

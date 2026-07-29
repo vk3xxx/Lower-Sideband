@@ -57,3 +57,11 @@ The detailed upstream comparison and exact pinned versions are in
 
 Public gateways are bootstrap infrastructure, not a central account service,
 and no community-operated endpoint can be guaranteed by the app.
+
+## Upstream regression gate
+
+The repository pins Sideband 2.0.1, Reticulum 1.4.2 and LXMF 1.1.0 as
+developer-only references. The automated matrix verifies all native fixtures
+and performs live bidirectional delivery with proofs, standard 1 MiB
+file/image fields and forced reconnects. The references and Python test tools
+are never included in either application bundle.

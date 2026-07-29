@@ -4,7 +4,8 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
 
 ## Near term
 
-- Complete extended live interoperability matrices against current upstream Sideband, Reticulum, and LXMF releases.
+- Keep the completed deterministic upstream matrix current as Sideband,
+  Reticulum and LXMF publish new releases.
 - Exercise attachments, propagation sync, voice, telemetry, RNode, and network transitions across physical iPhone, iPad, and Mac hardware.
 - Expand accessibility audits, localisation preparation, performance profiling, and long-running memory/power tests.
 - Strengthen public endpoint health data and operator documentation without embedding private infrastructure assumptions.
