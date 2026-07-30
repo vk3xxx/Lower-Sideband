@@ -30,6 +30,12 @@ struct MeshChatFeatureCenterView: View {
                     .tabItem { Label("Telephone", systemImage: "phone") }
                 RelayChatView(store: store)
                     .tabItem { Label("Rooms", systemImage: "person.3") }
+                HostedRelayView(store: store)
+                    .tabItem { Label("Host", systemImage: "person.3.sequence.fill") }
+                RemoteFilesView(store: store)
+                    .tabItem { Label("Files", systemImage: "folder.badge.gearshape") }
+                NomadServerView(store: store)
+                    .tabItem { Label("Server", systemImage: "server.rack") }
                 RemoteShellView(store: store)
                     .tabItem { Label("Shell", systemImage: "terminal") }
                 RemoteToolsView(store: store)
@@ -46,11 +52,295 @@ struct MeshChatFeatureCenterView: View {
     }
 }
 
+private struct HostedRelayView: View {
+    @Bindable var store: SidebandStore
+    @State private var configuration = HostedRelayHubConfiguration()
+    @State private var roomName = ""
+    @State private var roomTopic = ""
+    @State private var roomKey = ""
+    @State private var moderated = false
+    @State private var voicedIdentities = ""
+    @State private var banIdentity = ""
+
+    var body: some View {
+        Form {
+            Section("Hosted RRC Hub") {
+                Toggle("Host relay rooms on this device", isOn: $configuration.enabled)
+                TextField("Hub name", text: $configuration.name)
+                TextField("Welcome message", text: $configuration.greeting, axis: .vertical)
+                LabeledContent("Hub destination") {
+                    HStack {
+                        Text(store.localRelayHubHash).font(.caption.monospaced()).textSelection(.enabled)
+                        Button("Copy", systemImage: "doc.on.doc") { copyMeshFeatureText(store.localRelayHubHash) }
+                    }
+                }
+                Button("Save and Announce", systemImage: "antenna.radiowaves.left.and.right") {
+                    Task { await store.updateHostedRelayHub(configuration) }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Section("Rooms") {
+                ForEach(configuration.rooms) { room in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("#\(room.name)").font(.headline)
+                            if room.accessKey != nil { Image(systemName: "key.fill").foregroundStyle(.orange) }
+                            if room.isModerated { Image(systemName: "person.badge.shield.checkmark.fill").foregroundStyle(.blue) }
+                            Spacer()
+                            Button(role: .destructive) {
+                                configuration.rooms.removeAll { $0.id == room.id }
+                            } label: { Image(systemName: "trash") }
+                        }
+                        if !room.topic.isEmpty { Text(room.topic).font(.caption).foregroundStyle(.secondary) }
+                        if room.isModerated {
+                            Text("\(room.voicedIdentityHashes.count) identities may post")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                TextField("New room name", text: $roomName)
+                TextField("Topic", text: $roomTopic)
+                SecureField("Optional access key", text: $roomKey)
+                Toggle("Moderated room", isOn: $moderated)
+                if moderated {
+                    TextField("Identity hashes allowed to post, separated by commas", text: $voicedIdentities, axis: .vertical)
+                        .font(.caption.monospaced())
+                }
+                Button("Add Room", systemImage: "plus") {
+                    let voiced = Set(
+                        voicedIdentities
+                            .split { $0 == "," || $0.isWhitespace }
+                            .map { String($0).lowercased() }
+                            .filter(DestinationHash.isValid)
+                    )
+                    let room = HostedRelayRoom(
+                        name: roomName,
+                        topic: roomTopic,
+                        accessKey: roomKey,
+                        isModerated: moderated,
+                        voicedIdentityHashes: voiced
+                    )
+                    guard !room.name.isEmpty, !configuration.rooms.contains(where: { $0.name == room.name }) else { return }
+                    configuration.rooms.append(room)
+                    roomName = ""; roomTopic = ""; roomKey = ""; moderated = false; voicedIdentities = ""
+                }
+                .disabled(roomName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Section("Connected Members") {
+                if store.hostedRelayMembers.isEmpty {
+                    Text("No members connected").foregroundStyle(.secondary)
+                }
+                ForEach(store.hostedRelayMembers) { member in
+                    LabeledContent(member.nickname, value: "#\(member.room) · \(member.identityHash)")
+                        .font(.caption)
+                }
+            }
+            Section("Moderation") {
+                HStack {
+                    TextField("Identity hash to ban", text: $banIdentity).font(.caption.monospaced())
+                    Button("Ban", role: .destructive) {
+                        Task {
+                            await store.banHostedRelayIdentity(banIdentity)
+                            configuration = store.meshFeatures.relayHub
+                            banIdentity = ""
+                        }
+                    }
+                    .disabled(!DestinationHash.isValid(banIdentity.lowercased()))
+                }
+                ForEach(configuration.bannedIdentityHashes.sorted(), id: \.self) { identity in
+                    HStack {
+                        Text(identity).font(.caption.monospaced())
+                        Spacer()
+                        Button("Unban") {
+                            Task {
+                                await store.unbanHostedRelayIdentity(identity)
+                                configuration = store.meshFeatures.relayHub
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Hosted Relay")
+        .onAppear { configuration = store.meshFeatures.relayHub }
+    }
+}
+
+private struct RemoteFilesView: View {
+    @Bindable var store: SidebandStore
+    @State private var configuration = RemoteCopyConfiguration()
+    @State private var allowedIdentities = ""
+    @State private var destination = ""
+    @State private var remotePath = ""
+    @State private var importerMode: ImporterMode?
+
+    private enum ImporterMode: Identifiable { case send, share; var id: Int { self == .send ? 0 : 1 } }
+
+    var body: some View {
+        Form {
+            Section("Send or Fetch") {
+                TextField("rncp.receive destination", text: $destination).font(.caption.monospaced())
+                TextField("Remote filename", text: $remotePath)
+                HStack {
+                    Button("Send File", systemImage: "arrow.up.doc") { importerMode = .send }
+                        .disabled(!DestinationHash.isValid(destination.lowercased()))
+                    Button("Fetch File", systemImage: "arrow.down.doc") {
+                        Task {
+                            do { _ = try await store.fetchRemoteFile(destinationHash: destination, remotePath: remotePath) }
+                            catch { store.lastError = error.localizedDescription }
+                        }
+                    }
+                    .disabled(!DestinationHash.isValid(destination.lowercased()) || remotePath.isEmpty)
+                }
+            }
+            Section("Receive Service") {
+                Toggle("Accept authorised uploads", isOn: $configuration.receiverEnabled)
+                Toggle("Serve shared files on request", isOn: $configuration.fetchEnabled)
+                TextField("Allowed identity hashes, separated by commas", text: $allowedIdentities, axis: .vertical)
+                    .font(.caption.monospaced())
+                LabeledContent("Receiver destination", value: store.localRemoteCopyHash)
+                    .font(.caption.monospaced())
+                Button("Save and Announce") {
+                    configuration.allowedIdentityHashes = Set(
+                        allowedIdentities
+                            .split { $0 == "," || $0.isWhitespace }
+                            .map { String($0).lowercased() }
+                            .filter(DestinationHash.isValid)
+                    )
+                    Task { await store.updateRemoteCopyConfiguration(configuration) }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Section("Shared Files") {
+                Button("Add Shared File", systemImage: "folder.badge.plus") { importerMode = .share }
+                ForEach(store.meshFeatures.remoteFileShares, id: \.id) { share in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(share.remotePath)
+                            Text(ByteCountFormatter.string(fromByteCount: Int64(share.attachment.byteCount), countStyle: .file))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive) {
+                            Task { await store.removeRemoteFileShare(share) }
+                        } label: { Image(systemName: "trash") }
+                    }
+                }
+            }
+            Section("Transfers") {
+                ForEach(store.meshFeatures.remoteFileTransfers) { transfer in
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Image(systemName: transfer.direction == .sending ? "arrow.up.circle" : "arrow.down.circle")
+                            Text(transfer.remotePath).font(.headline)
+                            Spacer()
+                            Text(transfer.state).foregroundStyle(.secondary)
+                        }
+                        ProgressView(value: transfer.progress)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Remote Files")
+        .onAppear {
+            configuration = store.meshFeatures.remoteCopy
+            allowedIdentities = configuration.allowedIdentityHashes.sorted().joined(separator: ", ")
+        }
+        .fileImporter(isPresented: Binding(
+            get: { importerMode != nil },
+            set: { if !$0 { importerMode = nil } }
+        ), allowedContentTypes: [.data]) { result in
+            guard case let .success(url) = result, let mode = importerMode else { importerMode = nil; return }
+            importerMode = nil
+            Task {
+                do {
+                    switch mode {
+                    case .send:
+                        _ = try await store.sendRemoteFile(destinationHash: destination, source: url)
+                    case .share:
+                        try await store.addRemoteFileShare(from: url)
+                    }
+                } catch { store.lastError = error.localizedDescription }
+            }
+        }
+    }
+}
+
+private struct NomadServerView: View {
+    @Bindable var store: SidebandStore
+    @State private var configuration = NomadServerConfiguration()
+    @State private var path = NomadNetworkProtocol.indexPath
+    @State private var title = "Home"
+    @State private var source = "# Welcome\n\nThis page is hosted by Lower Sideband."
+    @State private var importingFile = false
+
+    var body: some View {
+        Form {
+            Section("Nomad Mesh Server") {
+                Toggle("Host pages and files", isOn: $configuration.enabled)
+                TextField("Server name", text: $configuration.name)
+                LabeledContent("Node destination", value: store.localNomadServerHash)
+                    .font(.caption.monospaced())
+                Button("Save and Announce") { Task { await store.updateNomadServer(configuration) } }
+                    .buttonStyle(.borderedProminent)
+            }
+            Section("Publish Page") {
+                TextField("/page/index.mu", text: $path).font(.caption.monospaced())
+                TextField("Title", text: $title)
+                TextEditor(text: $source).font(.body.monospaced()).frame(minHeight: 140)
+                Button("Publish Page", systemImage: "network") {
+                    Task {
+                        await store.saveHostedNomadPage(
+                            NomadHostedPage(path: path, title: title, source: source)
+                        )
+                    }
+                }
+            }
+            Section("Published Pages") {
+                ForEach(store.meshFeatures.hostedNomadPages) { page in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(page.title).font(.headline)
+                            Text(page.path).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button(role: .destructive) { store.removeHostedNomadPage(page) } label: {
+                            Image(systemName: "trash")
+                        }
+                    }
+                }
+            }
+            Section("Published Files") {
+                Button("Add File", systemImage: "doc.badge.plus") { importingFile = true }
+                ForEach(store.meshFeatures.hostedNomadFiles) { file in
+                    HStack {
+                        Text(file.path).font(.caption.monospaced())
+                        Spacer()
+                        Button(role: .destructive) {
+                            Task { await store.removeHostedNomadFile(file) }
+                        } label: { Image(systemName: "trash") }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Nomad Server")
+        .onAppear { configuration = store.meshFeatures.nomadServer }
+        .fileImporter(isPresented: $importingFile, allowedContentTypes: [.data]) { result in
+            guard case let .success(url) = result else { return }
+            Task {
+                do { try await store.addHostedNomadFile(from: url) }
+                catch { store.lastError = error.localizedDescription }
+            }
+        }
+    }
+}
+
 private struct RelayChatView: View {
     @Bindable var store: SidebandStore
     @State private var hub = ""
     @State private var roomName = "#general"
     @State private var nickname = "Sideband"
+    @State private var accessKey = ""
     @State private var selectedRoomID: String?
     @State private var message = ""
     @State private var isWorking = false
@@ -81,6 +371,7 @@ private struct RelayChatView: View {
                     TextField("RRC hub destination", text: $hub).font(.caption.monospaced())
                     TextField("Room", text: $roomName)
                     TextField("Nickname", text: $nickname)
+                    SecureField("Room access key (optional)", text: $accessKey)
                     Button("Join Room", systemImage: "person.3.fill") { Task { await join() } }
                         .disabled(isWorking || hub.isEmpty || roomName.isEmpty || nickname.isEmpty)
                 }
@@ -128,7 +419,12 @@ private struct RelayChatView: View {
     @MainActor private func join() async {
         isWorking = true; defer { isWorking = false }
         do {
-            try await store.joinRelayChat(hubDestinationHash: hub, room: roomName, nickname: nickname)
+            try await store.joinRelayChat(
+                hubDestinationHash: hub,
+                room: roomName,
+                nickname: nickname,
+                accessKey: accessKey
+            )
             selectedRoomID = "\(hub.lowercased()):\(roomName)"
         } catch { store.lastError = error.localizedDescription }
     }

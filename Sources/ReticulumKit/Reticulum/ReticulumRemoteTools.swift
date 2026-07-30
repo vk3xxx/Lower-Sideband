@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public enum ReticulumRemoteExecutionProtocol {
     public static let destinationName = "rnx.execute"
@@ -99,6 +100,65 @@ public enum ReticulumCopyProtocol {
                 ("sha256", MessagePack.binary(sha256))
             ])
         }
+
+        public var resourcePayloadPrefix: Data {
+            let metadata = messagePack
+            precondition(metadata.count <= 0x00ff_ffff)
+            return Data([
+                UInt8((metadata.count >> 16) & 0xff),
+                UInt8((metadata.count >> 8) & 0xff),
+                UInt8(metadata.count & 0xff)
+            ]) + metadata
+        }
+
+        public static func resourcePayload(metadata: TransferMetadata, fileData: Data) throws -> Data {
+            guard UInt64(fileData.count) == metadata.size,
+                  Data(SHA256.hash(data: fileData)) == metadata.sha256 else {
+                throw CopyError.integrityMismatch
+            }
+            return metadata.resourcePayloadPrefix + fileData
+        }
+
+        public static func decodeResourcePayload(_ payload: Data) throws -> (metadata: TransferMetadata, fileData: Data) {
+            guard payload.count >= 3 else { throw CopyError.unsafeMetadata }
+            let metadataSize = Int(payload[0]) << 16 | Int(payload[1]) << 8 | Int(payload[2])
+            guard metadataSize > 0, metadataSize <= 65_536, payload.count >= 3 + metadataSize else {
+                throw CopyError.unsafeMetadata
+            }
+            let packed = payload.subdata(in: 3..<(3 + metadataSize))
+            guard case let .map(entries) = try MessagePackDecoder.decode(
+                packed,
+                limits: .init(
+                    maximumDepth: 8,
+                    maximumCollectionCount: 32,
+                    maximumNodeCount: 64,
+                    maximumScalarBytes: 65_536
+                )
+            ) else { throw CopyError.unsafeMetadata }
+            func value(_ key: String) -> MessagePackValue? {
+                entries.first(where: { $0.0 == .string(key) })?.1
+            }
+            let filename: String?
+            switch value("name") {
+            case .binary(let data): filename = String(data: data, encoding: .utf8)
+            case .string(let string): filename = string
+            default: filename = nil
+            }
+            guard let filename else { throw CopyError.unsafeMetadata }
+            let fileData = payload.suffix(from: 3 + metadataSize)
+            let size: UInt64
+            if case let .unsigned(value)? = value("size") { size = value }
+            else { size = UInt64(fileData.count) }
+            let digest: Data
+            if case let .binary(value)? = value("sha256") { digest = value }
+            else { digest = Data(SHA256.hash(data: fileData)) }
+            let metadata = try TransferMetadata(filename: filename, size: size, sha256: digest)
+            guard UInt64(fileData.count) == metadata.size,
+                  Data(SHA256.hash(data: fileData)) == metadata.sha256 else {
+                throw CopyError.integrityMismatch
+            }
+            return (metadata, Data(fileData))
+        }
     }
 
     public static func destinationHash(for identity: ReticulumIdentity) -> Data {
@@ -113,7 +173,7 @@ public enum ReticulumCopyProtocol {
         return try ReticulumPathRequestEnvelope(path: fetchPath, data: .string(remotePath), timestamp: timestamp)
     }
 
-    public enum CopyError: Error, Equatable { case unsafeMetadata, unsafePath }
+    public enum CopyError: Error, Equatable { case unsafeMetadata, unsafePath, integrityMismatch }
 }
 
 private extension MessagePackValue {
@@ -122,5 +182,13 @@ private extension MessagePackValue {
     }
     var remoteSigned: Int64? {
         switch self { case .signed(let value): value; case .unsigned(let value) where value <= UInt64(Int64.max): Int64(value); case .null: nil; default: nil }
+    }
+}
+
+private extension Data {
+    static func + (lhs: Data, rhs: Data) -> Data {
+        var value = lhs
+        value.append(rhs)
+        return value
     }
 }

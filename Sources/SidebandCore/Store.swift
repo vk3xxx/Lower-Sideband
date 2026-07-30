@@ -124,6 +124,7 @@ public final class SidebandStore {
     public private(set) var lastBackgroundRefreshAt: Date?
     public private(set) var lastBackgroundRefreshSucceeded: Bool?
     public private(set) var incomingResourceProgress: [String: Double] = [:]
+    public private(set) var hostedRelayMembers: [HostedRelayMember] = []
     public private(set) var isApplicationActive = true
     public private(set) var visibleConversationID: UUID?
     public private(set) var iCloudSyncEnabled = false
@@ -283,9 +284,14 @@ public final class SidebandStore {
     private var pendingReceiptRetryKinds: [String: Set<ReceiptKind>] = [:]
     private var deliveryPassesInProgress: Set<UUID> = []
     private var deliveryPassRerunRequested: Set<UUID> = []
+    private enum OutgoingResourcePurpose {
+        case message(messageID: UUID, attachmentID: UUID?)
+        case remoteCopy(transferID: UUID)
+        case nomadResponse
+    }
     private struct OutgoingResource {
         let manifest: ReticulumResourceManifest; let parts: [Data]; let expectedProof: Data
-        let messageID: UUID; let attachmentID: UUID?; let linkID: String
+        let purpose: OutgoingResourcePurpose; let linkID: String
         let segmentIndex: Int; let totalSegments: Int; let remainingSegments: [ReticulumPreparedResourceSegment]
         var timeoutToken = UUID()
         var sentIndices: Set<Int> = []
@@ -298,11 +304,19 @@ public final class SidebandStore {
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
     private var pendingNomadPageResponses: [String: (Result<Data, Error>) -> Void] = [:]
-    private enum ApplicationLinkKind { case relayChat(hub: String), shell(sessionID: UUID), remoteTool }
+    private enum ApplicationLinkKind {
+        case relayChat(hub: String)
+        case shell(sessionID: UUID)
+        case remoteTool
+        case relayHubClient
+        case remoteCopy
+        case nomadServer
+    }
     private var applicationLinkKinds: [String: ApplicationLinkKind] = [:]
     private var pendingApplicationKinds: [String: ApplicationLinkKind] = [:]
     private var shellReceivers: [UUID: ReticulumChannel.Receiver] = [:]
     private var pendingRemoteToolResponses: [String: (Result<Data, Error>) -> Void] = [:]
+    private var hostedRelayHub: ReticulumRelayHub?
     private var receivedLXMFIDs: Set<String> = []
     private var lastCommandResponseAt: [UUID: Date] = [:]
     private var inboundRemoteIdentities: [String: ReticulumIdentity] = [:]
@@ -549,6 +563,7 @@ public final class SidebandStore {
                 _ = await self.cleanOrphanedAttachments()
             }
         }
+        rebuildHostedRelayHub()
         syncUnreadBadge()
     }
 
@@ -767,7 +782,7 @@ public final class SidebandStore {
         return source
     }
 
-    public func joinRelayChat(hubDestinationHash: String, room: String, nickname: String) async throws {
+    public func joinRelayChat(hubDestinationHash: String, room: String, nickname: String, accessKey: String? = nil) async throws {
         let destination = try validatedApplicationDestination(hubDestinationHash)
         let session = try await applicationSession(to: destination, kind: .relayChat(hub: destination))
         try await identify(session)
@@ -777,7 +792,13 @@ public final class SidebandStore {
                 client: "Lower Sideband", clientVersion: applicationVersionLabel, capabilities: [0, 1]
             ), nickname: nickname
         )
-        let join = try ReticulumRelayChatProtocol.Message(type: .join, source: source, room: room, nickname: nickname)
+        let join = try ReticulumRelayChatProtocol.Message(
+            type: .join,
+            source: source,
+            room: room,
+            body: accessKey?.isEmpty == false ? .text(accessKey!) : nil,
+            nickname: nickname
+        )
         try await transmitApplication(try hello.encoded, context: 0x00, session: session)
         try await transmitApplication(try join.encoded, context: 0x00, session: session)
         meshFeatures.upsertRelayRoom(RelayChatRoom(hubDestinationHash: destination, name: room, nickname: nickname))
@@ -802,6 +823,170 @@ public final class SidebandStore {
         )
         try await transmitApplication(try message.encoded, context: 0x00, session: session)
         meshFeatures.recordRelayMessage(message, hubDestinationHash: room.hubDestinationHash, outgoing: true)
+    }
+
+    public func updateHostedRelayHub(_ configuration: HostedRelayHubConfiguration) async {
+        meshFeatures.updateRelayHub(configuration)
+        rebuildHostedRelayHub()
+        if configuration.enabled { _ = await announceApplicationServicesNow() }
+    }
+
+    public func banHostedRelayIdentity(_ identityHash: String) async {
+        let normalized = identityHash.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard DestinationHash.isValid(normalized) else { return }
+        var configuration = meshFeatures.relayHub
+        configuration.bannedIdentityHashes.insert(normalized)
+        await updateHostedRelayHub(configuration)
+        let links = hostedRelayHub?.members.filter { $0.identityHash.hex == normalized }.map(\.linkID) ?? []
+        for link in links where activeLinks[link] != nil { removeLink(link) }
+    }
+
+    public func unbanHostedRelayIdentity(_ identityHash: String) async {
+        var configuration = meshFeatures.relayHub
+        configuration.bannedIdentityHashes.remove(identityHash.lowercased())
+        await updateHostedRelayHub(configuration)
+    }
+
+    public func updateRemoteCopyConfiguration(_ configuration: RemoteCopyConfiguration) async {
+        meshFeatures.updateRemoteCopy(configuration)
+        if configuration.receiverEnabled { _ = await announceApplicationServicesNow() }
+    }
+
+    public func addRemoteFileShare(from source: URL, remotePath: String? = nil) async throws {
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let attachment = try await attachmentStore.importFile(from: source)
+        let path = try normalizedRemotePath(remotePath ?? attachment.filename)
+        meshFeatures.addRemoteFileShare(RemoteFileShare(remotePath: path, attachment: attachment))
+    }
+
+    public func removeRemoteFileShare(_ share: RemoteFileShare) async {
+        meshFeatures.removeRemoteFileShare(share.id)
+        try? await attachmentStore.remove(share.attachment)
+    }
+
+    @discardableResult
+    public func sendRemoteFile(destinationHash: String, source: URL) async throws -> UUID {
+        let destination = try validatedApplicationDestination(destinationHash)
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let attachment = try await attachmentStore.importFile(from: source)
+        var transfer = RemoteFileTransferRecord(
+            destinationHash: destination,
+            remotePath: attachment.filename,
+            attachment: attachment,
+            direction: .sending,
+            state: "Connecting"
+        )
+        meshFeatures.upsertRemoteFileTransfer(transfer)
+        do {
+            let session = try await applicationSession(to: destination, kind: .remoteCopy)
+            try await identify(session)
+            let data = try await attachmentStore.read(attachment)
+            let metadata = try ReticulumCopyProtocol.TransferMetadata(
+                filename: attachment.filename,
+                size: UInt64(data.count),
+                sha256: Data(SHA256.hash(data: data))
+            )
+            let payload = try ReticulumCopyProtocol.TransferMetadata.resourcePayload(metadata: metadata, fileData: data)
+            try await advertiseApplicationResource(
+                payload,
+                purpose: .remoteCopy(transferID: transfer.id),
+                session: session,
+                hasMetadata: true
+            )
+            transfer.state = "Transferring"
+            transfer.updatedAt = .now
+            meshFeatures.upsertRemoteFileTransfer(transfer)
+            return transfer.id
+        } catch {
+            transfer.state = "Failed: \(error.localizedDescription)"
+            transfer.updatedAt = .now
+            meshFeatures.upsertRemoteFileTransfer(transfer)
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func fetchRemoteFile(destinationHash: String, remotePath: String) async throws -> UUID {
+        let destination = try validatedApplicationDestination(destinationHash)
+        let path = try normalizedRemotePath(remotePath)
+        var transfer = RemoteFileTransferRecord(
+            destinationHash: destination,
+            remotePath: path,
+            direction: .receiving,
+            state: "Requesting"
+        )
+        meshFeatures.upsertRemoteFileTransfer(transfer)
+        do {
+            let session = try await applicationSession(to: destination, kind: .remoteCopy)
+            try await identify(session)
+            let envelope = try ReticulumCopyProtocol.fetchEnvelope(remotePath: path)
+            try await transmitApplication(envelope.encoded, context: 0x09, session: session)
+            transfer.state = "Waiting for sender"
+            transfer.updatedAt = .now
+            meshFeatures.upsertRemoteFileTransfer(transfer)
+            return transfer.id
+        } catch {
+            transfer.state = "Failed: \(error.localizedDescription)"
+            transfer.updatedAt = .now
+            meshFeatures.upsertRemoteFileTransfer(transfer)
+            throw error
+        }
+    }
+
+    public func updateNomadServer(_ configuration: NomadServerConfiguration) async {
+        meshFeatures.updateNomadServer(configuration)
+        if configuration.enabled { _ = await announceApplicationServicesNow() }
+    }
+
+    public func saveHostedNomadPage(_ page: NomadHostedPage) async {
+        guard Self.isSafeNomadPagePath(page.path) else {
+            lastError = "Nomad pages must use a safe /page/ path and a supported extension."
+            return
+        }
+        meshFeatures.upsertHostedNomadPage(page)
+        if meshFeatures.nomadServer.enabled { _ = await announceApplicationServicesNow() }
+    }
+
+    public func removeHostedNomadPage(_ page: NomadHostedPage) {
+        meshFeatures.removeHostedNomadPage(page.id)
+    }
+
+    public func addHostedNomadFile(from source: URL) async throws {
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let attachment = try await attachmentStore.importFile(from: source)
+        let path = "/file/\(attachment.filename)"
+        guard Self.isSafeNomadFilePath(path) else { throw ApplicationServiceError.invalidInput }
+        meshFeatures.addHostedNomadFile(NomadHostedFile(path: path, attachment: attachment))
+        if meshFeatures.nomadServer.enabled { _ = await announceApplicationServicesNow() }
+    }
+
+    public func removeHostedNomadFile(_ file: NomadHostedFile) async {
+        meshFeatures.removeHostedNomadFile(file.id)
+        try? await attachmentStore.remove(file.attachment)
+    }
+
+    @discardableResult
+    public func announceApplicationServicesNow() async -> Bool {
+        guard networkState == .ready else { return false }
+        var success = true
+        if meshFeatures.relayHub.enabled {
+            let appData = (try? CanonicalCBOR.encode(.map([
+                .text("proto"): .text("rrc"),
+                .text("v"): .unsigned(1),
+                .text("hub"): .text(meshFeatures.relayHub.name)
+            ]))) ?? Data()
+            success = await announceService(destinationName: ReticulumRelayChatProtocol.destinationName, appData: appData) && success
+        }
+        if meshFeatures.remoteCopy.receiverEnabled {
+            success = await announceService(destinationName: ReticulumCopyProtocol.destinationName, appData: Data("Lower Sideband RNCP".utf8)) && success
+        }
+        if meshFeatures.nomadServer.enabled {
+            success = await announceService(destinationName: NomadNetworkProtocol.destinationName, appData: Data(meshFeatures.nomadServer.name.utf8)) && success
+        }
+        return success
     }
 
     public func openRemoteShell(destinationHash: String, title: String = "Remote Shell") async throws -> UUID {
@@ -883,6 +1068,129 @@ public final class SidebandStore {
             meshFeatures.upsertRemoteToolRun(run)
             throw error
         }
+    }
+
+    private func rebuildHostedRelayHub() {
+        let configuration = meshFeatures.relayHub
+        guard configuration.enabled else {
+            hostedRelayHub = nil
+            hostedRelayMembers = []
+            return
+        }
+        let rooms = configuration.rooms.compactMap { room -> ReticulumRelayHub.RoomPolicy? in
+            try? ReticulumRelayHub.RoomPolicy(
+                name: room.name,
+                topic: room.topic,
+                accessKey: room.accessKey,
+                isModerated: room.isModerated,
+                voicedIdentityHashes: Set(room.voicedIdentityHashes.compactMap(Data.init(hexadecimal:)))
+            )
+        }
+        let banned = Set(configuration.bannedIdentityHashes.compactMap(Data.init(hexadecimal:)))
+        guard let fallbackRoom = try? ReticulumRelayHub.RoomPolicy(name: "general") else {
+            hostedRelayHub = nil
+            hostedRelayMembers = []
+            return
+        }
+        guard let policy = try? ReticulumRelayHub.Configuration(
+            name: configuration.name,
+            greeting: configuration.greeting,
+            rooms: rooms.isEmpty ? [fallbackRoom] : rooms,
+            bannedIdentityHashes: banned
+        ) else {
+            hostedRelayHub = nil
+            hostedRelayMembers = []
+            return
+        }
+        if hostedRelayHub == nil {
+            hostedRelayHub = try? ReticulumRelayHub(
+                configuration: policy,
+                hubIdentityHash: messagingIdentity.hash
+            )
+        } else {
+            hostedRelayHub?.update(configuration: policy)
+        }
+        refreshHostedRelayMembers()
+    }
+
+    private func refreshHostedRelayMembers() {
+        hostedRelayMembers = hostedRelayHub?.members.flatMap { member in
+            member.rooms.map {
+                HostedRelayMember(
+                    linkID: member.linkID,
+                    identityHash: member.identityHash.hex,
+                    nickname: member.nickname.isEmpty ? String(member.identityHash.hex.prefix(12)) : member.nickname,
+                    room: $0,
+                    connectedAt: member.connectedAt
+                )
+            }
+        } ?? []
+    }
+
+    private func announceService(destinationName: String, appData: Data) async -> Bool {
+        do {
+            let packet = try ReticulumAnnounceBuilder.packet(
+                identity: messagingIdentity,
+                destinationName: destinationName,
+                appData: appData
+            )
+            try await transmitRawPacket(packet)
+            recordDeliveryDiagnosticEvent("Announced \(destinationName) service")
+            return true
+        } catch {
+            recordDeliveryDiagnosticEvent("\(destinationName) announce deferred: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func normalizedRemotePath(_ value: String) throws -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let leaf = URL(fileURLWithPath: trimmed).lastPathComponent
+        guard !trimmed.isEmpty, trimmed == leaf, leaf != ".", leaf != "..",
+              leaf.utf8.count <= 255, !leaf.contains("\0") else {
+            throw ApplicationServiceError.invalidInput
+        }
+        return leaf
+    }
+
+    static func isSafeNomadPagePath(_ path: String) -> Bool {
+        guard path.hasPrefix("/page/"), path.utf8.count <= 1_024,
+              !path.contains("\0"), !path.contains(".."), !path.contains("\\") else { return false }
+        let leaf = URL(fileURLWithPath: path).lastPathComponent.lowercased()
+        return [".mu", ".md", ".txt", ".html"].contains { leaf.hasSuffix($0) }
+    }
+
+    static func isSafeNomadFilePath(_ path: String) -> Bool {
+        guard path.hasPrefix("/file/"), path.utf8.count <= 1_024,
+              !path.contains("\0"), !path.contains(".."), !path.contains("\\") else { return false }
+        let suffix = String(path.dropFirst("/file/".count))
+        return !suffix.isEmpty && suffix == URL(fileURLWithPath: suffix).lastPathComponent
+    }
+
+    private func advertiseApplicationResource(
+        _ data: Data,
+        purpose: OutgoingResourcePurpose,
+        session: ReticulumLinkSession,
+        hasMetadata: Bool,
+        requestID: Data? = nil
+    ) async throws {
+        let segments = try ReticulumResourceSegmentPlanner.prepare(
+            data: data,
+            session: session,
+            hasMetadata: hasMetadata,
+            requestID: requestID
+        )
+        guard let first = segments.first else { throw ApplicationServiceError.invalidInput }
+        registerOutgoingSegment(
+            first,
+            remaining: Array(segments.dropFirst()),
+            purpose: purpose,
+            session: session
+        )
+        try await transmitLinkPacket(
+            try session.resourceAdvertisementPacket(first.advertisement),
+            session: session
+        )
     }
 
     public enum ApplicationServiceError: LocalizedError {
@@ -2189,7 +2497,10 @@ public final class SidebandStore {
     }
 
     private func cancelActiveResources(messageID: UUID, attachmentID: UUID) async {
-        let matches = outgoingResources.filter { $0.value.messageID == messageID && $0.value.attachmentID == attachmentID }
+        let matches = outgoingResources.filter {
+            guard case let .message(candidateMessageID, candidateAttachmentID) = $0.value.purpose else { return false }
+            return candidateMessageID == messageID && candidateAttachmentID == attachmentID
+        }
         for (hash, resource) in matches {
             outgoingResources.removeValue(forKey: hash)
             if let session = activeLinks[resource.linkID] {
@@ -3082,6 +3393,25 @@ public final class SidebandStore {
     public var localDeliveryHash: String {
         let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
         return ReticulumIdentity.truncatedHash(nameHash + messagingIdentity.hash).hex
+    }
+    public var localRelayHubHash: String {
+        ReticulumRelayChatProtocol.destinationHash(for: messagingIdentity).hex
+    }
+    public var localRemoteCopyHash: String {
+        ReticulumCopyProtocol.destinationHash(for: messagingIdentity).hex
+    }
+    public var localNomadServerHash: String {
+        NomadNetworkProtocol.destinationHash(for: messagingIdentity).hex
+    }
+    private var localApplicationServiceKinds: [String: ApplicationLinkKind] {
+        var services: [String: ApplicationLinkKind] = [:]
+        if meshFeatures.relayHub.enabled { services[localRelayHubHash] = .relayHubClient }
+        if meshFeatures.remoteCopy.receiverEnabled { services[localRemoteCopyHash] = .remoteCopy }
+        if meshFeatures.nomadServer.enabled { services[localNomadServerHash] = .nomadServer }
+        return services
+    }
+    private var localDestinationHashes: Set<String> {
+        Set([localDeliveryHash, localVoiceHash]).union(localApplicationServiceKinds.keys)
     }
     public var localAnnounceAppData: Data { ReticulumAnnounceBuilder.lxmfAppData(displayName: localDisplayName) }
     public var localContactLink: SidebandContactLink {
@@ -3985,11 +4315,12 @@ public final class SidebandStore {
         // resume from a clean resource advertisement.
         let interruptedResources = Array(outgoingResources.values)
         for resource in interruptedResources {
-            if let messageIndex = messages.firstIndex(where: { $0.id == resource.messageID }) {
+            guard case let .message(messageID, attachmentID) = resource.purpose else { continue }
+            if let messageIndex = messages.firstIndex(where: { $0.id == messageID }) {
                 messages[messageIndex].state = .queued
                 messages[messageIndex].outboxOwnerID = syncDeviceID
                 messages[messageIndex].outboxOwnerUpdatedAt = .now
-                if let attachmentID = resource.attachmentID,
+                if let attachmentID,
                    let attachmentIndex = messages[messageIndex].attachments.firstIndex(where: { $0.id == attachmentID }) {
                     messages[messageIndex].attachments[attachmentIndex].state = .queued
                     messages[messageIndex].attachments[attachmentIndex].progress = 0
@@ -4401,6 +4732,7 @@ public final class SidebandStore {
             UserDefaults.standard.set(lastDeliveryAnnounceAt, forKey: "lxmfLastDeliveryAnnounceAt")
             let scope = interfaceID.map { " on \($0)" } ?? " on all ready interfaces"
             recordDeliveryDiagnosticEvent("Announced delivery destination \(localDeliveryHash)\(scope)")
+            if interfaceID == nil { _ = await announceApplicationServicesNow() }
             return true
         } catch {
             // Connection transitions are retried by the engine. An announce is
@@ -4425,7 +4757,7 @@ public final class SidebandStore {
         let source = interfaces.first(where: { $0.id == interfaceID })
             ?? ReticulumTransportInterfaceDescriptor(id: interfaceID, mode: interfaceID == "auto" ? .internalMode : .full)
         if !interfaces.contains(where: { $0.id == interfaceID }) { interfaces.append(source) }
-        let localDestinations = Set([localDeliveryHash, localVoiceHash].compactMap(Data.init(hexadecimal:)))
+        let localDestinations = Set(localDestinationHashes.compactMap(Data.init(hexadecimal:)))
         let result = await transportInstance.process(packet, from: source, available: interfaces, localDestinations: localDestinations)
         for forward in result.forwards { await transmitTransportForward(forward) }
         transportInstanceSnapshot = await transportInstance.snapshot()
@@ -4448,12 +4780,12 @@ public final class SidebandStore {
     private func receive(_ packet: ReticulumPacket, interfaceID: String? = nil) {
         receivedPacketCount += 1
         if let request = ReticulumPathRequest.decode(packet),
-           request.targetHash.hex == localDeliveryHash || request.targetHash.hex == localVoiceHash {
+           localDestinationHashes.contains(request.targetHash.hex) {
             answerLocalPathRequest(request, interfaceID: interfaceID)
             return
         }
         if packet.packetType == .linkRequest,
-           packet.destinationHash.hex == localDeliveryHash || packet.destinationHash.hex == localVoiceHash {
+           localDestinationHashes.contains(packet.destinationHash.hex) {
             recordInboundDeliveryPacket(destination: packet.destinationHash.hex, interfaceID: interfaceID, matched: true)
         } else if packet.packetType == .data,
                   packet.destinationType == .single,
@@ -4472,8 +4804,13 @@ public final class SidebandStore {
             return
         }
         if packet.packetType == .linkRequest,
-           packet.destinationHash.hex == localDeliveryHash || packet.destinationHash.hex == localVoiceHash {
-            acceptIncomingLink(packet, interfaceID: interfaceID, isVoice: packet.destinationHash.hex == localVoiceHash)
+           localDestinationHashes.contains(packet.destinationHash.hex) {
+            acceptIncomingLink(
+                packet,
+                interfaceID: interfaceID,
+                isVoice: packet.destinationHash.hex == localVoiceHash,
+                applicationKind: localApplicationServiceKinds[packet.destinationHash.hex]
+            )
             return
         }
         if packet.packetType == .proof {
@@ -4546,10 +4883,25 @@ public final class SidebandStore {
         let requestKey = request.targetHash + request.tag
         guard answeredLocalPathRequestTags[requestKey] == nil else { return }
         answeredLocalPathRequestTags[requestKey] = now
-        let destinationName = request.targetHash.hex == localVoiceHash
-            ? LXSTVoice.destinationName
-            : "lxmf.delivery"
-        let appData = destinationName == "lxmf.delivery" ? localAnnounceAppData : Data()
+        let destinationName: String
+        let appData: Data
+        switch request.targetHash.hex {
+        case localVoiceHash:
+            destinationName = LXSTVoice.destinationName
+            appData = Data()
+        case localRelayHubHash:
+            destinationName = ReticulumRelayChatProtocol.destinationName
+            appData = Data(meshFeatures.relayHub.name.utf8)
+        case localRemoteCopyHash:
+            destinationName = ReticulumCopyProtocol.destinationName
+            appData = Data("Lower Sideband RNCP".utf8)
+        case localNomadServerHash:
+            destinationName = NomadNetworkProtocol.destinationName
+            appData = Data(meshFeatures.nomadServer.name.utf8)
+        default:
+            destinationName = "lxmf.delivery"
+            appData = localAnnounceAppData
+        }
         Task {
             // Match the reference transport grace period so a directly
             // attached destination can answer before a cached transport route.
@@ -4781,6 +5133,9 @@ public final class SidebandStore {
                 acceptResourceAdvertisement(plaintext, session: session)
                 return
             }
+            if packet.context == 0x09, handleApplicationRequest(plaintext, session: session) {
+                return
+            }
             if packet.context == 0x04 {
                 handleResourceHashMapUpdate(plaintext, session: session)
                 return
@@ -4880,6 +5235,15 @@ public final class SidebandStore {
             meshFeatures.upsertShellSession(record)
         case .remoteTool:
             break
+        case .relayHubClient:
+            guard let message = try? ReticulumRelayChatProtocol.Message.decode(plaintext),
+                  var hub = hostedRelayHub else { return true }
+            let outbound = hub.receive(message, on: session.linkID.hex)
+            hostedRelayHub = hub
+            refreshHostedRelayMembers()
+            sendHostedRelayMessages(outbound)
+        case .remoteCopy, .nomadServer:
+            break
         }
         Task { [weak self] in
             guard let proof = try? session.proofPacket(for: packet) else { return }
@@ -4888,7 +5252,103 @@ public final class SidebandStore {
         return true
     }
 
-    private func acceptIncomingLink(_ packet: ReticulumPacket, interfaceID: String?, isVoice: Bool = false) {
+    private func sendHostedRelayMessages(_ outbound: [ReticulumRelayHub.Outbound]) {
+        for item in outbound {
+            guard let session = activeLinks[item.linkID],
+                  let encoded = try? item.message.encoded else { continue }
+            Task {
+                try? await transmitApplication(encoded, context: 0x00, session: session)
+            }
+        }
+    }
+
+    private func remoteIdentityIsAllowed(on session: ReticulumLinkSession, additional: Set<String> = []) -> Bool {
+        guard let identity = inboundRemoteIdentities[session.linkID.hex] else { return false }
+        let permitted = meshFeatures.remoteCopy.allowedIdentityHashes.union(additional)
+        return permitted.contains(identity.hash.hex)
+    }
+
+    private func handleApplicationRequest(_ plaintext: Data, session: ReticulumLinkSession) -> Bool {
+        guard let kind = applicationLinkKinds[session.linkID.hex],
+              let request = try? ReticulumPathRequestEnvelope.decodeRequest(plaintext) else { return false }
+        switch kind {
+        case .remoteCopy:
+            guard meshFeatures.remoteCopy.fetchEnabled,
+                  request.matches(path: ReticulumCopyProtocol.fetchPath),
+                  case let .string(remotePath) = request.data,
+                  let safePath = try? normalizedRemotePath(remotePath),
+                  let share = meshFeatures.remoteFileShares.first(where: { $0.remotePath == safePath }),
+                  remoteIdentityIsAllowed(on: session, additional: share.allowedIdentityHashes)
+            else { return true }
+            Task {
+                guard let data = try? await attachmentStore.read(share.attachment),
+                      let metadata = try? ReticulumCopyProtocol.TransferMetadata(
+                        filename: share.attachment.filename,
+                        size: UInt64(data.count),
+                        sha256: Data(SHA256.hash(data: data))
+                      ),
+                      let payload = try? ReticulumCopyProtocol.TransferMetadata.resourcePayload(
+                        metadata: metadata,
+                        fileData: data
+                      ) else { return }
+                try? await advertiseApplicationResource(
+                    payload,
+                    purpose: .nomadResponse,
+                    session: session,
+                    hasMetadata: true,
+                    requestID: request.requestID
+                )
+            }
+            return true
+        case .nomadServer:
+            if let page = meshFeatures.hostedNomadPages.first(where: {
+                $0.isPublished && request.matches(path: $0.path)
+            }) {
+                Task {
+                    guard let response = try? ReticulumPathRequestEnvelope.response(
+                        requestID: request.requestID,
+                        value: .binary(Data(page.source.utf8))
+                    ) else { return }
+                    try? await transmitApplication(response, context: 0x0a, session: session)
+                }
+                return true
+            }
+            if let file = meshFeatures.hostedNomadFiles.first(where: {
+                $0.isPublished && request.matches(path: $0.path)
+            }) {
+                Task {
+                    guard let data = try? await attachmentStore.read(file.attachment),
+                          let metadata = try? ReticulumCopyProtocol.TransferMetadata(
+                            filename: file.attachment.filename,
+                            size: UInt64(data.count),
+                            sha256: Data(SHA256.hash(data: data))
+                          ),
+                          let payload = try? ReticulumCopyProtocol.TransferMetadata.resourcePayload(
+                            metadata: metadata,
+                            fileData: data
+                          ) else { return }
+                    try? await advertiseApplicationResource(
+                        payload,
+                        purpose: .nomadResponse,
+                        session: session,
+                        hasMetadata: true,
+                        requestID: request.requestID
+                    )
+                }
+                return true
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func acceptIncomingLink(
+        _ packet: ReticulumPacket,
+        interfaceID: String?,
+        isVoice: Bool = false,
+        applicationKind: ApplicationLinkKind? = nil
+    ) {
         guard let incoming = try? ReticulumIncomingLink(request: packet, localIdentity: messagingIdentity) else {
             deliveryDebugTrace("RX link request rejected; bytes=\(packet.data.count)")
             return
@@ -4900,6 +5360,13 @@ public final class SidebandStore {
                 + "bytes=\(incoming.proofPacket.count) rawBase64=\(incoming.proofPacket.base64EncodedString())"
         )
         activeLinks[linkID] = incoming.session
+        if let applicationKind {
+            applicationLinkKinds[linkID] = applicationKind
+            if case .relayHubClient = applicationKind {
+                hostedRelayHub?.connect(linkID: linkID)
+                refreshHostedRelayMembers()
+            }
+        }
         if let interfaceID { linkInterfaceIDs[linkID] = interfaceID }
         inboundLinkIDs.insert(linkID)
         if isVoice { voiceLinkIDs.insert(linkID) }
@@ -4933,6 +5400,15 @@ public final class SidebandStore {
             let signature = Data(plaintext.suffix(64))
             guard let identity = try? ReticulumIdentity(publicKey: publicKey), identity.validate(signature: signature, message: session.linkID + publicKey) else { return }
             inboundRemoteIdentities[session.linkID.hex] = identity
+            if case .relayHubClient = applicationLinkKinds[session.linkID.hex] {
+                do {
+                    try hostedRelayHub?.identify(linkID: session.linkID.hex, identityHash: identity.hash)
+                    refreshHostedRelayMembers()
+                } catch {
+                    removeLink(session.linkID.hex)
+                }
+                return
+            }
             bind(session: session, to: identity)
             return
         }
@@ -5128,12 +5604,18 @@ public final class SidebandStore {
 
     private func removeLink(_ linkID: String) {
         let remote = linkRemoteDestinations.removeValue(forKey: linkID)
-        if case .shell(let sessionID) = applicationLinkKinds.removeValue(forKey: linkID) {
+        let applicationKind = applicationLinkKinds.removeValue(forKey: linkID)
+        if case .shell(let sessionID) = applicationKind {
             shellReceivers.removeValue(forKey: sessionID)
             if var record = meshFeatures.shellSessions.first(where: { $0.id == sessionID }) {
                 record.state = "Disconnected"; record.updatedAt = .now
                 meshFeatures.upsertShellSession(record)
             }
+        }
+        if case .relayHubClient = applicationKind {
+            let outbound = hostedRelayHub?.disconnect(linkID: linkID) ?? []
+            refreshHostedRelayMembers()
+            sendHostedRelayMessages(outbound)
         }
         activeLinks.removeValue(forKey: linkID)
         activatingOutboundLinkIDs.remove(linkID)
@@ -5821,7 +6303,8 @@ public final class SidebandStore {
             $0.destinationHash == conversation.destinationHash
         }
         let hasResourceInFlight = outgoingResources.values.contains { resource in
-            messages.first(where: { $0.id == resource.messageID })?.conversationID == conversationID
+            guard case let .message(messageID, _) = resource.purpose else { return false }
+            return messages.first(where: { $0.id == messageID })?.conversationID == conversationID
         }
         guard let nextMessage = pending.first,
               Self.deliveryPassCanAdvance(
@@ -5959,7 +6442,7 @@ public final class SidebandStore {
             recordLXMFID(lxmf.messageID, for: message.id)
             let segments = try ReticulumResourceSegmentPlanner.prepare(data: lxmf.packed, session: session, hasMetadata: false)
             guard let first = segments.first else { return }
-            registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: message.id, attachmentID: attachment.id, session: session)
+            registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), purpose: .message(messageID: message.id, attachmentID: attachment.id), session: session)
             recordDeliveryAttempt(message.id, mode: .resource)
             updateAttachment(messageID: message.id, attachmentID: attachment.id, state: .transferring, progress: 0)
             deliveryDebugTrace("TX attachment resource \(first.manifest.resourceHash.hex) on link \(session.linkID.hex), \(first.parts.count) parts")
@@ -6011,8 +6494,9 @@ public final class SidebandStore {
         deliveryDebugTrace(
             "TX link \(session.linkID.hex) became unavailable for \(conversation.destinationHash): \(error.localizedDescription); retrying"
         )
-        let resourceHashes = outgoingResources.compactMap {
-            $0.value.messageID == messageID ? $0.key : nil
+        let resourceHashes: [String] = outgoingResources.compactMap {
+            guard case let .message(candidateID, _) = $0.value.purpose else { return nil }
+            return candidateID == messageID ? $0.key : nil
         }
         for hash in resourceHashes { outgoingResources.removeValue(forKey: hash) }
         removePendingReceipts(for: messageID)
@@ -6030,7 +6514,7 @@ public final class SidebandStore {
         let deliveryEpoch = deliveryConnectionEpoch
         let segments = try ReticulumResourceSegmentPlanner.prepare(data: packed, session: session, hasMetadata: false)
         guard let first = segments.first else { return }
-        registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), messageID: messageID, attachmentID: nil, session: session)
+        registerOutgoingSegment(first, remaining: Array(segments.dropFirst()), purpose: .message(messageID: messageID, attachmentID: nil), session: session)
         recordDeliveryAttempt(messageID, mode: .resource)
         updateMessage(messageID, state: .sent)
         try await transmitLinkPacket(
@@ -6044,10 +6528,10 @@ public final class SidebandStore {
         }
     }
 
-    private func registerOutgoingSegment(_ segment: ReticulumPreparedResourceSegment, remaining: [ReticulumPreparedResourceSegment], messageID: UUID, attachmentID: UUID?, session: ReticulumLinkSession) {
+    private func registerOutgoingSegment(_ segment: ReticulumPreparedResourceSegment, remaining: [ReticulumPreparedResourceSegment], purpose: OutgoingResourcePurpose, session: ReticulumLinkSession) {
         outgoingResources[segment.manifest.resourceHash.hex] = OutgoingResource(
             manifest: segment.manifest, parts: segment.parts, expectedProof: segment.expectedProof,
-            messageID: messageID, attachmentID: attachmentID, linkID: session.linkID.hex,
+            purpose: purpose, linkID: session.linkID.hex,
             segmentIndex: segment.index, totalSegments: segment.totalSegments, remainingSegments: remaining
         )
         scheduleResourceTimeout(hash: segment.manifest.resourceHash.hex, incoming: false)
@@ -6104,8 +6588,13 @@ public final class SidebandStore {
             outgoingResources[request.resourceHash.hex] = resource
             let segmentProgress = resource.parts.isEmpty ? 1 : Double(resource.sentIndices.count) / Double(resource.parts.count)
             let progress = (Double(resource.segmentIndex - 1) + segmentProgress) / Double(resource.totalSegments)
-            if let attachmentID = resource.attachmentID {
-                updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .transferring, progress: progress)
+            if case let .message(messageID, attachmentID?) = resource.purpose {
+                updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .transferring, progress: progress)
+            } else if case let .remoteCopy(transferID) = resource.purpose,
+                      var transfer = meshFeatures.remoteFileTransfers.first(where: { $0.id == transferID }) {
+                transfer.progress = progress
+                transfer.updatedAt = .now
+                meshFeatures.upsertRemoteFileTransfer(transfer)
             }
         }
     }
@@ -6122,9 +6611,9 @@ public final class SidebandStore {
         outgoingResources.removeValue(forKey: hash.hex)
         if let next = resource.remainingSegments.first, let session = activeLinks[resource.linkID] {
             let remaining = Array(resource.remainingSegments.dropFirst())
-            registerOutgoingSegment(next, remaining: remaining, messageID: resource.messageID, attachmentID: resource.attachmentID, session: session)
-            if let attachmentID = resource.attachmentID {
-                updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .transferring, progress: Double(resource.segmentIndex) / Double(resource.totalSegments))
+            registerOutgoingSegment(next, remaining: remaining, purpose: resource.purpose, session: session)
+            if case let .message(messageID, attachmentID?) = resource.purpose {
+                updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .transferring, progress: Double(resource.segmentIndex) / Double(resource.totalSegments))
             }
             Task {
                 try? await transmitLinkPacket(
@@ -6134,14 +6623,26 @@ public final class SidebandStore {
             }
             return
         }
-        if let attachmentID = resource.attachmentID {
-            updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .available, progress: 1)
-        }
-        if resource.attachmentID == nil || (messages.first(where: { $0.id == resource.messageID })?.attachments.allSatisfy({ $0.state == .available }) == true) {
-            updateMessage(resource.messageID, state: .delivered)
-        }
-        if let conversationID = messages.first(where: { $0.id == resource.messageID })?.conversationID {
-            Task { await attemptDelivery(for: conversationID) }
+        switch resource.purpose {
+        case let .message(messageID, attachmentID):
+            if let attachmentID {
+                updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .available, progress: 1)
+            }
+            if attachmentID == nil || (messages.first(where: { $0.id == messageID })?.attachments.allSatisfy({ $0.state == .available }) == true) {
+                updateMessage(messageID, state: .delivered)
+            }
+            if let conversationID = messages.first(where: { $0.id == messageID })?.conversationID {
+                Task { await attemptDelivery(for: conversationID) }
+            }
+        case let .remoteCopy(transferID):
+            if var transfer = meshFeatures.remoteFileTransfers.first(where: { $0.id == transferID }) {
+                transfer.progress = 1
+                transfer.state = "Delivered"
+                transfer.updatedAt = .now
+                meshFeatures.upsertRemoteFileTransfer(transfer)
+            }
+        case .nomadResponse:
+            break
         }
     }
 
@@ -6294,6 +6795,48 @@ public final class SidebandStore {
             completeData = assembled
         } else { completeData = data }
 
+        if case .remoteCopy = applicationLinkKinds[incoming.session.linkID.hex] {
+            let expectedFetch = meshFeatures.remoteFileTransfers.contains {
+                $0.direction == .receiving && $0.state == "Waiting for sender"
+            }
+            guard (meshFeatures.remoteCopy.receiverEnabled && remoteIdentityIsAllowed(on: incoming.session)) || expectedFetch,
+                  let decoded = try? ReticulumCopyProtocol.TransferMetadata.decodeResourcePayload(completeData),
+                  let attachment = try? await attachmentStore.save(
+                    data: decoded.fileData,
+                    filename: decoded.metadata.filename,
+                    mimeType: nil
+                  ) else {
+                deliveryDebugTrace("RX RNCP resource \(resourceHash) was not authorised or failed integrity validation")
+                return
+            }
+            let remoteIdentity = inboundRemoteIdentities[incoming.session.linkID.hex]?.hash.hex ?? ""
+            if var transfer = meshFeatures.remoteFileTransfers.first(where: {
+                $0.direction == .receiving
+                    && $0.remotePath == decoded.metadata.filename
+                    && $0.state != "Received"
+            }) {
+                transfer.attachment = attachment
+                transfer.progress = 1
+                transfer.state = "Received"
+                transfer.updatedAt = .now
+                meshFeatures.upsertRemoteFileTransfer(transfer)
+            } else {
+                meshFeatures.upsertRemoteFileTransfer(
+                    RemoteFileTransferRecord(
+                        destinationHash: remoteIdentity,
+                        remotePath: decoded.metadata.filename,
+                        attachment: attachment,
+                        direction: .receiving,
+                        state: "Received",
+                        progress: 1
+                    )
+                )
+            }
+            incomingResourceProgress.removeValue(forKey: incoming.advertisement.originalHash.hex)
+            await acknowledgeResource()
+            return
+        }
+
         if incoming.advertisement.flags & 0x20 == 0,
            let message = try? LXMFReceivedMessage(packed: completeData),
            let identity = inboundRemoteIdentities[incoming.session.linkID.hex]
@@ -6440,12 +6983,6 @@ public final class SidebandStore {
         } else {
             guard let resource = outgoingResources[hash], resource.timeoutToken == token else { return }
             outgoingResources.removeValue(forKey: hash)
-            let conversationID = messages.first(where: { $0.id == resource.messageID })?.conversationID
-            let destinationHash = conversationID.flatMap { id in conversations.first(where: { $0.id == id })?.destinationHash }
-            if let attachmentID = resource.attachmentID {
-                updateAttachment(messageID: resource.messageID, attachmentID: attachmentID, state: .queued, progress: 0)
-                updateMessage(resource.messageID, state: .queued)
-            } else { updateMessage(resource.messageID, state: .queued) }
             if let session = activeLinks[resource.linkID] {
                 try? await transmitLinkPacket(
                     try session.resourceCancelPacket(
@@ -6455,10 +6992,28 @@ public final class SidebandStore {
                     session: session
                 )
             }
-            removeLink(resource.linkID)
-            if let destinationHash {
-                await requestLink(to: destinationHash)
-                if let conversationID { await attemptDelivery(for: conversationID) }
+            switch resource.purpose {
+            case let .message(messageID, attachmentID):
+                let conversationID = messages.first(where: { $0.id == messageID })?.conversationID
+                let destinationHash = conversationID.flatMap { id in conversations.first(where: { $0.id == id })?.destinationHash }
+                if let attachmentID {
+                    updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .queued, progress: 0)
+                    updateMessage(messageID, state: .queued)
+                } else { updateMessage(messageID, state: .queued) }
+                removeLink(resource.linkID)
+                if let destinationHash {
+                    await requestLink(to: destinationHash)
+                    if let conversationID { await attemptDelivery(for: conversationID) }
+                }
+            case let .remoteCopy(transferID):
+                if var transfer = meshFeatures.remoteFileTransfers.first(where: { $0.id == transferID }) {
+                    transfer.state = "Failed"
+                    transfer.state = "Failed: transfer timed out"
+                    transfer.updatedAt = .now
+                    meshFeatures.upsertRemoteFileTransfer(transfer)
+                }
+            case .nomadResponse:
+                break
             }
         }
     }
@@ -6469,10 +7024,22 @@ public final class SidebandStore {
                 ? "Attachment transfer was cancelled."
                 : "The recipient declined this attachment. Its receive-size policy may be lower than the file size."
             deliveryDebugTrace("RX resource cancel \(hash), sender initiated: \(initiatedBySender)")
-            recordDeliveryFailure(outgoing.messageID, reason: reason)
-            if let attachmentID = outgoing.attachmentID {
-                updateAttachment(messageID: outgoing.messageID, attachmentID: attachmentID, state: .failed, progress: 0)
-            } else { updateMessage(outgoing.messageID, state: .failed) }
+            switch outgoing.purpose {
+            case let .message(messageID, attachmentID):
+                recordDeliveryFailure(messageID, reason: reason)
+                if let attachmentID {
+                    updateAttachment(messageID: messageID, attachmentID: attachmentID, state: .failed, progress: 0)
+                } else { updateMessage(messageID, state: .failed) }
+            case let .remoteCopy(transferID):
+                if var transfer = meshFeatures.remoteFileTransfers.first(where: { $0.id == transferID }) {
+                    transfer.state = "Failed"
+                    transfer.state = "Failed: \(reason)"
+                    transfer.updatedAt = .now
+                    meshFeatures.upsertRemoteFileTransfer(transfer)
+                }
+            case .nomadResponse:
+                break
+            }
         }
         incomingResources.removeValue(forKey: hash)
     }
@@ -6581,7 +7148,10 @@ public final class SidebandStore {
     @discardableResult
     func recoverStaleSentMessages(now: Date = .now) -> Set<UUID> {
         var conversationsToRetry: Set<UUID> = []
-        let activeResourceMessageIDs = Set(outgoingResources.values.map(\.messageID))
+        let activeResourceMessageIDs = Set(outgoingResources.values.compactMap { resource -> UUID? in
+            guard case let .message(messageID, _) = resource.purpose else { return nil }
+            return messageID
+        })
         let staleMessageIDs = messages.compactMap { message -> UUID? in
             guard message.direction == .outgoing,
                   message.state == .sent,

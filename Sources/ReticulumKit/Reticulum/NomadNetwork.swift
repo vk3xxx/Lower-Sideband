@@ -25,6 +25,51 @@ public struct ReticulumPathRequestEnvelope: Equatable, Sendable {
 
     public var requestID: Data { ReticulumIdentity.truncatedHash(encoded) }
 
+    public struct DecodedRequest: Equatable, Sendable {
+        public let timestamp: Double
+        public let pathHash: Data
+        public let data: MessagePackValue
+        public let requestID: Data
+
+        public func matches(path: String) -> Bool {
+            pathHash == ReticulumIdentity.truncatedHash(Data(path.utf8))
+        }
+    }
+
+    public static func decodeRequest(_ encoded: Data) throws -> DecodedRequest {
+        guard encoded.count <= 1_048_576,
+              case let .array(values) = try MessagePackDecoder.decode(
+                encoded,
+                limits: .init(
+                    maximumDepth: 16,
+                    maximumCollectionCount: 4_096,
+                    maximumNodeCount: 8_192,
+                    maximumScalarBytes: 1_048_576
+                )
+              ),
+              values.count == 3,
+              case let .double(timestamp) = values[0],
+              timestamp.isFinite,
+              case let .binary(pathHash) = values[1],
+              pathHash.count == 16 else {
+            throw RequestError.invalidRequest
+        }
+        return DecodedRequest(
+            timestamp: timestamp,
+            pathHash: pathHash,
+            data: values[2],
+            requestID: ReticulumIdentity.truncatedHash(encoded)
+        )
+    }
+
+    public static func response(requestID: Data, value: MessagePackValue) throws -> Data {
+        guard requestID.count == 16 else { throw RequestError.invalidResponse }
+        return MessagePack.array([
+            MessagePack.binary(requestID),
+            MessagePack.encode(value)
+        ])
+    }
+
     public static func decodeResponse(_ encoded: Data, expectedRequestID: Data) throws -> Data {
         guard expectedRequestID.count == 16,
               case let .array(values) = try MessagePackDecoder.decode(

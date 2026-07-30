@@ -27,6 +27,8 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 - Encrypted local persistence and optional encrypted private CloudKit synchronisation
 - macOS Reticulum Transport Instance mode with route learning and loop suppression
 - Permission-scoped native command, service, telemetry, structured status-card, and safe declarative plugin APIs
+- Native hosted RRC rooms, an authorised RNCP send/receive/share workspace, and
+  a Nomad Mesh Server for publishing Micron pages and downloadable files
 
 ## Platform support
 

@@ -296,6 +296,170 @@ public struct RemoteToolRun: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct HostedRelayRoom: Identifiable, Codable, Hashable, Sendable {
+    public var id: String { name }
+    public var name: String
+    public var topic: String
+    public var accessKey: String?
+    public var isModerated: Bool
+    public var voicedIdentityHashes: Set<String>
+
+    public init(
+        name: String,
+        topic: String = "",
+        accessKey: String? = nil,
+        isModerated: Bool = false,
+        voicedIdentityHashes: Set<String> = []
+    ) {
+        self.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().prefix(ReticulumRelayChatProtocol.maximumRoomBytes))
+        self.topic = String(topic.trimmingCharacters(in: .whitespacesAndNewlines).prefix(512))
+        let normalizedKey = accessKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.accessKey = normalizedKey?.isEmpty == false ? String(normalizedKey!.prefix(128)) : nil
+        self.isModerated = isModerated
+        self.voicedIdentityHashes = Set(voicedIdentityHashes.filter(DestinationHash.isValid).prefix(2_048))
+    }
+}
+
+public struct HostedRelayHubConfiguration: Codable, Hashable, Sendable {
+    public var enabled: Bool
+    public var name: String
+    public var greeting: String
+    public var announceIntervalSeconds: Int
+    public var rooms: [HostedRelayRoom]
+    public var bannedIdentityHashes: Set<String>
+
+    public init(
+        enabled: Bool = false,
+        name: String = "Lower Sideband Relay",
+        greeting: String = "Welcome to Lower Sideband Relay Chat",
+        announceIntervalSeconds: Int = 900,
+        rooms: [HostedRelayRoom] = [HostedRelayRoom(name: "general")],
+        bannedIdentityHashes: Set<String> = []
+    ) {
+        self.enabled = enabled
+        self.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        self.greeting = String(greeting.trimmingCharacters(in: .whitespacesAndNewlines).prefix(512))
+        self.announceIntervalSeconds = min(86_400, max(60, announceIntervalSeconds))
+        self.rooms = Array(rooms.filter { !$0.name.isEmpty }.prefix(128))
+        self.bannedIdentityHashes = Set(bannedIdentityHashes.filter(DestinationHash.isValid).prefix(2_048))
+    }
+}
+
+public struct HostedRelayMember: Identifiable, Codable, Hashable, Sendable {
+    public var id: String { "\(linkID):\(room)" }
+    public let linkID: String
+    public let identityHash: String
+    public let nickname: String
+    public let room: String
+    public let connectedAt: Date
+}
+
+public enum RemoteFileTransferDirection: String, Codable, Sendable { case sending, receiving }
+
+public struct RemoteFileTransferRecord: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public let destinationHash: String
+    public var remotePath: String
+    public var attachment: Attachment?
+    public let direction: RemoteFileTransferDirection
+    public var state: String
+    public var progress: Double
+    public let createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        destinationHash: String,
+        remotePath: String,
+        attachment: Attachment? = nil,
+        direction: RemoteFileTransferDirection,
+        state: String = "Queued",
+        progress: Double = 0,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.destinationHash = destinationHash.lowercased()
+        self.remotePath = String(remotePath.prefix(4_096))
+        self.attachment = attachment
+        self.direction = direction
+        self.state = String(state.prefix(160))
+        self.progress = min(1, max(0, progress))
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct RemoteFileShare: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public var remotePath: String
+    public var attachment: Attachment
+    public var allowedIdentityHashes: Set<String>
+
+    public init(id: UUID = UUID(), remotePath: String, attachment: Attachment, allowedIdentityHashes: Set<String> = []) {
+        self.id = id
+        self.remotePath = String(remotePath.prefix(4_096))
+        self.attachment = attachment
+        self.allowedIdentityHashes = Set(allowedIdentityHashes.filter(DestinationHash.isValid).prefix(2_048))
+    }
+}
+
+public struct RemoteCopyConfiguration: Codable, Hashable, Sendable {
+    public var receiverEnabled: Bool
+    public var fetchEnabled: Bool
+    public var allowedIdentityHashes: Set<String>
+
+    public init(receiverEnabled: Bool = false, fetchEnabled: Bool = false, allowedIdentityHashes: Set<String> = []) {
+        self.receiverEnabled = receiverEnabled
+        self.fetchEnabled = fetchEnabled
+        self.allowedIdentityHashes = Set(allowedIdentityHashes.filter(DestinationHash.isValid).prefix(2_048))
+    }
+}
+
+public struct NomadHostedPage: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public var path: String
+    public var title: String
+    public var source: String
+    public var isPublished: Bool
+    public var updatedAt: Date
+
+    public init(id: UUID = UUID(), path: String, title: String, source: String, isPublished: Bool = true, updatedAt: Date = .now) {
+        self.id = id
+        self.path = String(path.prefix(1_024))
+        self.title = String(title.prefix(160))
+        self.source = String(source.prefix(NomadNetworkProtocol.maximumPageBytes))
+        self.isPublished = isPublished
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct NomadHostedFile: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public var path: String
+    public var attachment: Attachment
+    public var isPublished: Bool
+
+    public init(id: UUID = UUID(), path: String, attachment: Attachment, isPublished: Bool = true) {
+        self.id = id
+        self.path = String(path.prefix(1_024))
+        self.attachment = attachment
+        self.isPublished = isPublished
+    }
+}
+
+public struct NomadServerConfiguration: Codable, Hashable, Sendable {
+    public var enabled: Bool
+    public var name: String
+    public var announceIntervalSeconds: Int
+
+    public init(enabled: Bool = false, name: String = "Lower Sideband", announceIntervalSeconds: Int = 900) {
+        self.enabled = enabled
+        self.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        self.announceIntervalSeconds = min(86_400, max(60, announceIntervalSeconds))
+    }
+}
+
 @MainActor @Observable
 public final class MeshChatFeatureStore {
     public private(set) var pages: [NomadPageDocument] = []
@@ -306,6 +470,13 @@ public final class MeshChatFeatureStore {
     public private(set) var relayTranscript: [RelayChatTranscriptEntry] = []
     public private(set) var shellSessions: [RemoteShellSessionRecord] = []
     public private(set) var remoteToolRuns: [RemoteToolRun] = []
+    public private(set) var relayHub = HostedRelayHubConfiguration()
+    public private(set) var remoteCopy = RemoteCopyConfiguration()
+    public private(set) var remoteFileTransfers: [RemoteFileTransferRecord] = []
+    public private(set) var remoteFileShares: [RemoteFileShare] = []
+    public private(set) var nomadServer = NomadServerConfiguration()
+    public private(set) var hostedNomadPages: [NomadHostedPage] = []
+    public private(set) var hostedNomadFiles: [NomadHostedFile] = []
 
     private struct Payload: Codable {
         var pages: [NomadPageDocument]
@@ -316,6 +487,13 @@ public final class MeshChatFeatureStore {
         var relayTranscript: [RelayChatTranscriptEntry]?
         var shellSessions: [RemoteShellSessionRecord]?
         var remoteToolRuns: [RemoteToolRun]?
+        var relayHub: HostedRelayHubConfiguration?
+        var remoteCopy: RemoteCopyConfiguration?
+        var remoteFileTransfers: [RemoteFileTransferRecord]?
+        var remoteFileShares: [RemoteFileShare]?
+        var nomadServer: NomadServerConfiguration?
+        var hostedNomadPages: [NomadHostedPage]?
+        var hostedNomadFiles: [NomadHostedFile]?
     }
 
     private let cipher: LocalDataCipher
@@ -408,6 +586,79 @@ public final class MeshChatFeatureStore {
         remoteToolRuns = Array(remoteToolRuns.prefix(250)); persist()
     }
 
+    public func updateRelayHub(_ configuration: HostedRelayHubConfiguration) {
+        relayHub = HostedRelayHubConfiguration(
+            enabled: configuration.enabled,
+            name: configuration.name,
+            greeting: configuration.greeting,
+            announceIntervalSeconds: configuration.announceIntervalSeconds,
+            rooms: configuration.rooms,
+            bannedIdentityHashes: configuration.bannedIdentityHashes
+        )
+        persist()
+    }
+
+    public func updateRemoteCopy(_ configuration: RemoteCopyConfiguration) {
+        remoteCopy = RemoteCopyConfiguration(
+            receiverEnabled: configuration.receiverEnabled,
+            fetchEnabled: configuration.fetchEnabled,
+            allowedIdentityHashes: configuration.allowedIdentityHashes
+        )
+        persist()
+    }
+
+    public func upsertRemoteFileTransfer(_ transfer: RemoteFileTransferRecord) {
+        if let index = remoteFileTransfers.firstIndex(where: { $0.id == transfer.id }) { remoteFileTransfers[index] = transfer }
+        else { remoteFileTransfers.insert(transfer, at: 0) }
+        remoteFileTransfers = Array(remoteFileTransfers.prefix(500))
+        persist()
+    }
+
+    public func addRemoteFileShare(_ share: RemoteFileShare) {
+        remoteFileShares.removeAll { $0.id == share.id || $0.remotePath == share.remotePath }
+        remoteFileShares.insert(share, at: 0)
+        remoteFileShares = Array(remoteFileShares.prefix(250))
+        persist()
+    }
+
+    public func removeRemoteFileShare(_ id: UUID) {
+        remoteFileShares.removeAll { $0.id == id }
+        persist()
+    }
+
+    public func updateNomadServer(_ configuration: NomadServerConfiguration) {
+        nomadServer = NomadServerConfiguration(
+            enabled: configuration.enabled,
+            name: configuration.name,
+            announceIntervalSeconds: configuration.announceIntervalSeconds
+        )
+        persist()
+    }
+
+    public func upsertHostedNomadPage(_ page: NomadHostedPage) {
+        if let index = hostedNomadPages.firstIndex(where: { $0.id == page.id }) { hostedNomadPages[index] = page }
+        else { hostedNomadPages.insert(page, at: 0) }
+        hostedNomadPages = Array(hostedNomadPages.prefix(500))
+        persist()
+    }
+
+    public func removeHostedNomadPage(_ id: UUID) {
+        hostedNomadPages.removeAll { $0.id == id }
+        persist()
+    }
+
+    public func addHostedNomadFile(_ file: NomadHostedFile) {
+        hostedNomadFiles.removeAll { $0.id == file.id || $0.path == file.path }
+        hostedNomadFiles.insert(file, at: 0)
+        hostedNomadFiles = Array(hostedNomadFiles.prefix(250))
+        persist()
+    }
+
+    public func removeHostedNomadFile(_ id: UUID) {
+        hostedNomadFiles.removeAll { $0.id == id }
+        persist()
+    }
+
     private func load() {
         guard let encrypted = defaults.data(forKey: storageKey),
               let data = try? cipher.open(encrypted, context: cipherContext),
@@ -420,13 +671,24 @@ public final class MeshChatFeatureStore {
         relayTranscript = Array((payload.relayTranscript ?? []).suffix(10_000))
         shellSessions = Array((payload.shellSessions ?? []).prefix(32))
         remoteToolRuns = Array((payload.remoteToolRuns ?? []).prefix(250))
+        relayHub = payload.relayHub ?? HostedRelayHubConfiguration()
+        remoteCopy = payload.remoteCopy ?? RemoteCopyConfiguration()
+        remoteFileTransfers = Array((payload.remoteFileTransfers ?? []).prefix(500))
+        remoteFileShares = Array((payload.remoteFileShares ?? []).prefix(250))
+        nomadServer = payload.nomadServer ?? NomadServerConfiguration()
+        hostedNomadPages = Array((payload.hostedNomadPages ?? []).prefix(500))
+        hostedNomadFiles = Array((payload.hostedNomadFiles ?? []).prefix(250))
     }
 
     private func persist() {
         let payload = Payload(
             pages: pages, bookmarks: bookmarks, history: history, telephone: telephone,
             relayRooms: relayRooms, relayTranscript: relayTranscript,
-            shellSessions: shellSessions, remoteToolRuns: remoteToolRuns
+            shellSessions: shellSessions, remoteToolRuns: remoteToolRuns,
+            relayHub: relayHub, remoteCopy: remoteCopy,
+            remoteFileTransfers: remoteFileTransfers, remoteFileShares: remoteFileShares,
+            nomadServer: nomadServer, hostedNomadPages: hostedNomadPages,
+            hostedNomadFiles: hostedNomadFiles
         )
         guard let data = try? encoder.encode(payload),
               let encrypted = try? cipher.seal(data, context: cipherContext) else { return }

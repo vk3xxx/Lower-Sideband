@@ -21,7 +21,14 @@ public enum ReticulumResourceSegmentPlanner {
         }
     }
 
-    public static func prepare(data: Data, session: ReticulumLinkSession, hasMetadata: Bool, maximumSegmentSize: Int = maximumEfficientSize) throws -> [ReticulumPreparedResourceSegment] {
+    public static func prepare(
+        data: Data,
+        session: ReticulumLinkSession,
+        hasMetadata: Bool,
+        maximumSegmentSize: Int = maximumEfficientSize,
+        requestID: Data? = nil
+    ) throws -> [ReticulumPreparedResourceSegment] {
+        guard requestID == nil || requestID?.count == 16 else { throw ResourceError.invalidManifest }
         let slices = try split(data, maximumSegmentSize: maximumSegmentSize)
         var prepared: [(manifest: ReticulumResourceManifest, parts: [Data], proof: Data)] = []
         for slice in slices {
@@ -36,7 +43,15 @@ public enum ReticulumResourceSegmentPlanner {
             var flags: UInt8 = 0x01
             if hasMetadata { flags |= 0x20 }
             if prepared.count > 1 { flags |= 0x04 }
-            let advertisement = ReticulumResourceAdvertisement(manifest: item.manifest, dataSize: data.count, originalHash: originalHash, segmentIndex: index, totalSegments: prepared.count, flags: flags)
+            let advertisement = ReticulumResourceAdvertisement(
+                manifest: item.manifest,
+                dataSize: data.count,
+                originalHash: originalHash,
+                segmentIndex: index,
+                totalSegments: prepared.count,
+                requestID: requestID,
+                flags: flags
+            )
             return ReticulumPreparedResourceSegment(index: index, totalSegments: prepared.count, originalHash: originalHash, manifest: item.manifest, parts: item.parts, expectedProof: item.proof, advertisement: advertisement)
         }
     }

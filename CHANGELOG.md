@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.89 (127) - 2026-07-31
+
+- Added a native hosted Reticulum Relay Chat hub with keyed rooms, member
+  presence, rate limiting, moderated posting, bans and encrypted settings.
+- Completed the RNCP file workspace with authorised receiving, shared-file
+  fetching, bounded Resource transfers, SHA-256 verification and persistent
+  transfer status on macOS, iPhone and iPad.
+- Added a native Nomad Mesh Server for publishing Micron pages and downloadable
+  files over correlated Reticulum Link requests and Resource responses.
+- Added shared management screens and deterministic compatibility tests for
+  hosted RRC, RNCP metadata/resources, and Nomad request/response correlation.
+
 ## 1.3.88 (126) - 2026-07-31
 
 - Added wire-compatible Reticulum Relay Chat rooms with canonical CBOR, presence, join/part, actions, mentions and encrypted transcript persistence.

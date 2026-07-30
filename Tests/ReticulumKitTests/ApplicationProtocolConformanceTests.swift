@@ -97,4 +97,90 @@ struct ApplicationProtocolConformanceTests {
         #expect(fetch.path == "fetch_file")
         #expect(!fetch.encoded.isEmpty)
     }
+
+    @Test("RNCP resource metadata round-trips and detects corruption")
+    func remoteCopyResourceRoundTrip() throws {
+        let file = Data((0..<32_768).map { UInt8($0 & 0xff) })
+        let metadata = try ReticulumCopyProtocol.TransferMetadata(
+            filename: "fixture.bin",
+            size: UInt64(file.count),
+            sha256: ReticulumIdentity.fullHash(file)
+        )
+        let payload = try ReticulumCopyProtocol.TransferMetadata.resourcePayload(
+            metadata: metadata,
+            fileData: file
+        )
+        let decoded = try ReticulumCopyProtocol.TransferMetadata.decodeResourcePayload(payload)
+        #expect(decoded.metadata == metadata)
+        #expect(decoded.fileData == file)
+        var corrupt = payload
+        corrupt[corrupt.index(before: corrupt.endIndex)] ^= 0xff
+        #expect(throws: ReticulumCopyProtocol.CopyError.integrityMismatch) {
+            try ReticulumCopyProtocol.TransferMetadata.decodeResourcePayload(corrupt)
+        }
+    }
+
+    @Test("Nomad and RNCP requests decode with stable correlation")
+    func requestEnvelopeRoundTrip() throws {
+        let request = try ReticulumCopyProtocol.fetchEnvelope(remotePath: "fixture.bin", timestamp: 42)
+        let decoded = try ReticulumPathRequestEnvelope.decodeRequest(request.encoded)
+        #expect(decoded.requestID == request.requestID)
+        #expect(decoded.matches(path: ReticulumCopyProtocol.fetchPath))
+        #expect(decoded.data == .string("fixture.bin"))
+        let response = try ReticulumPathRequestEnvelope.response(
+            requestID: decoded.requestID,
+            value: .binary(Data("ok".utf8))
+        )
+        #expect(try ReticulumPathRequestEnvelope.decodeResponse(
+            response,
+            expectedRequestID: request.requestID
+        ) == Data("ok".utf8))
+    }
+
+    @Test("Hosted relay enforces keys, moderation, bans and fanout")
+    func hostedRelayPolicy() throws {
+        let alice = Data(repeating: 0x11, count: 16)
+        let bob = Data(repeating: 0x22, count: 16)
+        let room = try ReticulumRelayHub.RoomPolicy(
+            name: "ops",
+            accessKey: "secret",
+            isModerated: true,
+            voicedIdentityHashes: [alice]
+        )
+        var hub = try ReticulumRelayHub(
+            configuration: .init(name: "Test Hub", rooms: [room], bannedIdentityHashes: []),
+            hubIdentityHash: Data(repeating: 0xaa, count: 16)
+        )
+        hub.connect(linkID: "alice")
+        hub.connect(linkID: "bob")
+        try hub.identify(linkID: "alice", identityHash: alice)
+        try hub.identify(linkID: "bob", identityHash: bob)
+        for (link, identity, nickname) in [("alice", alice, "Alice"), ("bob", bob, "Bob")] {
+            _ = hub.receive(try .init(type: .hello, source: identity, nickname: nickname), on: link)
+            let joined = hub.receive(
+                try .init(type: .join, source: identity, room: "ops", body: .text("secret"), nickname: nickname),
+                on: link
+            )
+            #expect(!joined.isEmpty)
+        }
+        let accepted = hub.receive(
+            try .init(type: .message, source: alice, room: "ops", body: .text("authorised")),
+            on: "alice"
+        )
+        #expect(accepted.contains { $0.linkID == "bob" })
+        let rejected = hub.receive(
+            try .init(type: .message, source: bob, room: "ops", body: .text("blocked")),
+            on: "bob"
+        )
+        #expect(rejected.contains { $0.linkID == "bob" && $0.message.type == .error })
+
+        var bannedHub = try ReticulumRelayHub(
+            configuration: .init(name: "Banned", rooms: [room], bannedIdentityHashes: [bob]),
+            hubIdentityHash: Data(repeating: 0xbb, count: 16)
+        )
+        bannedHub.connect(linkID: "bob")
+        #expect(throws: ReticulumRelayHub.HubError.banned) {
+            try bannedHub.identify(linkID: "bob", identityHash: bob)
+        }
+    }
 }
