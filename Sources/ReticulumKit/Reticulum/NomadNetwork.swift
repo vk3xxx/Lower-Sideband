@@ -7,7 +7,7 @@ public struct ReticulumPathRequestEnvelope: Equatable, Sendable {
     public let timestamp: Double
 
     public init(path: String, data: MessagePackValue = .null, timestamp: Double = Date.now.timeIntervalSince1970) throws {
-        guard path.hasPrefix("/"), path.utf8.count <= 1_024, timestamp.isFinite else {
+        guard !path.isEmpty, !path.contains("\0"), path.utf8.count <= 1_024, timestamp.isFinite else {
             throw RequestError.invalidRequest
         }
         self.path = path

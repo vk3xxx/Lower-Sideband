@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.88 (126) - 2026-07-31
+
+- Added wire-compatible Reticulum Relay Chat rooms with canonical CBOR, presence, join/part, actions, mentions and encrypted transcript persistence.
+- Added native RNSH Channel framing, secure multi-session terminal UI, window resizing, stream reordering, reconnect state and explicit trust confirmation.
+- Added native RNX command execution and RNCP request/resource compatibility, including bounded requests, output limits, filename confinement and SHA-256 metadata.
+- Routed all three features exclusively through ReticulumKit secure links and the existing Reticulum resource pipeline.
+- Added deterministic upstream protocol vectors and hostile-input limits for RRC, RNSH, RNX and RNCP.
+
 ## 1.3.87 (125) - 2026-07-30
 
 - Added a native Nomad Network browser with validated Nomad addresses,

@@ -298,6 +298,11 @@ public final class SidebandStore {
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
     private var pendingNomadPageResponses: [String: (Result<Data, Error>) -> Void] = [:]
+    private enum ApplicationLinkKind { case relayChat(hub: String), shell(sessionID: UUID), remoteTool }
+    private var applicationLinkKinds: [String: ApplicationLinkKind] = [:]
+    private var pendingApplicationKinds: [String: ApplicationLinkKind] = [:]
+    private var shellReceivers: [UUID: ReticulumChannel.Receiver] = [:]
+    private var pendingRemoteToolResponses: [String: (Result<Data, Error>) -> Void] = [:]
     private var receivedLXMFIDs: Set<String> = []
     private var lastCommandResponseAt: [UUID: Date] = [:]
     private var inboundRemoteIdentities: [String: ReticulumIdentity] = [:]
@@ -760,6 +765,204 @@ public final class SidebandStore {
         }
         meshFeatures.recordVisit(address: address, title: address.path, source: source)
         return source
+    }
+
+    public func joinRelayChat(hubDestinationHash: String, room: String, nickname: String) async throws {
+        let destination = try validatedApplicationDestination(hubDestinationHash)
+        let session = try await applicationSession(to: destination, kind: .relayChat(hub: destination))
+        try await identify(session)
+        let source = Data(hexadecimal: messagingIdentityHash) ?? messagingIdentity.hash
+        let hello = try ReticulumRelayChatProtocol.Message(
+            type: .hello, source: source, body: ReticulumRelayChatProtocol.helloBody(
+                client: "Lower Sideband", clientVersion: applicationVersionLabel, capabilities: [0, 1]
+            ), nickname: nickname
+        )
+        let join = try ReticulumRelayChatProtocol.Message(type: .join, source: source, room: room, nickname: nickname)
+        try await transmitApplication(try hello.encoded, context: 0x00, session: session)
+        try await transmitApplication(try join.encoded, context: 0x00, session: session)
+        meshFeatures.upsertRelayRoom(RelayChatRoom(hubDestinationHash: destination, name: room, nickname: nickname))
+    }
+
+    public func partRelayChat(_ room: RelayChatRoom) async {
+        guard let session = rawApplicationSession(to: room.hubDestinationHash),
+              let source = Data(hexadecimal: messagingIdentityHash),
+              let message = try? ReticulumRelayChatProtocol.Message(type: .part, source: source, room: room.name, nickname: room.nickname),
+              let encoded = try? message.encoded else { return }
+        try? await transmitApplication(encoded, context: 0x00, session: session)
+        meshFeatures.removeRelayRoom(room.id)
+    }
+
+    public func sendRelayChatMessage(room: RelayChatRoom, text: String, action: Bool = false) async throws {
+        guard text.utf8.count <= ReticulumRelayChatProtocol.maximumMessageBytes else { throw ApplicationServiceError.invalidInput }
+        let session = try await applicationSession(to: room.hubDestinationHash, kind: .relayChat(hub: room.hubDestinationHash))
+        let message = try ReticulumRelayChatProtocol.Message(
+            type: action ? .action : .message,
+            source: Data(hexadecimal: messagingIdentityHash) ?? messagingIdentity.hash,
+            room: room.name, body: .text(text), nickname: room.nickname
+        )
+        try await transmitApplication(try message.encoded, context: 0x00, session: session)
+        meshFeatures.recordRelayMessage(message, hubDestinationHash: room.hubDestinationHash, outgoing: true)
+    }
+
+    public func openRemoteShell(destinationHash: String, title: String = "Remote Shell") async throws -> UUID {
+        let destination = try validatedApplicationDestination(destinationHash)
+        var record = RemoteShellSessionRecord(destinationHash: destination, title: title, state: "Connecting")
+        meshFeatures.upsertShellSession(record)
+        do {
+            let session = try await applicationSession(to: destination, kind: .shell(sessionID: record.id))
+            applicationLinkKinds[session.linkID.hex] = .shell(sessionID: record.id)
+            shellReceivers[record.id] = .init()
+            try await identify(session)
+            var sequence = record.nextSequence
+            let version = try ReticulumShellProtocol.envelope(
+                for: .version(software: "Lower Sideband \(applicationVersionLabel)", protocolVersion: ReticulumShellProtocol.protocolVersion),
+                sequence: sequence
+            )
+            sequence &+= 1
+            let execute = try ReticulumShellProtocol.envelope(
+                for: .execute(arguments: ["/bin/sh", "-l"], pipeStdin: true, pipeStdout: true, pipeStderr: true, terminal: "xterm-256color", rows: 24, columns: 80, horizontalPixels: 0, verticalPixels: 0),
+                sequence: sequence
+            )
+            try await transmitApplication(version.encoded, context: 0x00, session: session)
+            try await transmitApplication(execute.encoded, context: 0x00, session: session)
+            record.state = "Connected"; record.nextSequence = sequence &+ 1; record.updatedAt = .now
+            meshFeatures.upsertShellSession(record)
+            return record.id
+        } catch {
+            record.state = "Failed: \(error.localizedDescription)"; record.updatedAt = .now
+            meshFeatures.upsertShellSession(record)
+            throw error
+        }
+    }
+
+    public func sendRemoteShellInput(sessionID: UUID, text: String) async throws {
+        guard var record = meshFeatures.shellSessions.first(where: { $0.id == sessionID }),
+              let link = applicationLinkKinds.first(where: {
+                  if case .shell(let id) = $0.value { return id == sessionID }; return false
+              }).flatMap({ activeLinks[$0.key] }) else { throw ApplicationServiceError.linkUnavailable }
+        let envelope = try ReticulumShellProtocol.envelope(
+            for: .stream(id: .stdin, data: Data(text.utf8), eof: false, compressed: false),
+            sequence: record.nextSequence
+        )
+        try await transmitApplication(envelope.encoded, context: 0x00, session: link)
+        record.nextSequence &+= 1; record.updatedAt = .now
+        meshFeatures.upsertShellSession(record)
+    }
+
+    public func resizeRemoteShell(sessionID: UUID, rows: UInt64, columns: UInt64) async throws {
+        guard var record = meshFeatures.shellSessions.first(where: { $0.id == sessionID }),
+              rows > 0, columns > 0, rows <= 1_000, columns <= 1_000,
+              let link = applicationLinkKinds.first(where: {
+                  if case .shell(let id) = $0.value { return id == sessionID }; return false
+              }).flatMap({ activeLinks[$0.key] }) else { throw ApplicationServiceError.linkUnavailable }
+        let envelope = try ReticulumShellProtocol.envelope(
+            for: .windowSize(rows: rows, columns: columns, horizontalPixels: 0, verticalPixels: 0),
+            sequence: record.nextSequence
+        )
+        try await transmitApplication(envelope.encoded, context: 0x00, session: link)
+        record.nextSequence &+= 1; record.updatedAt = .now
+        meshFeatures.upsertShellSession(record)
+    }
+
+    public func executeRemoteCommand(destinationHash: String, command: String) async throws -> RemoteToolRun {
+        let destination = try validatedApplicationDestination(destinationHash)
+        var run = RemoteToolRun(destinationHash: destination, command: command, state: "Connecting")
+        meshFeatures.upsertRemoteToolRun(run)
+        do {
+            let session = try await applicationSession(to: destination, kind: .remoteTool)
+            try await identify(session)
+            let envelope = try ReticulumRemoteExecutionProtocol.requestEnvelope(.init(command: command))
+            let response: Data = try await awaitApplicationResponse(envelope, session: session)
+            let result = try ReticulumRemoteExecutionProtocol.Result.decode(response)
+            run.state = result.executed ? "Completed" : "Rejected"
+            run.stdout = result.stdout; run.stderr = result.stderr; run.exitCode = result.exitCode.map(Int.init)
+            meshFeatures.upsertRemoteToolRun(run)
+            return run
+        } catch {
+            run.state = "Failed: \(error.localizedDescription)"
+            meshFeatures.upsertRemoteToolRun(run)
+            throw error
+        }
+    }
+
+    public enum ApplicationServiceError: LocalizedError {
+        case networkOffline, unknownDestination, linkUnavailable, timedOut, invalidInput, invalidResponse
+        public var errorDescription: String? {
+            switch self {
+            case .networkOffline: "Reticulum is not connected."
+            case .unknownDestination: "A validated announce from this service is required."
+            case .linkUnavailable: "The encrypted service link could not be established."
+            case .timedOut: "The remote service did not respond in time."
+            case .invalidInput: "The request contains invalid or oversized data."
+            case .invalidResponse: "The remote service returned an invalid response."
+            }
+        }
+    }
+
+    private var applicationVersionLabel: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
+    }
+
+    private func validatedApplicationDestination(_ value: String) throws -> String {
+        let destination = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard networkState == .ready else { throw ApplicationServiceError.networkOffline }
+        guard DestinationHash.isValid(destination),
+              discoveries.contains(where: { $0.destinationHash == destination && $0.isValidated && $0.publicKey != nil }) else {
+            throw ApplicationServiceError.unknownDestination
+        }
+        return destination
+    }
+
+    private func rawApplicationSession(to destination: String) -> ReticulumLinkSession? {
+        activeLinks.first(where: { linkRemoteDestinations[$0.key] == destination })?.value
+    }
+
+    private func applicationSession(to destination: String, kind: ApplicationLinkKind) async throws -> ReticulumLinkSession {
+        if let session = rawApplicationSession(to: destination) {
+            applicationLinkKinds[session.linkID.hex] = kind
+            return session
+        }
+        pendingApplicationKinds[destination] = kind
+        if !hasPath(to: destination) { await requestPath(to: destination, surfaceErrors: false) }
+        await requestLink(to: destination)
+        let deadline = ContinuousClock.now + .seconds(20)
+        while rawApplicationSession(to: destination) == nil, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        guard let session = rawApplicationSession(to: destination) else {
+            pendingApplicationKinds.removeValue(forKey: destination)
+            throw ApplicationServiceError.linkUnavailable
+        }
+        applicationLinkKinds[session.linkID.hex] = kind
+        return session
+    }
+
+    private func transmitApplication(_ plaintext: Data, context: UInt8, session: ReticulumLinkSession) async throws {
+        guard plaintext.count <= 1_048_576 else { throw ApplicationServiceError.invalidInput }
+        try await transmitLinkPacket(try session.encryptedPacket(plaintext, context: context), session: session)
+    }
+
+    private func awaitApplicationResponse(
+        _ envelope: ReticulumPathRequestEnvelope,
+        session: ReticulumLinkSession
+    ) async throws -> Data {
+        let requestID = envelope.requestID.hex
+        return try await withCheckedThrowingContinuation { continuation in
+            var completed = false
+            pendingRemoteToolResponses[requestID] = { result in
+                guard !completed else { return }
+                completed = true
+                continuation.resume(with: result)
+            }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(90))
+                self?.pendingRemoteToolResponses.removeValue(forKey: requestID)?(.failure(ApplicationServiceError.timedOut))
+            }
+            Task { @MainActor [weak self] in
+                do { try await self?.transmitApplication(envelope.encoded, context: 0x09, session: session) }
+                catch { self?.pendingRemoteToolResponses.removeValue(forKey: requestID)?(.failure(error)) }
+            }
+        }
     }
 
     public enum NomadPageError: LocalizedError {
@@ -4505,6 +4708,9 @@ public final class SidebandStore {
         pendingLinks.removeValue(forKey: linkID)
         pendingLinkTimeoutTokens.removeValue(forKey: linkID)
         linkRemoteDestinations[linkID] = destination
+        if let applicationKind = pendingApplicationKinds.removeValue(forKey: destination) {
+            applicationLinkKinds[linkID] = applicationKind
+        }
         pendingLinkHashes.remove(destination)
         activeLinkHashes.insert(destination)
         UserDefaults.standard.set(linkID, forKey: "reticulumLastActiveLink")
@@ -4588,10 +4794,12 @@ public final class SidebandStore {
             }
             if packet.context == 0x00 || packet.context == 0xfb || packet.context == 0xfe {
                 if voiceLinkIDs.contains(linkID), handleVoiceLinkPacket(packet, plaintext: plaintext, session: session) { return }
+                if packet.context == 0x00, handleApplicationLinkPacket(packet, plaintext: plaintext, session: session) { return }
                 handleInboundLinkPacket(packet, plaintext: plaintext, session: session)
                 return
             }
             if packet.context == 0x0a {
+                if handleRemoteToolResponse(plaintext) { return }
                 if handleNomadPageResponse(plaintext) { return }
                 propagationResponsesReceived += 1
                 UserDefaults.standard.set(propagationResponsesReceived, forKey: "lxmfPropagationResponsesReceived")
@@ -4616,6 +4824,67 @@ public final class SidebandStore {
         }
         if let response { callback(.success(response)) }
         else { callback(.failure(NomadPageError.invalidResponse)) }
+        return true
+    }
+
+    private func handleRemoteToolResponse(_ plaintext: Data) -> Bool {
+        guard case let .array(parts) = try? MessagePackDecoder.decode(
+            plaintext,
+            limits: .init(maximumDepth: 16, maximumCollectionCount: 4_096, maximumNodeCount: 8_192, maximumScalarBytes: 16 * 1_048_576)
+        ), parts.count == 2, case let .binary(requestID) = parts[0],
+              let callback = pendingRemoteToolResponses.removeValue(forKey: requestID.hex) else { return false }
+        callback(.success(MessagePack.encode(parts[1])))
+        return true
+    }
+
+    private func handleApplicationLinkPacket(
+        _ packet: ReticulumPacket,
+        plaintext: Data,
+        session: ReticulumLinkSession
+    ) -> Bool {
+        guard let kind = applicationLinkKinds[session.linkID.hex] else { return false }
+        switch kind {
+        case .relayChat(let hub):
+            guard let message = try? ReticulumRelayChatProtocol.Message.decode(plaintext) else { return true }
+            meshFeatures.recordRelayMessage(message, hubDestinationHash: hub, outgoing: false)
+            if let roomName = message.room,
+               var room = meshFeatures.relayRooms.first(where: { $0.hubDestinationHash == hub && $0.name == roomName }),
+               let nickname = message.nickname {
+                if message.type == .joined, !room.members.contains(nickname) { room.members.append(nickname) }
+                if message.type == .parted { room.members.removeAll { $0 == nickname } }
+                meshFeatures.upsertRelayRoom(room)
+            }
+        case .shell(let sessionID):
+            guard let envelope = try? ReticulumChannel.Envelope.decode(plaintext) else { return true }
+            var receiver = shellReceivers[sessionID] ?? .init()
+            let messages = receiver.ingest(envelope)
+            shellReceivers[sessionID] = receiver
+            guard var record = meshFeatures.shellSessions.first(where: { $0.id == sessionID }) else { return true }
+            for ordered in messages {
+                guard let shell = try? ReticulumShellProtocol.decode(ordered) else { continue }
+                switch shell {
+                case let .stream(_, data, _, compressed):
+                    let decoded = compressed ? (try? BZip2.decompress(data, maximumOutputBytes: 1_048_576)) ?? Data() : data
+                    record.transcript = String((record.transcript + (String(data: decoded, encoding: .utf8) ?? "�")).suffix(1_048_576))
+                case .commandExited(let code):
+                    record.state = "Exited (\(code))"
+                case .error(let message, let fatal):
+                    record.transcript += "\n\(message)\n"
+                    if fatal { record.state = "Remote error" }
+                case .version(let software, let protocolVersion):
+                    record.transcript += "\nConnected to \(software) (protocol \(protocolVersion))\n"
+                default: break
+                }
+            }
+            record.updatedAt = .now
+            meshFeatures.upsertShellSession(record)
+        case .remoteTool:
+            break
+        }
+        Task { [weak self] in
+            guard let proof = try? session.proofPacket(for: packet) else { return }
+            try? await self?.transmitLinkPacket(proof, session: session)
+        }
         return true
     }
 
@@ -4859,6 +5128,13 @@ public final class SidebandStore {
 
     private func removeLink(_ linkID: String) {
         let remote = linkRemoteDestinations.removeValue(forKey: linkID)
+        if case .shell(let sessionID) = applicationLinkKinds.removeValue(forKey: linkID) {
+            shellReceivers.removeValue(forKey: sessionID)
+            if var record = meshFeatures.shellSessions.first(where: { $0.id == sessionID }) {
+                record.state = "Disconnected"; record.updatedAt = .now
+                meshFeatures.upsertShellSession(record)
+            }
+        }
         activeLinks.removeValue(forKey: linkID)
         activatingOutboundLinkIDs.remove(linkID)
         deliveryReadyOutboundLinkIDs.remove(linkID)

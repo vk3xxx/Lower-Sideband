@@ -222,18 +222,100 @@ public struct SidebandTelephonePreferences: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Relay chat, remote shell and remote tools
+
+public struct RelayChatRoom: Identifiable, Codable, Hashable, Sendable {
+    public var id: String { "\(hubDestinationHash):\(name)" }
+    public let hubDestinationHash: String
+    public var name: String
+    public var nickname: String
+    public var joinedAt: Date
+    public var members: [String]
+
+    public init(hubDestinationHash: String, name: String, nickname: String, joinedAt: Date = .now, members: [String] = []) {
+        self.hubDestinationHash = hubDestinationHash.lowercased()
+        self.name = String(name.prefix(ReticulumRelayChatProtocol.maximumRoomBytes))
+        self.nickname = String(nickname.prefix(ReticulumRelayChatProtocol.maximumNicknameBytes))
+        self.joinedAt = joinedAt
+        self.members = Array(members.prefix(1_000))
+    }
+}
+
+public struct RelayChatTranscriptEntry: Identifiable, Codable, Hashable, Sendable {
+    public let id: String
+    public let roomID: String
+    public let source: String
+    public let nickname: String?
+    public let body: String
+    public let kind: UInt64
+    public let sentAt: Date
+    public let isOutgoing: Bool
+
+    public init(message: ReticulumRelayChatProtocol.Message, hubDestinationHash: String, isOutgoing: Bool) {
+        id = message.messageID.map { String(format: "%02x", $0) }.joined()
+        roomID = "\(hubDestinationHash.lowercased()):\(message.room ?? "")"
+        source = message.source.map { String(format: "%02x", $0) }.joined()
+        nickname = message.nickname
+        if case .text(let text) = message.body { body = text } else { body = "" }
+        kind = message.type.rawValue
+        sentAt = Date(timeIntervalSince1970: Double(message.timestampMilliseconds) / 1_000)
+        self.isOutgoing = isOutgoing
+    }
+}
+
+public struct RemoteShellSessionRecord: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public let destinationHash: String
+    public var title: String
+    public var state: String
+    public var transcript: String
+    public var nextSequence: UInt16
+    public var updatedAt: Date
+
+    public init(id: UUID = UUID(), destinationHash: String, title: String = "Remote Shell", state: String = "Disconnected", transcript: String = "", nextSequence: UInt16 = 0, updatedAt: Date = .now) {
+        self.id = id; self.destinationHash = destinationHash.lowercased()
+        self.title = String(title.prefix(80)); self.state = state
+        self.transcript = String(transcript.suffix(1_048_576)); self.nextSequence = nextSequence; self.updatedAt = updatedAt
+    }
+}
+
+public struct RemoteToolRun: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public let destinationHash: String
+    public let command: String
+    public var state: String
+    public var stdout: Data
+    public var stderr: Data
+    public var exitCode: Int?
+    public let createdAt: Date
+
+    public init(id: UUID = UUID(), destinationHash: String, command: String, state: String = "Queued", stdout: Data = Data(), stderr: Data = Data(), exitCode: Int? = nil, createdAt: Date = .now) {
+        self.id = id; self.destinationHash = destinationHash.lowercased(); self.command = String(command.prefix(32_768))
+        self.state = state; self.stdout = Data(stdout.prefix(16 * 1_048_576)); self.stderr = Data(stderr.prefix(16 * 1_048_576))
+        self.exitCode = exitCode; self.createdAt = createdAt
+    }
+}
+
 @MainActor @Observable
 public final class MeshChatFeatureStore {
     public private(set) var pages: [NomadPageDocument] = []
     public private(set) var bookmarks: [NomadPageAddress] = []
     public private(set) var history: [NomadPageVisit] = []
     public private(set) var telephone = SidebandTelephonePreferences()
+    public private(set) var relayRooms: [RelayChatRoom] = []
+    public private(set) var relayTranscript: [RelayChatTranscriptEntry] = []
+    public private(set) var shellSessions: [RemoteShellSessionRecord] = []
+    public private(set) var remoteToolRuns: [RemoteToolRun] = []
 
     private struct Payload: Codable {
         var pages: [NomadPageDocument]
         var bookmarks: [NomadPageAddress]
         var history: [NomadPageVisit]
         var telephone: SidebandTelephonePreferences
+        var relayRooms: [RelayChatRoom]?
+        var relayTranscript: [RelayChatTranscriptEntry]?
+        var shellSessions: [RemoteShellSessionRecord]?
+        var remoteToolRuns: [RemoteToolRun]?
     }
 
     private let cipher: LocalDataCipher
@@ -299,6 +381,33 @@ public final class MeshChatFeatureStore {
         persist()
     }
 
+    public func upsertRelayRoom(_ room: RelayChatRoom) {
+        if let index = relayRooms.firstIndex(where: { $0.id == room.id }) { relayRooms[index] = room }
+        else { relayRooms.insert(room, at: 0) }
+        relayRooms = Array(relayRooms.prefix(128)); persist()
+    }
+
+    public func removeRelayRoom(_ id: String) { relayRooms.removeAll { $0.id == id }; persist() }
+
+    public func recordRelayMessage(_ message: ReticulumRelayChatProtocol.Message, hubDestinationHash: String, outgoing: Bool) {
+        let entry = RelayChatTranscriptEntry(message: message, hubDestinationHash: hubDestinationHash, isOutgoing: outgoing)
+        guard !relayTranscript.contains(where: { $0.id == entry.id }) else { return }
+        relayTranscript.append(entry)
+        relayTranscript = Array(relayTranscript.suffix(10_000)); persist()
+    }
+
+    public func upsertShellSession(_ session: RemoteShellSessionRecord) {
+        if let index = shellSessions.firstIndex(where: { $0.id == session.id }) { shellSessions[index] = session }
+        else { shellSessions.insert(session, at: 0) }
+        shellSessions = Array(shellSessions.prefix(32)); persist()
+    }
+
+    public func upsertRemoteToolRun(_ run: RemoteToolRun) {
+        if let index = remoteToolRuns.firstIndex(where: { $0.id == run.id }) { remoteToolRuns[index] = run }
+        else { remoteToolRuns.insert(run, at: 0) }
+        remoteToolRuns = Array(remoteToolRuns.prefix(250)); persist()
+    }
+
     private func load() {
         guard let encrypted = defaults.data(forKey: storageKey),
               let data = try? cipher.open(encrypted, context: cipherContext),
@@ -307,10 +416,18 @@ public final class MeshChatFeatureStore {
         bookmarks = Array(payload.bookmarks.prefix(250))
         history = Array(payload.history.prefix(250))
         telephone = payload.telephone
+        relayRooms = Array((payload.relayRooms ?? []).prefix(128))
+        relayTranscript = Array((payload.relayTranscript ?? []).suffix(10_000))
+        shellSessions = Array((payload.shellSessions ?? []).prefix(32))
+        remoteToolRuns = Array((payload.remoteToolRuns ?? []).prefix(250))
     }
 
     private func persist() {
-        let payload = Payload(pages: pages, bookmarks: bookmarks, history: history, telephone: telephone)
+        let payload = Payload(
+            pages: pages, bookmarks: bookmarks, history: history, telephone: telephone,
+            relayRooms: relayRooms, relayTranscript: relayTranscript,
+            shellSessions: shellSessions, remoteToolRuns: remoteToolRuns
+        )
         guard let data = try? encoder.encode(payload),
               let encrypted = try? cipher.seal(data, context: cipherContext) else { return }
         defaults.set(encrypted, forKey: storageKey)

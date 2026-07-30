@@ -28,6 +28,12 @@ struct MeshChatFeatureCenterView: View {
                     .tabItem { Label("Identities", systemImage: "person.2.badge.key") }
                 TelephoneCenterView(store: store)
                     .tabItem { Label("Telephone", systemImage: "phone") }
+                RelayChatView(store: store)
+                    .tabItem { Label("Rooms", systemImage: "person.3") }
+                RemoteShellView(store: store)
+                    .tabItem { Label("Shell", systemImage: "terminal") }
+                RemoteToolsView(store: store)
+                    .tabItem { Label("Remote", systemImage: "wrench.and.screwdriver") }
             }
             .navigationTitle("Mesh Tools")
             .toolbar {
@@ -37,6 +43,223 @@ struct MeshChatFeatureCenterView: View {
             }
         }
         .frame(minWidth: 760, minHeight: 560)
+    }
+}
+
+private struct RelayChatView: View {
+    @Bindable var store: SidebandStore
+    @State private var hub = ""
+    @State private var roomName = "#general"
+    @State private var nickname = "Sideband"
+    @State private var selectedRoomID: String?
+    @State private var message = ""
+    @State private var isWorking = false
+
+    private var selectedRoom: RelayChatRoom? {
+        store.meshFeatures.relayRooms.first { $0.id == selectedRoomID }
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            List(selection: $selectedRoomID) {
+                Section("Joined Rooms") {
+                    ForEach(store.meshFeatures.relayRooms) { room in
+                        VStack(alignment: .leading) {
+                            Text(room.name).font(.headline)
+                            Text("\(room.nickname) · \(room.members.count) present")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .tag(room.id)
+                        .contextMenu {
+                            Button("Part Room", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                                Task { await store.partRelayChat(room) }
+                            }
+                        }
+                    }
+                }
+                Section("Join a Hub") {
+                    TextField("RRC hub destination", text: $hub).font(.caption.monospaced())
+                    TextField("Room", text: $roomName)
+                    TextField("Nickname", text: $nickname)
+                    Button("Join Room", systemImage: "person.3.fill") { Task { await join() } }
+                        .disabled(isWorking || hub.isEmpty || roomName.isEmpty || nickname.isEmpty)
+                }
+            }
+            .navigationTitle("Relay Chat")
+        } detail: {
+            if let room = selectedRoom {
+                VStack(spacing: 0) {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(room.name).font(.title2.bold())
+                            Text("Encrypted via \(room.hubDestinationHash)")
+                                .font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Label("\(room.members.count)", systemImage: "person.2")
+                    }.padding()
+                    Divider()
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            ForEach(store.meshFeatures.relayTranscript.filter { $0.roomID == room.id }) { entry in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.nickname ?? entry.source).font(.caption.bold())
+                                    Text(entry.body).textSelection(.enabled)
+                                    Text(entry.sentAt, style: .time).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: entry.isOutgoing ? .trailing : .leading)
+                            }
+                        }.padding()
+                    }
+                    Divider()
+                    HStack {
+                        TextField("Message", text: $message)
+                            .onSubmit { Task { await send(room) } }
+                        Button("Send", systemImage: "paperplane.fill") { Task { await send(room) } }
+                            .buttonStyle(.borderedProminent).disabled(message.isEmpty)
+                    }.padding()
+                }
+            } else {
+                ContentUnavailableView("Join a Relay Chat room", systemImage: "person.3", description: Text("Enter a validated rrc.hub destination, room and nickname."))
+            }
+        }
+    }
+
+    @MainActor private func join() async {
+        isWorking = true; defer { isWorking = false }
+        do {
+            try await store.joinRelayChat(hubDestinationHash: hub, room: roomName, nickname: nickname)
+            selectedRoomID = "\(hub.lowercased()):\(roomName)"
+        } catch { store.lastError = error.localizedDescription }
+    }
+
+    @MainActor private func send(_ room: RelayChatRoom) async {
+        let body = message; message = ""
+        do { try await store.sendRelayChatMessage(room: room, text: body) }
+        catch { message = body; store.lastError = error.localizedDescription }
+    }
+}
+
+private struct RemoteShellView: View {
+    @Bindable var store: SidebandStore
+    @State private var destination = ""
+    @State private var selectedID: UUID?
+    @State private var input = ""
+    @State private var showingConfirmation = false
+
+    private var selected: RemoteShellSessionRecord? { store.meshFeatures.shellSessions.first { $0.id == selectedID } }
+
+    var body: some View {
+        NavigationSplitView {
+            List(selection: $selectedID) {
+                Section("Sessions") {
+                    ForEach(store.meshFeatures.shellSessions) { session in
+                        VStack(alignment: .leading) {
+                            Text(session.title).font(.headline)
+                            Text(session.state).font(.caption).foregroundStyle(session.state == "Connected" ? .green : .secondary)
+                            Text(session.destinationHash).font(.caption2.monospaced()).lineLimit(1)
+                        }.tag(session.id)
+                    }
+                }
+                Section("New Session") {
+                    TextField("RNSH destination", text: $destination).font(.caption.monospaced())
+                    Button("Connect Securely", systemImage: "lock.terminal") { showingConfirmation = true }
+                        .disabled(destination.isEmpty)
+                }
+            }.navigationTitle("Remote Shell")
+        } detail: {
+            if let session = selected {
+                VStack(spacing: 0) {
+                    HStack { Text(session.title).font(.title2.bold()); Spacer(); Text(session.state).foregroundStyle(.secondary) }.padding()
+                    Divider()
+                    ScrollView {
+                        Text(session.transcript.isEmpty ? "Waiting for remote output…" : session.transcript)
+                            .font(.body.monospaced()).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .topLeading).padding()
+                    }
+                    Divider()
+                    HStack {
+                        TextField("Terminal input", text: $input).font(.body.monospaced())
+                            .onSubmit { Task { await send(session.id) } }
+                        Button("Send", systemImage: "return") { Task { await send(session.id) } }.disabled(input.isEmpty)
+                    }.padding()
+                }
+            } else {
+                ContentUnavailableView("No remote shell selected", systemImage: "terminal", description: Text("Connections are end-to-end encrypted and require explicit confirmation."))
+            }
+        }
+        .confirmationDialog("Connect to this remote shell?", isPresented: $showingConfirmation, titleVisibility: .visible) {
+            Button("Connect") { Task { await connect() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Only connect to a destination you trust. Commands entered here execute on the remote system.")
+        }
+    }
+
+    @MainActor private func connect() async {
+        do { selectedID = try await store.openRemoteShell(destinationHash: destination) }
+        catch { store.lastError = error.localizedDescription }
+    }
+    @MainActor private func send(_ id: UUID) async {
+        let text = input + "\n"; input = ""
+        do { try await store.sendRemoteShellInput(sessionID: id, text: text) }
+        catch { store.lastError = error.localizedDescription }
+    }
+}
+
+private struct RemoteToolsView: View {
+    @Bindable var store: SidebandStore
+    @State private var destination = ""
+    @State private var command = ""
+    @State private var showingConfirmation = false
+    @State private var isRunning = false
+
+    var body: some View {
+        NavigationSplitView {
+            Form {
+                Section("RNX Remote Execution") {
+                    TextField("rnx.execute destination", text: $destination).font(.caption.monospaced())
+                    TextField("Command", text: $command).font(.body.monospaced())
+                    Button("Review and Run", systemImage: "play.fill") { showingConfirmation = true }
+                        .disabled(isRunning || destination.isEmpty || command.isEmpty)
+                }
+                Section("RNCP File Transfer") {
+                    Label("Stock Reticulum resource transfers", systemImage: "doc.badge.arrow.up")
+                    Text("RNCP upload and fetch framing, safe filenames, size limits and SHA-256 verification are provided by ReticulumKit. Transfers use the same encrypted Reticulum resource pipeline as chat attachments.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }.navigationTitle("Remote Tools")
+        } detail: {
+            List {
+                ForEach(store.meshFeatures.remoteToolRuns) { run in
+                    Section {
+                        LabeledContent("Destination", value: run.destinationHash)
+                        LabeledContent("State", value: run.state)
+                        if let exit = run.exitCode { LabeledContent("Exit code", value: "\(exit)") }
+                        if !run.stdout.isEmpty {
+                            Text(String(data: run.stdout, encoding: .utf8) ?? run.stdout.map { String(format: "%02x", $0) }.joined())
+                                .font(.body.monospaced()).textSelection(.enabled)
+                        }
+                        if !run.stderr.isEmpty {
+                            Text(String(data: run.stderr, encoding: .utf8) ?? run.stderr.map { String(format: "%02x", $0) }.joined())
+                                .font(.body.monospaced()).foregroundStyle(.red).textSelection(.enabled)
+                        }
+                    } header: { Text(run.command) }
+                }
+            }.navigationTitle("Execution History")
+        }
+        .confirmationDialog("Run this command remotely?", isPresented: $showingConfirmation, titleVisibility: .visible) {
+            Button("Run Command", role: .destructive) { Task { await run() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(command)
+        }
+    }
+
+    @MainActor private func run() async {
+        isRunning = true; defer { isRunning = false }
+        do { _ = try await store.executeRemoteCommand(destinationHash: destination, command: command) }
+        catch { store.lastError = error.localizedDescription }
     }
 }
 
