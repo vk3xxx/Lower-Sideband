@@ -178,6 +178,9 @@ public final class SidebandStore {
     public let rnodeManager = RNodeManager()
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
+    @ObservationIgnored public private(set) lazy var meshFeatures = MeshChatFeatureStore(cipher: localDataCipher)
+    public private(set) var identityProfiles: [SidebandIdentityProfile] = []
+    public private(set) var activeIdentityProfileID: UUID?
     public private(set) var attachmentStorageReport: AttachmentStorageReport?
     public private(set) var storagePolicy = SidebandStoragePolicy()
     public private(set) var lastStorageCleanupResult: SidebandStorageCleanupResult?
@@ -294,6 +297,7 @@ public final class SidebandStore {
     private var receivedResourceProofs: [String: Data] = [:]
     private enum PropagationRequestKind { case list, download }
     private var pendingPropagationRequests: [String: PropagationRequestKind] = [:]
+    private var pendingNomadPageResponses: [String: (Result<Data, Error>) -> Void] = [:]
     private var receivedLXMFIDs: Set<String> = []
     private var lastCommandResponseAt: [UUID: Date] = [:]
     private var inboundRemoteIdentities: [String: ReticulumIdentity] = [:]
@@ -509,6 +513,7 @@ public final class SidebandStore {
         receivedLXMFIDs = Set((UserDefaults.standard.stringArray(forKey: "receivedLXMFMessageIDs") ?? []).suffix(SidebandMessageLimits.maximumRememberedMessageIDs))
         if secureStorageAvailable {
             load()
+            loadIdentityProfiles()
             if FileManager.default.fileExists(atPath: legacyImportRollbackURL.path) {
                 canRollbackLegacyImport = true
             }
@@ -707,6 +712,68 @@ public final class SidebandStore {
             try session.encryptedPacket(LXSTVoice.frame(codec: call.profile.codec, payload: payload)),
             session: session
         )
+    }
+
+    public func fetchNomadPage(_ address: NomadPageAddress) async throws -> String {
+        guard networkState == .ready else { throw NomadPageError.networkOffline }
+        guard Data(hexadecimal: address.destinationHash) != nil,
+              discoveries.contains(where: { $0.destinationHash == address.destinationHash && $0.isValidated && $0.publicKey != nil }) else {
+            throw NomadPageError.unknownPageNode
+        }
+        if !hasPath(to: address.destinationHash) {
+            await requestPath(to: address.destinationHash, surfaceErrors: false)
+        }
+        await requestLink(to: address.destinationHash)
+        let deadline = ContinuousClock.now + .seconds(20)
+        while outboundSession(to: address.destinationHash) == nil, ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        guard let session = outboundSession(to: address.destinationHash) else { throw NomadPageError.linkUnavailable }
+        let envelope = try NomadNetworkProtocol.pageRequest(path: address.path, query: address.query)
+        let request = envelope.encoded
+        guard request.count <= 32_768 else { throw NomadPageError.requestTooLarge }
+        let requestID = envelope.requestID.hex
+        let response: Data = try await withCheckedThrowingContinuation { continuation in
+            var completed = false
+            pendingNomadPageResponses[requestID] = { result in
+                guard !completed else { return }
+                completed = true
+                continuation.resume(with: result)
+            }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(90))
+                guard let callback = self?.pendingNomadPageResponses.removeValue(forKey: requestID) else { return }
+                callback(.failure(NomadPageError.timedOut))
+            }
+            Task { @MainActor [weak self] in
+                do {
+                    let packet = try session.encryptedPacket(request, context: 0x09)
+                    try await self?.transmitLinkPacket(packet, session: session)
+                } catch {
+                    guard let callback = self?.pendingNomadPageResponses.removeValue(forKey: requestID) else { return }
+                    callback(.failure(error))
+                }
+            }
+        }
+        guard response.count <= 1_048_576, let source = String(data: response, encoding: .utf8) else {
+            throw NomadPageError.invalidResponse
+        }
+        meshFeatures.recordVisit(address: address, title: address.path, source: source)
+        return source
+    }
+
+    public enum NomadPageError: LocalizedError {
+        case networkOffline, unknownPageNode, linkUnavailable, requestTooLarge, timedOut, invalidResponse
+        public var errorDescription: String? {
+            switch self {
+            case .networkOffline: "Connect to Reticulum before opening a Nomad Network page."
+            case .unknownPageNode: "A validated announce from this Nomad Network page node is required."
+            case .linkUnavailable: "The encrypted page-node link could not be established."
+            case .requestTooLarge: "The page request is too large."
+            case .timedOut: "The page node did not respond before the request timed out."
+            case .invalidResponse: "The page node returned an invalid or oversized Micron page."
+            }
+        }
     }
 
     public var automaticBackupURL: URL {
@@ -2960,6 +3027,188 @@ public final class SidebandStore {
         try ReticulumIdentityText.encodePrivate(messagingIdentity)
     }
 
+    public var activeIdentityProfile: SidebandIdentityProfile? {
+        activeIdentityProfileID.flatMap { id in identityProfiles.first { $0.id == id } }
+    }
+
+    @discardableResult
+    public func createIdentityProfile(named name: String) async throws -> UUID {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty, identityProfiles.count < 16 else { throw IdentityProfileError.invalidNameOrLimit }
+        try persistActiveIdentityProfileSnapshot()
+        let identity = ReticulumIdentity()
+        guard let privateKey = identity.privateKey else { throw IdentityProfileError.keychainFailure }
+        let profile = SidebandIdentityProfile(
+            name: normalizedName,
+            destinationHash: Self.lxmfDeliveryHash(for: identity)
+        )
+        switch SecureIdentityStore.replace(privateKey, account: identityProfileKeychainAccount(profile.id), synchronizable: true) {
+        case .failure: throw IdentityProfileError.keychainFailure
+        case .success: break
+        }
+        identityProfiles.append(profile)
+        persistIdentityProfiles()
+        try await switchIdentityProfile(to: profile.id)
+        return profile.id
+    }
+
+    public func renameIdentityProfile(_ id: UUID, to name: String) throws {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, let index = identityProfiles.firstIndex(where: { $0.id == id }) else {
+            throw IdentityProfileError.invalidNameOrLimit
+        }
+        identityProfiles[index].name = String(normalized.prefix(80))
+        persistIdentityProfiles()
+    }
+
+    public func switchIdentityProfile(to id: UUID) async throws {
+        guard id != activeIdentityProfileID,
+              let targetIndex = identityProfiles.firstIndex(where: { $0.id == id }),
+              voiceCall == nil else {
+            if id == activeIdentityProfileID { return }
+            throw IdentityProfileError.activeCall
+        }
+        try persistActiveIdentityProfileSnapshot()
+        let targetMaterial = SecureIdentityStore.loadOrCreate(
+            account: identityProfileKeychainAccount(id),
+            legacyDefaultsKey: "unused.identity.profile.\(id.uuidString)",
+            synchronizable: true
+        )
+        let material: Data
+        switch targetMaterial {
+        case .success(let value): material = value
+        case .failure: throw IdentityProfileError.keychainFailure
+        }
+        let identity = try ReticulumIdentity(privateKey: material)
+        guard Self.lxmfDeliveryHash(for: identity) == identityProfiles[targetIndex].destinationHash else {
+            throw IdentityProfileError.identityMismatch
+        }
+        await disconnectNetwork()
+        flushDeferredSave()
+        switch SecureIdentityStore.replace(material, account: "lxmf.messaging", synchronizable: true) {
+        case .failure: throw IdentityProfileError.keychainFailure
+        case .success: break
+        }
+        messagingIdentity = identity
+        if let encrypted = try? Data(contentsOf: identityProfileSnapshotURL(id)),
+           let plaintext = try? localDataCipher.open(encrypted, context: identityProfileSnapshotContext(id)) {
+            try restoreSnapshotData(plaintext)
+        } else {
+            try restoreSnapshotData(JSONEncoder.sideband.encode(AppSnapshot()))
+        }
+        activeIdentityProfileID = id
+        identityProfiles[targetIndex].lastUsedAt = .now
+        UserDefaults.standard.set(id.uuidString, forKey: "sidebandActiveIdentityProfileID")
+        persistIdentityProfiles()
+        lastAnnouncedDeliveryHash = nil
+        lastDeliveryAnnounceAt = nil
+        if autoConnectEnabled { await startAutomaticConnection() }
+    }
+
+    public func deleteIdentityProfile(_ id: UUID) throws {
+        guard id != activeIdentityProfileID, identityProfiles.count > 1,
+              identityProfiles.contains(where: { $0.id == id }) else { throw IdentityProfileError.cannotDeleteActiveProfile }
+        identityProfiles.removeAll { $0.id == id }
+        SecureIdentityStore.remove(account: identityProfileKeychainAccount(id), synchronizable: true)
+        try? FileManager.default.removeItem(at: identityProfileSnapshotURL(id))
+        persistIdentityProfiles()
+    }
+
+    public func importIdentityProfile(named name: String, privateIdentityText: String) async throws -> UUID {
+        let identity = try ReticulumIdentityText.decodePrivate(privateIdentityText)
+        guard let privateKey = identity.privateKey,
+              !identityProfiles.contains(where: { $0.destinationHash == Self.lxmfDeliveryHash(for: identity) }),
+              identityProfiles.count < 16 else { throw IdentityProfileError.duplicateOrLimit }
+        try persistActiveIdentityProfileSnapshot()
+        let profile = SidebandIdentityProfile(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Imported Identity" : name,
+            destinationHash: Self.lxmfDeliveryHash(for: identity)
+        )
+        switch SecureIdentityStore.replace(privateKey, account: identityProfileKeychainAccount(profile.id), synchronizable: true) {
+        case .failure: throw IdentityProfileError.keychainFailure
+        case .success: break
+        }
+        identityProfiles.append(profile)
+        persistIdentityProfiles()
+        try await switchIdentityProfile(to: profile.id)
+        return profile.id
+    }
+
+    public enum IdentityProfileError: LocalizedError {
+        case invalidNameOrLimit, duplicateOrLimit, keychainFailure, identityMismatch, activeCall, cannotDeleteActiveProfile
+        public var errorDescription: String? {
+            switch self {
+            case .invalidNameOrLimit: "Enter a profile name. Lower Sideband supports up to 16 identities."
+            case .duplicateOrLimit: "That identity is already installed, or the 16-profile limit has been reached."
+            case .keychainFailure: "The identity could not be securely stored in Keychain."
+            case .identityMismatch: "The stored private identity does not match this profile."
+            case .activeCall: "End the active encrypted call before switching identities."
+            case .cannotDeleteActiveProfile: "Switch to another identity before deleting this profile."
+            }
+        }
+    }
+
+    private static func lxmfDeliveryHash(for identity: ReticulumIdentity) -> String {
+        let nameHash = Data(ReticulumIdentity.fullHash(Data("lxmf.delivery".utf8)).prefix(10))
+        return ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex
+    }
+
+    private func identityProfileKeychainAccount(_ id: UUID) -> String {
+        "lxmf.messaging.profile.\(id.uuidString.lowercased())"
+    }
+
+    private func identityProfileSnapshotURL(_ id: UUID) -> URL {
+        persistenceURL.deletingLastPathComponent()
+            .appending(path: "IdentityProfiles", directoryHint: .isDirectory)
+            .appending(path: "\(id.uuidString.lowercased()).lsb", directoryHint: .notDirectory)
+    }
+
+    private func identityProfileSnapshotContext(_ id: UUID) -> String {
+        "sideband-identity-profile-snapshot-\(id.uuidString.lowercased())"
+    }
+
+    private func persistActiveIdentityProfileSnapshot() throws {
+        guard let id = activeIdentityProfileID else { return }
+        flushDeferredSave()
+        let plaintext = try exportSnapshotData()
+        let encrypted = try localDataCipher.seal(plaintext, context: identityProfileSnapshotContext(id))
+        let url = identityProfileSnapshotURL(id)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try encrypted.write(to: url, options: .atomic)
+    }
+
+    private func loadIdentityProfiles() {
+        if let encrypted = UserDefaults.standard.data(forKey: "sidebandIdentityProfiles.v1"),
+           let plaintext = try? localDataCipher.open(encrypted, context: "sideband-identity-profiles-v1"),
+           let profiles = try? JSONDecoder.sideband.decode([SidebandIdentityProfile].self, from: plaintext),
+           !profiles.isEmpty {
+            identityProfiles = Array(profiles.prefix(16))
+            activeIdentityProfileID = UserDefaults.standard.string(forKey: "sidebandActiveIdentityProfileID")
+                .flatMap(UUID.init(uuidString:))
+                .flatMap { id in profiles.contains(where: { $0.id == id }) ? id : nil }
+                ?? profiles.first?.id
+            return
+        }
+        let profile = SidebandIdentityProfile(
+            name: localDisplayName,
+            destinationHash: Self.lxmfDeliveryHash(for: messagingIdentity)
+        )
+        identityProfiles = [profile]
+        activeIdentityProfileID = profile.id
+        if let privateKey = messagingIdentity.privateKey {
+            _ = SecureIdentityStore.replace(privateKey, account: identityProfileKeychainAccount(profile.id), synchronizable: true)
+        }
+        UserDefaults.standard.set(profile.id.uuidString, forKey: "sidebandActiveIdentityProfileID")
+        persistIdentityProfiles()
+        try? persistActiveIdentityProfileSnapshot()
+    }
+
+    private func persistIdentityProfiles() {
+        guard let data = try? JSONEncoder.sideband.encode(identityProfiles),
+              let encrypted = try? localDataCipher.seal(data, context: "sideband-identity-profiles-v1") else { return }
+        UserDefaults.standard.set(encrypted, forKey: "sidebandIdentityProfiles.v1")
+    }
+
     public func exportEncryptedProfile(passphrase: String, ratchets: ReticulumRatchetState? = nil) throws -> Data {
         guard let privateKey = messagingIdentity.privateKey else { throw SidebandProfileArchive.ArchiveError.invalidPayload }
         let payload = try SidebandProfileArchive.Payload(
@@ -4343,12 +4592,31 @@ public final class SidebandStore {
                 return
             }
             if packet.context == 0x0a {
+                if handleNomadPageResponse(plaintext) { return }
                 propagationResponsesReceived += 1
                 UserDefaults.standard.set(propagationResponsesReceived, forKey: "lxmfPropagationResponsesReceived")
                 UserDefaults.standard.set(plaintext, forKey: "lxmfLastPropagationResponse")
                 Task { await handlePropagationResponse(plaintext, session: session) }
             }
         }
+    }
+
+    private func handleNomadPageResponse(_ plaintext: Data) -> Bool {
+        guard case let .array(parts) = try? MessagePackDecoder.decode(
+            plaintext,
+            limits: .init(maximumDepth: 16, maximumCollectionCount: 4_096, maximumNodeCount: 8_192, maximumScalarBytes: 1_048_576)
+        ), parts.count == 2,
+              case let .binary(requestID) = parts[0],
+              let callback = pendingNomadPageResponses.removeValue(forKey: requestID.hex) else { return false }
+        let response: Data?
+        switch parts[1] {
+        case .binary(let value): response = value
+        case .string(let value): response = Data(value.utf8)
+        default: response = nil
+        }
+        if let response { callback(.success(response)) }
+        else { callback(.failure(NomadPageError.invalidResponse)) }
+        return true
     }
 
     private func acceptIncomingLink(_ packet: ReticulumPacket, interfaceID: String?, isVoice: Bool = false) {
@@ -4510,7 +4778,10 @@ public final class SidebandStore {
             var call = VoiceCall(conversationID: conversation.id, direction: .incoming, state: .incoming, profile: preferredVoiceProfile)
             call.state = .incoming
             voiceCall = call
-            scheduleVoiceTimeout(callID: call.id, seconds: 60)
+            scheduleVoiceTimeout(
+                callID: call.id,
+                seconds: TimeInterval(meshFeatures.telephone.ringTimeoutSeconds)
+            )
             Task {
                 try? await sendVoiceSignal(.ringing, on: session)
                 if !isApplicationActive { await notifications.notifyIncomingCall(conversationID: conversation.id, callerName: conversation.displayName) }
@@ -4606,10 +4877,17 @@ public final class SidebandStore {
         voiceCallTimeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled, self?.voiceCall?.id == callID else { return }
+            let timedOutCall = self?.voiceCall
+            let voicemail = self?.meshFeatures.telephone
             if let linkID = self?.activeVoiceLinkID, let session = self?.activeLinks[linkID] {
                 await self?.closeVoiceLink(session)
             }
             self?.finishVoiceCall(failure: "The voice call timed out.")
+            if let timedOutCall, timedOutCall.direction == .incoming,
+               let voicemail, voicemail.voicemailEnabled,
+               !voicemail.voicemailGreeting.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                _ = await self?.send(voicemail.voicemailGreeting, to: timedOutCall.conversationID)
+            }
         }
     }
 

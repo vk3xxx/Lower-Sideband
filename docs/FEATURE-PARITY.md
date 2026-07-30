@@ -15,8 +15,9 @@ The detailed upstream comparison and exact pinned versions are in
 | --- | --- | --- |
 | LXMF messaging | Complete | Opportunistic, direct-link and propagation delivery; proofs, retries, stamps, tickets, ratchets, replies, reactions and commands |
 | Attachments | Complete | Standard LXMF file/image fields plus linked Reticulum Resource transfers, integrity checks, resume windows and bounded storage |
-| Voice | Complete | Codec2/Opus voice messages and LXST calls with call history and jitter buffering |
-| Identity and contacts | Complete | Keychain identity, contact links/QR, verification, encrypted import/export and conversation naming |
+| Voice | Complete | Codec2/Opus voice messages and LXST calls with phonebook, contact-card sharing, voicemail preferences, ringtones, call history and jitter buffering |
+| Identity and contacts | Complete | Multiple isolated Keychain identities, secure switching, contact links/QR, verification, encrypted import/export and conversation naming |
+| Nomad Network | Complete native client | Validated Nomad addresses, ReticulumKit Link requests, bounded native Micron rendering, browsing history, bookmarks, encrypted page archive and local page editing |
 | Telemetry and maps | Complete | Canonical and unknown sensors, typed physical-link/power/processor/storage/tank/fuel coverage, local alert rules, collector streams, trails, JSON/GeoJSON/CSV/GPX export, geospatial calculations and validated offline tiles |
 | Reticulum network map | Complete | Live interfaces, observed next-hop transports, direct/multi-hop routes, propagation nodes, route search/filtering and destination actions |
 | Sync and migration | Complete with platform limits | End-to-end encrypted CloudKit snapshots, assets and tombstones; read-only Python Sideband preview/import across canonical and historical schemas, including rich LXMF fields, conversation preferences, telemetry and announces with session rollback |

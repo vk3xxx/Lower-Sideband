@@ -101,6 +101,7 @@ struct ContentView: View {
     @State private var showingSituationMap = false
     @State private var showingDeliveryActivity = false
     @State private var showingConversationOrganizer = false
+    @State private var showingMeshTools = false
     @State private var conversationSearch = ""
     @State private var showingArchived = false
     @State private var conversationFilter: ConversationFilter = .all
@@ -184,6 +185,10 @@ struct ContentView: View {
                         Label("Organize conversations", systemImage: "square.grid.2x2")
                     }
                     .help("Use smart collections, tags and bulk conversation actions")
+                    Button { showingMeshTools = true } label: {
+                        Label("Mesh tools", systemImage: "rectangle.3.group.bubble")
+                    }
+                    .help("Open Nomad pages, secure identity profiles and the LXST telephone")
                     Button {
                         #if os(macOS)
                         openWindow(id: "network-map")
@@ -310,6 +315,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingNetwork) { SidebandSettingsView(store: store, showsCloseButton: true) }
         .sheet(isPresented: $showingDeliveryActivity) { DeliveryActivityView(store: store) }
         .sheet(isPresented: $showingConversationOrganizer) { ConversationOrganizerView(store: store) }
+        .sheet(isPresented: $showingMeshTools) { MeshChatFeatureCenterView(store: store) }
         .sheet(isPresented: $showingCallHistory) { CallHistoryView(store: store) }
         #if os(macOS)
         .sheet(isPresented: $showingNetworkMap) { NetworkMapView(store: store) }
@@ -523,7 +529,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("My LXMF ID")
+                Text(store.activeIdentityProfile?.name ?? "My LXMF ID")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(store.localDeliveryHash)
@@ -535,6 +541,15 @@ struct ContentView: View {
                     .accessibilityLabel("Current LXMF ID \\(store.localDeliveryHash)")
             }
             Spacer(minLength: 4)
+            Button {
+                showingMeshTools = true
+            } label: {
+                Image(systemName: "person.2.badge.key")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Manage secure identities. Current profile: \(store.activeIdentityProfile?.name ?? "Default")")
+            .accessibilityLabel("Manage identity profiles")
             Button {
                 showingCallHistory = true
             } label: {

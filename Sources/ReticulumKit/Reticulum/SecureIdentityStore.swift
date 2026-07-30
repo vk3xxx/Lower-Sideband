@@ -58,6 +58,14 @@ public enum SecureIdentityStore {
 #endif
     }
 
+    public static func remove(account: String, synchronizable: Bool = false) {
+#if os(iOS) || os(macOS)
+        deleteKeychain(account: account, synchronizable: synchronizable)
+#else
+        UserDefaults.standard.removeObject(forKey: account)
+#endif
+    }
+
 #if DEBUG && (os(iOS) || os(macOS))
     private static let debugLock = NSLock()
     nonisolated(unsafe) private static var debugProcessMaterials: [String: Data] = [:]

@@ -1,0 +1,437 @@
+import SwiftUI
+import SidebandCore
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
+private func copyMeshFeatureText(_ text: String) {
+    #if os(macOS)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    #else
+    UIPasteboard.general.string = text
+    #endif
+}
+
+struct MeshChatFeatureCenterView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var store: SidebandStore
+
+    var body: some View {
+        NavigationStack {
+            TabView {
+                NomadPageBrowserView(store: store)
+                    .tabItem { Label("Pages", systemImage: "doc.richtext") }
+                IdentityProfilesView(store: store)
+                    .tabItem { Label("Identities", systemImage: "person.2.badge.key") }
+                TelephoneCenterView(store: store)
+                    .tabItem { Label("Telephone", systemImage: "phone") }
+            }
+            .navigationTitle("Mesh Tools")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .frame(minWidth: 760, minHeight: 560)
+    }
+}
+
+private struct NomadPageBrowserView: View {
+    @Bindable var store: SidebandStore
+    @State private var selectedID: UUID?
+    @State private var addressText = ""
+    @State private var title = ""
+    @State private var source = ""
+    @State private var editingID: UUID?
+    @State private var isLoading = false
+    @State private var showArchive = false
+    @State private var mode: EditorMode = .preview
+
+    private enum EditorMode: String, CaseIterable, Identifiable {
+        case preview = "Preview"
+        case source = "Micron"
+        var id: Self { self }
+    }
+
+    private var features: MeshChatFeatureStore { store.meshFeatures }
+    private var listedPages: [NomadPageDocument] {
+        features.pages.filter { showArchive || !$0.isArchived }
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            List(selection: $selectedID) {
+                Section("Saved Pages") {
+                    ForEach(listedPages) { page in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(page.title.isEmpty ? "Untitled Page" : page.title).font(.headline)
+                            Text(page.address?.string ?? "Local Micron document")
+                                .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        .tag(page.id)
+                        .contextMenu {
+                            Button(page.isArchived ? "Restore" : "Archive", systemImage: "archivebox") {
+                                features.archivePage(page.id, archived: !page.isArchived)
+                            }
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                features.deletePage(page.id)
+                            }
+                        }
+                    }
+                }
+                if !features.bookmarks.isEmpty {
+                    Section("Bookmarks") {
+                        ForEach(features.bookmarks, id: \.self) { address in
+                            Button {
+                                addressText = address.string
+                                Task { await openRemotePage() }
+                            } label: {
+                                Label(address.path, systemImage: "bookmark.fill")
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+                if !features.history.isEmpty {
+                    Section {
+                        ForEach(features.history.prefix(20)) { visit in
+                            Button {
+                                addressText = visit.address.string
+                                Task { await openRemotePage() }
+                            } label: {
+                                VStack(alignment: .leading) {
+                                    Text(visit.title).lineLimit(1)
+                                    Text(visit.visitedAt, style: .relative).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        Button("Clear History", role: .destructive) { features.clearHistory() }
+                    } header: { Text("History") }
+                }
+            }
+            .navigationTitle("Nomad Pages")
+            .toolbar {
+                Button { newPage() } label: { Label("New Micron page", systemImage: "square.and.pencil") }
+                Toggle(isOn: $showArchive) { Label("Archived pages", systemImage: "archivebox") }
+            }
+            .onChange(of: selectedID) { _, id in
+                guard let page = features.pages.first(where: { $0.id == id }) else { return }
+                load(page)
+            }
+        } detail: {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    TextField("nomadnet://destination/page/index.mu", text: $addressText)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.callout.monospaced())
+                        .accessibilityLabel("Nomad Network page address")
+                    Button {
+                        Task { await openRemotePage() }
+                    } label: {
+                        if isLoading { ProgressView().controlSize(.small) }
+                        else { Label("Open", systemImage: "arrow.right.circle") }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isLoading || NomadPageAddress(string: addressText) == nil)
+                    if let address = NomadPageAddress(string: addressText) {
+                        Button {
+                            features.toggleBookmark(address)
+                        } label: {
+                            Image(systemName: features.bookmarks.contains(address) ? "bookmark.fill" : "bookmark")
+                        }
+                        .help(features.bookmarks.contains(address) ? "Remove bookmark" : "Bookmark this page")
+                    }
+                }
+                .padding()
+
+                HStack {
+                    TextField("Page title", text: $title)
+                        .font(.title2.weight(.semibold))
+                        .textFieldStyle(.plain)
+                    Picker("View", selection: $mode) {
+                        ForEach(EditorMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 230)
+                    Button("Save", systemImage: "square.and.arrow.down") { savePage() }
+                        .buttonStyle(.bordered)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+
+                Divider()
+                if mode == .source {
+                    TextEditor(text: $source)
+                        .font(.body.monospaced())
+                        .padding(8)
+                        .accessibilityLabel("Micron page source editor")
+                } else {
+                    ScrollView {
+                        MicronPreview(source: source)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(24)
+                    }
+                }
+            }
+            .navigationTitle(title.isEmpty ? "Page Browser" : title)
+        }
+    }
+
+    private func newPage() {
+        editingID = nil
+        selectedID = nil
+        addressText = ""
+        title = "New Micron Page"
+        source = "# New Micron Page\n\nWrite resilient, lightweight content here."
+        mode = .source
+    }
+
+    private func load(_ page: NomadPageDocument) {
+        editingID = page.id
+        addressText = page.address?.string ?? ""
+        title = page.title
+        source = page.source
+        mode = .preview
+    }
+
+    private func savePage() {
+        let now = Date.now
+        let existing = editingID.flatMap { id in features.pages.first { $0.id == id } }
+        let page = NomadPageDocument(
+            id: editingID ?? UUID(),
+            title: title.isEmpty ? "Untitled Page" : title,
+            address: NomadPageAddress(string: addressText),
+            source: source,
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now,
+            isArchived: existing?.isArchived ?? false
+        )
+        features.savePage(page)
+        editingID = page.id
+        selectedID = page.id
+    }
+
+    @MainActor private func openRemotePage() async {
+        guard let address = NomadPageAddress(string: addressText) else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            source = try await store.fetchNomadPage(address)
+            title = address.path
+            editingID = features.pages.first(where: { $0.address == address })?.id
+            selectedID = editingID
+            mode = .preview
+        } catch {
+            store.lastError = "Could not open Nomad page: \(error.localizedDescription)"
+        }
+    }
+}
+
+private struct MicronPreview: View {
+    let source: String
+
+    var body: some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(MicronParser.parse(source).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .heading(let level, let text):
+                    Text(text).font(level == 1 ? .largeTitle.bold() : level == 2 ? .title2.bold() : .headline)
+                        .textSelection(.enabled)
+                case .paragraph(let text):
+                    Text(text).font(.body).textSelection(.enabled)
+                case .separator:
+                    Divider()
+                case .link(let label, let target):
+                    Label(label, systemImage: "link")
+                        .foregroundStyle(.tint)
+                        .help(target)
+                }
+            }
+        }
+    }
+}
+
+private struct IdentityProfilesView: View {
+    @Bindable var store: SidebandStore
+    @State private var showingCreate = false
+    @State private var showingImport = false
+    @State private var newName = ""
+    @State private var privateIdentity = ""
+    @State private var isWorking = false
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(store.identityProfiles) { profile in
+                    HStack(spacing: 12) {
+                        Image(systemName: profile.id == store.activeIdentityProfileID ? "person.crop.circle.fill.badge.checkmark" : "person.crop.circle")
+                            .font(.title2).foregroundStyle(profile.id == store.activeIdentityProfileID ? Color.green : Color.secondary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(profile.name).font(.headline)
+                            Text(profile.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                            Text(profile.id == store.activeIdentityProfileID ? "Active now" : "Last used \(profile.lastUsedAt.formatted(.relative(presentation: .named)))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if profile.id != store.activeIdentityProfileID {
+                            Button("Switch") { Task { await switchTo(profile.id) } }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(isWorking)
+                            Button(role: .destructive) {
+                                do { try store.deleteIdentityProfile(profile.id) }
+                                catch { store.lastError = error.localizedDescription }
+                            } label: { Image(systemName: "trash") }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(.vertical, 5)
+                }
+            } header: {
+                Text("Secure Identities")
+            } footer: {
+                Text("Each identity has its own encrypted conversations, drafts, call history and Reticulum destination. Private keys remain in Keychain and are never shown in this list.")
+            }
+            Section("Actions") {
+                Button("Create Identity", systemImage: "person.crop.circle.badge.plus") { showingCreate = true }
+                Button("Import Private Identity", systemImage: "square.and.arrow.down") { showingImport = true }
+            }
+        }
+        .navigationTitle("Identity Profiles")
+        .disabled(isWorking)
+        .alert("Create Identity", isPresented: $showingCreate) {
+            TextField("Profile name", text: $newName)
+            Button("Cancel", role: .cancel) {}
+            Button("Create") { Task { await createProfile() } }
+        } message: {
+            Text("A new Reticulum identity and isolated encrypted workspace will be created.")
+        }
+        .sheet(isPresented: $showingImport) {
+            NavigationStack {
+                Form {
+                    TextField("Profile name", text: $newName)
+                    TextEditor(text: $privateIdentity)
+                        .font(.caption.monospaced())
+                        .frame(minHeight: 180)
+                    Text("Paste an RNS-PRIVATE-1 identity. It is moved directly into Keychain.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .navigationTitle("Import Identity")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showingImport = false } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Import") { Task { await importProfile() } }
+                            .disabled(privateIdentity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+            .frame(minWidth: 520, minHeight: 360)
+        }
+    }
+
+    @MainActor private func createProfile() async {
+        isWorking = true
+        defer { isWorking = false; newName = "" }
+        do { _ = try await store.createIdentityProfile(named: newName) }
+        catch { store.lastError = error.localizedDescription }
+    }
+
+    @MainActor private func importProfile() async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            _ = try await store.importIdentityProfile(named: newName, privateIdentityText: privateIdentity)
+            privateIdentity = ""
+            newName = ""
+            showingImport = false
+        } catch { store.lastError = error.localizedDescription }
+    }
+
+    @MainActor private func switchTo(_ id: UUID) async {
+        isWorking = true
+        defer { isWorking = false }
+        do { try await store.switchIdentityProfile(to: id) }
+        catch { store.lastError = error.localizedDescription }
+    }
+}
+
+private struct TelephoneCenterView: View {
+    @Bindable var store: SidebandStore
+    @State private var preferences = SidebandTelephonePreferences()
+    @State private var search = ""
+
+    private var contacts: [Conversation] {
+        let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return store.conversations.filter {
+            needle.isEmpty || $0.displayName.localizedCaseInsensitiveContains(needle)
+                || $0.destinationHash.localizedCaseInsensitiveContains(needle)
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section("Phonebook") {
+                TextField("Search contacts", text: $search)
+                ForEach(contacts) { contact in
+                    HStack {
+                        Image(systemName: contact.appearanceSymbol.rawValue)
+                            .foregroundStyle(contact.isBlocked ? Color.secondary : Color.accentColor)
+                        VStack(alignment: .leading) {
+                            Text(contact.displayName)
+                            Text(contact.destinationHash).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button {
+                            Task { await store.startVoiceCall(conversationID: contact.id) }
+                        } label: { Image(systemName: "phone.fill") }
+                            .buttonStyle(.bordered)
+                            .disabled(contact.isBlocked || store.voiceCall != nil || store.networkState != .ready)
+                            .help("Start an end-to-end encrypted LXST call")
+                        Button {
+                            if let link = store.contactLink(for: contact.id) {
+                                copyMeshFeatureText(link.url.absoluteString)
+                            }
+                        } label: { Image(systemName: "person.crop.circle.badge.checkmark") }
+                            .buttonStyle(.bordered)
+                            .help("Copy this contact card for sharing")
+                    }
+                }
+            }
+            Section("Incoming Calls") {
+                Picker("Ringtone", selection: $preferences.ringtone) {
+                    ForEach(SidebandRingtone.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle("Voicemail auto-response", isOn: $preferences.voicemailEnabled)
+                if preferences.voicemailEnabled {
+                    Stepper("Answer after \(preferences.ringTimeoutSeconds) seconds", value: $preferences.ringTimeoutSeconds, in: 10...90, step: 5)
+                    TextEditor(text: $preferences.voicemailGreeting)
+                        .frame(minHeight: 90)
+                    Text("If an encrypted call is unanswered, Lower Sideband ends the call cleanly and sends this prompt so the caller can leave an LXMF voice message.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Section("Voice Quality") {
+                Picker("Preferred profile", selection: Binding(
+                    get: { store.preferredVoiceProfile },
+                    set: { store.setPreferredVoiceProfile($0) }
+                )) {
+                    ForEach(LXSTVoice.Profile.allCases.filter(\.isLocallySupported), id: \.rawValue) {
+                        Text($0.displayName).tag($0)
+                    }
+                }
+                Toggle("Trusted contacts only", isOn: Binding(
+                    get: { store.voiceTrustedOnly },
+                    set: { store.setVoiceTrustedOnly($0) }
+                ))
+                Label("Calls use native ReticulumKit links and LXST signalling.", systemImage: "lock.shield")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("LXST Telephone")
+        .onAppear { preferences = store.meshFeatures.telephone }
+        .onChange(of: preferences) { _, value in store.meshFeatures.updateTelephone(value) }
+    }
+}

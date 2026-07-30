@@ -960,3 +960,36 @@ private final class LockedFlag: @unchecked Sendable {
         }
     }
 }
+
+@Suite("Nomad Network request interoperability")
+struct NomadNetworkRequestTests {
+    @Test("Page request matches Reticulum Link request framing")
+    func pageRequestVector() throws {
+        let request = try NomadNetworkProtocol.pageRequest(
+            path: "/page/index.mu",
+            query: ["page": "2", "topic": "mesh"],
+            timestamp: 1_700_000_000.25
+        )
+        guard case let .array(values) = try MessagePackDecoder.decode(request.encoded) else {
+            Issue.record("Request is not a MessagePack array")
+            return
+        }
+        #expect(values.count == 3)
+        #expect(values[0] == .double(1_700_000_000.25))
+        #expect(values[1] == .binary(ReticulumIdentity.truncatedHash(Data("/page/index.mu".utf8))))
+        #expect(request.requestID == ReticulumIdentity.truncatedHash(request.encoded))
+    }
+
+    @Test("Response decoder authenticates request correlation")
+    func responseCorrelation() throws {
+        let request = try NomadNetworkProtocol.pageRequest(path: "/page/index.mu", query: [:], timestamp: 1)
+        let packed = MessagePack.array([
+            MessagePack.binary(request.requestID),
+            MessagePack.binary(Data("# Page".utf8))
+        ])
+        #expect(try ReticulumPathRequestEnvelope.decodeResponse(packed, expectedRequestID: request.requestID) == Data("# Page".utf8))
+        #expect(throws: ReticulumPathRequestEnvelope.RequestError.self) {
+            try ReticulumPathRequestEnvelope.decodeResponse(packed, expectedRequestID: Data(repeating: 0, count: 16))
+        }
+    }
+}

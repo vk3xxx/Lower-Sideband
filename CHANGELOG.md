@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.87 (125) - 2026-07-30
+
+- Added a native Nomad Network browser with validated Nomad addresses,
+  ReticulumKit Link request framing, bounded Micron rendering, encrypted
+  history, bookmarks, saved pages and local page editing.
+- Added multiple encrypted Reticulum identities with Keychain-backed keys,
+  isolated conversations and settings, explicit switching, import, rename and
+  deletion controls.
+- Expanded LXST telephone controls with a searchable phonebook, contact-card
+  sharing, per-identity calling, configurable ringtones, voicemail greeting
+  and ring timeout, while retaining encrypted call history and audio quality
+  controls.
+- Added protocol and persistence regression tests for Nomad request
+  correlation, address bounds, Micron safety and encrypted feature storage.
+
 ## 1.3.66
 
 - Added privacy-preserving MetricKit lifecycle integration with aggregate

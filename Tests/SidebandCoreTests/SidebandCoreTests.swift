@@ -5001,6 +5001,51 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(!ConversationOrganisation.matches(conversation, collection: .all, messages: [message], tag: "Family"))
 }
 
+@Test func nomadPageAddressesRoundTripAndBoundInput() throws {
+    let address = try #require(NomadPageAddress(
+        destinationHash: "0123456789abcdef0123456789abcdef",
+        path: "/page/index.mu",
+        query: ["topic": "field notes", "page": "2"]
+    ))
+    #expect(NomadPageAddress(string: address.string) == address)
+    #expect(NomadPageAddress(string: "nomadnet://invalid/page/index.mu") == nil)
+    #expect(NomadPageAddress(destinationHash: address.destinationHash, path: String(repeating: "x", count: 1_100)) == nil)
+}
+
+@Test func micronParserProducesSafeNativeBlocks() {
+    let blocks = MicronParser.parse("""
+    # Mesh Notes
+
+    A resilient paragraph with `Ff00formatting stripped.
+    `[Open page`0123456789abcdef0123456789abcdef:/page/index.mu]
+    ---
+    """)
+    #expect(blocks.contains(.heading(level: 1, text: "Mesh Notes")))
+    #expect(blocks.contains(.paragraph("A resilient paragraph with Ff00formatting stripped.")))
+    #expect(blocks.contains(.link(label: "Open page", target: "0123456789abcdef0123456789abcdef:/page/index.mu")))
+    #expect(blocks.contains(.separator))
+}
+
+@MainActor @Test func meshFeatureLibraryEncryptsPagesAndTelephonePreferences() {
+    let suite = "mesh-features-\(UUID().uuidString)"
+    let defaults = try! #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let cipher = LocalDataCipher(keyMaterial: Data(repeating: 0x42, count: 64))
+    let library = MeshChatFeatureStore(cipher: cipher, defaults: defaults)
+    let address = NomadPageAddress(destinationHash: "0123456789abcdef0123456789abcdef")!
+    library.recordVisit(address: address, title: "Node", source: "# Node")
+    library.toggleBookmark(address)
+    library.updateTelephone(.init(ringtone: .beacon, voicemailEnabled: true, voicemailGreeting: "Leave a voice note", ringTimeoutSeconds: 35))
+    let stored = try! #require(defaults.data(forKey: "meshChatApplicationFeatures.v1"))
+    #expect(cipher.isEncrypted(stored))
+    #expect(!String(decoding: stored, as: UTF8.self).contains("Leave a voice note"))
+    let restored = MeshChatFeatureStore(cipher: cipher, defaults: defaults)
+    #expect(restored.pages.first?.source == "# Node")
+    #expect(restored.bookmarks == [address])
+    #expect(restored.telephone.voicemailEnabled)
+    #expect(restored.telephone.ringTimeoutSeconds == 35)
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }
