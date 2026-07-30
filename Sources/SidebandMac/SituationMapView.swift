@@ -22,10 +22,12 @@ struct SituationMapView: View {
     @State private var importingOverlay = false
     @State private var offlineLines: [OfflineMapLine] = []
     @State private var overlayName: String?
+    @State private var cameraPosition: MapCameraPosition = .automatic
+    @State private var visibleRegion: MKCoordinateRegion?
 
     var body: some View {
         NavigationStack {
-            Map(initialPosition: .automatic) {
+            Map(position: $cameraPosition) {
                 ForEach(offlineLines) { line in
                     MapPolyline(coordinates: line.coordinates).stroke(.secondary.opacity(0.75), lineWidth: 2)
                 }
@@ -39,7 +41,14 @@ struct SituationMapView: View {
                     }
                 }
             }
+            .onMapCameraChange(frequency: .continuous) { context in
+                visibleRegion = context.region
+            }
             .mapControls { MapCompass(); MapScaleView(); MapUserLocationButton() }
+            .overlay(alignment: .trailing) {
+                zoomControls
+                    .padding(.trailing, 12)
+            }
             .overlay(alignment: .bottomLeading) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(points.count) tracked object\(points.count == 1 ? "" : "s")")
@@ -65,6 +74,68 @@ struct SituationMapView: View {
             }
         }
         .platformSituationMapSize()
+    }
+
+    private var zoomControls: some View {
+        VStack(spacing: 0) {
+            Button {
+                zoom(by: 0.5)
+            } label: {
+                Image(systemName: "plus")
+                    .frame(width: 38, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Zoom in")
+            .accessibilityHint("Shows a smaller geographic area in more detail")
+            .help("Zoom in · \(zoomLevelDescription)")
+
+            Divider()
+
+            Button {
+                zoom(by: 2)
+            } label: {
+                Image(systemName: "minus")
+                    .frame(width: 38, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Zoom out")
+            .accessibilityHint("Shows a larger geographic area")
+            .help("Zoom out · \(zoomLevelDescription)")
+        }
+        .font(.headline)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.35), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var zoomLevelDescription: String {
+        guard let span = visibleRegion?.span.latitudeDelta else {
+            return "automatic map scale"
+        }
+        switch span {
+        case ..<0.01: return "street-level view"
+        case ..<0.1: return "local-area view"
+        case ..<1: return "regional view"
+        default: return "wide-area view"
+        }
+    }
+
+    private func zoom(by factor: CLLocationDegrees) {
+        guard var region = visibleRegion else {
+            cameraPosition = .automatic
+            return
+        }
+        region.span.latitudeDelta = min(180, max(0.0005, region.span.latitudeDelta * factor))
+        region.span.longitudeDelta = min(360, max(0.0005, region.span.longitudeDelta * factor))
+        withAnimation(.easeInOut(duration: 0.2)) {
+            cameraPosition = .region(region)
+        }
     }
 
     private var points: [SituationPoint] {
