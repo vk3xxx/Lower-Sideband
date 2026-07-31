@@ -5360,6 +5360,77 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(report.redactedText.contains("FAIL"))
 }
 
+@MainActor @Test func signedAcceptancePortfolioRejectsTamperingAndAggregatesApplePlatforms() throws {
+    let suite = "acceptance-portfolio-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let cipher = LocalDataCipher(keyMaterial: Data(repeating: 0x52, count: 64))
+    let identity = ReticulumIdentity()
+    let results = Dictionary(uniqueKeysWithValues: SidebandAcceptanceScenario.allCases.map {
+        ($0.rawValue, SidebandAcceptanceResult(outcome: .passed, testedAt: .now, notes: "", build: "132", operatingSystem: "Test OS"))
+    })
+
+    func signed(_ platform: SidebandAcceptancePlatform) throws -> SidebandSignedAcceptanceReport {
+        try SidebandSignedAcceptanceReport.signed(
+            report: SidebandAcceptanceReport(
+                schemaVersion: 1,
+                runID: UUID(),
+                startedAt: .now,
+                generatedAt: .now,
+                device: platform.title,
+                platform: platform,
+                operatingSystem: "Test OS",
+                appBuild: "1.3.94 (132)",
+                isPhysicalDevice: true,
+                isReadyForReleaseReview: true,
+                results: results
+            ),
+            identity: identity
+        )
+    }
+
+    let portfolio = SidebandAcceptancePortfolio(defaults: defaults, cipher: cipher)
+    for platform in [SidebandAcceptancePlatform.mac, .iPhone, .iPad] {
+        _ = try portfolio.importReport(signed(platform).encoded())
+    }
+    #expect(portfolio.allPrimaryPlatformsReady)
+    #expect(portfolio.latestByPlatform.count == 3)
+
+    let valid = try signed(.mac)
+    let tampered = SidebandSignedAcceptanceReport(
+        schemaVersion: valid.schemaVersion,
+        report: valid.report,
+        signerPublicKey: valid.signerPublicKey,
+        signature: Data(repeating: 0, count: valid.signature.count)
+    )
+    #expect(throws: SidebandAcceptancePortfolioError.self) {
+        try portfolio.importReport(tampered.encoded())
+    }
+
+    let stored = try #require(defaults.data(forKey: "deviceAcceptancePortfolio.v1"))
+    #expect(!String(decoding: stored, as: UTF8.self).contains("Test OS"))
+    #expect(SidebandAcceptancePortfolio(defaults: defaults, cipher: cipher).allPrimaryPlatformsReady)
+}
+
+@MainActor @Test func recoveryDrillAndRestoreRollbackPreserveValidatedData() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = SidebandStore(persistenceURL: root.appending(path: "store.json"))
+    #expect(store.addConversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Original"))
+    let drill = try store.runNonDestructiveRecoveryDrill()
+    #expect(drill.passed)
+    #expect(drill.conversationCount == 1)
+
+    let replacement = SidebandStore(persistenceURL: root.appending(path: "replacement.json"))
+    #expect(replacement.addConversation(destinationHash: "fedcba9876543210fedcba9876543210", displayName: "Replacement"))
+    try store.restoreSnapshotData(replacement.exportSnapshotData())
+    #expect(store.conversations.first?.displayName == "Replacement")
+    #expect(store.canRollbackSnapshotRestore)
+    try store.rollbackLastSnapshotRestore()
+    #expect(store.conversations.first?.displayName == "Original")
+    #expect(!store.canRollbackSnapshotRestore)
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }

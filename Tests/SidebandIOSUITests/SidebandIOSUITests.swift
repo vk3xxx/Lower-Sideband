@@ -1,0 +1,43 @@
+import XCTest
+
+@MainActor final class SidebandIOSUITests: XCTestCase {
+    private var app: XCUIApplication!
+
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchEnvironment["SIDEBAND_UI_TEST_RUN_ID"] = UUID().uuidString
+        app.launchEnvironment["SIDEBAND_UI_TESTING"] = "1"
+        app.launch()
+    }
+
+    func testCoreNavigationAndConversationCreation() throws {
+        let settings = app.descendants(matching: .any)["app-settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 15))
+        retainScreenshot("01-home")
+
+        app.descendants(matching: .any)["new-conversation"].tap()
+        let address = app.textFields["new-conversation-address"]
+        XCTAssertTrue(address.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["create-conversation"].isEnabled)
+        address.tap()
+        address.typeText("0123456789abcdef0123456789abcdef")
+        XCTAssertTrue(app.buttons["create-conversation"].isEnabled)
+        retainScreenshot("02-new-conversation")
+    }
+
+    func testSettingsRemainReachableAndReadable() throws {
+        let settings = app.descendants(matching: .any)["app-settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 15))
+        settings.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["settings-navigation"].waitForExistence(timeout: 8))
+        retainScreenshot("03-settings")
+    }
+
+    private func retainScreenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

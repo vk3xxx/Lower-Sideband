@@ -134,6 +134,7 @@ struct SidebandSettingsView: View {
     @State private var confirmation: SettingsConfirmation?
     @State private var supportBundleDocument: SupportBundleDocument?
     @State private var showingSupportBundleExporter = false
+    @State private var showingAcceptanceImporter = false
     @State private var exportFilename = "Lower-Sideband-Support"
     @State private var networkProfileName = ""
 
@@ -153,6 +154,13 @@ struct SidebandSettingsView: View {
         ) { result in
             if case .failure(let error) = result { store.lastError = "Support report export failed: \(error.localizedDescription)" }
             supportBundleDocument = nil
+        }
+        .fileImporter(
+            isPresented: $showingAcceptanceImporter,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: true
+        ) { result in
+            importAcceptanceReports(result)
         }
     }
 
@@ -1138,6 +1146,35 @@ struct SidebandSettingsView: View {
                 }
                 .accessibilityIdentifier("export-redacted-support-report")
                 Button("Copy Attachment Report") { settingsCopy(store.attachmentStorageDiagnostics) }
+                Button {
+                    do {
+                        _ = try store.runNonDestructiveRecoveryDrill()
+                    } catch {
+                        store.lastError = "Recovery drill failed: \(error.localizedDescription)"
+                    }
+                } label: {
+                    Label("Run Non-Destructive Recovery Drill", systemImage: "externaldrive.badge.checkmark")
+                }
+                .accessibilityIdentifier("run-recovery-drill")
+                if let report = store.lastRecoveryDrillReport {
+                    SettingsStateRow(
+                        title: "Recovery drill",
+                        value: report.passed ? "Passed" : "Failed",
+                        icon: report.passed ? "checkmark.shield.fill" : "exclamationmark.triangle.fill",
+                        tint: report.passed ? .green : .red
+                    )
+                    Text("\(report.messageCount) messages · \(report.snapshotBytes.formatted(.byteCount(style: .file))) · \(report.completedAt.formatted())")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Undo Last Snapshot Restore", role: .destructive) {
+                    do {
+                        try store.rollbackLastSnapshotRestore()
+                    } catch {
+                        store.lastError = "Snapshot rollback failed: \(error.localizedDescription)"
+                    }
+                }
+                .disabled(!store.canRollbackSnapshotRestore)
             } header: {
                 Text("Diagnostics")
             } footer: {
@@ -1177,9 +1214,44 @@ struct SidebandSettingsView: View {
                 Button {
                     exportAcceptanceReport()
                 } label: {
-                    Label("Export Acceptance Report", systemImage: "doc.badge.arrow.up")
+                    Label("Export Signed Acceptance Report", systemImage: "signature")
                 }
                 .accessibilityIdentifier("export-device-acceptance-report")
+                Button {
+                    showingAcceptanceImporter = true
+                } label: {
+                    Label("Import Device Reports", systemImage: "square.and.arrow.down")
+                }
+                .accessibilityIdentifier("import-device-acceptance-report")
+                SettingsStateRow(
+                    title: "Apple platform matrix",
+                    value: store.acceptancePortfolio.allPrimaryPlatformsReady ? "Complete" : "Incomplete",
+                    icon: store.acceptancePortfolio.allPrimaryPlatformsReady ? "checkmark.shield.fill" : "laptopcomputer.and.iphone",
+                    tint: store.acceptancePortfolio.allPrimaryPlatformsReady ? .green : .orange
+                )
+                ForEach([SidebandAcceptancePlatform.mac, .iPhone, .iPad], id: \.rawValue) { platform in
+                    if let signed = store.acceptancePortfolio.latestByPlatform[platform] {
+                        LabeledContent(platform.title) {
+                            Label(
+                                signed.report.isReadyForReleaseReview ? "Passed" : "Incomplete",
+                                systemImage: signed.report.isReadyForReleaseReview
+                                    ? "checkmark.seal.fill" : "exclamationmark.triangle"
+                            )
+                            .foregroundStyle(signed.report.isReadyForReleaseReview ? .green : .orange)
+                        }
+                        Text("\(signed.report.appBuild) · \(signed.signerFingerprint)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    } else {
+                        LabeledContent(platform.title, value: "No signed report")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button("Remove Imported Reports", role: .destructive) {
+                    store.acceptancePortfolio.removeAll()
+                }
+                .disabled(store.acceptancePortfolio.reports.isEmpty)
                 Button("Start New Acceptance Run", systemImage: "arrow.clockwise") {
                     store.deviceAcceptance.startNewRun()
                 }
@@ -1229,11 +1301,23 @@ struct SidebandSettingsView: View {
 
     private func exportAcceptanceReport() {
         do {
-            supportBundleDocument = SupportBundleDocument(data: try store.deviceAcceptance.exportData())
-            exportFilename = "Lower-Sideband-Device-Acceptance-\(Date.now.formatted(.iso8601.year().month().day()))"
+            supportBundleDocument = SupportBundleDocument(data: try store.exportSignedAcceptanceReportData())
+            exportFilename = "Lower-Sideband-Signed-Acceptance-\(Date.now.formatted(.iso8601.year().month().day()))"
             showingSupportBundleExporter = true
         } catch {
             store.lastError = "Acceptance report export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importAcceptanceReports(_ result: Result<[URL], Error>) {
+        do {
+            for url in try result.get() {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                _ = try store.importSignedAcceptanceReportData(Data(contentsOf: url))
+            }
+        } catch {
+            store.lastError = "Acceptance report import failed: \(error.localizedDescription)"
         }
     }
 

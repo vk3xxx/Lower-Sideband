@@ -177,6 +177,9 @@ public final class SidebandStore {
     public let backgroundRefresh = BackgroundRefreshCoordinator()
     public let runtimeHealth = SidebandRuntimeHealth()
     public let deviceAcceptance = SidebandDeviceAcceptance()
+    @ObservationIgnored public private(set) lazy var acceptancePortfolio = SidebandAcceptancePortfolio(
+        cipher: localDataCipher
+    )
     public let rnodeManager = RNodeManager()
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
@@ -196,6 +199,8 @@ public final class SidebandStore {
     public private(set) var networkInterfaces: [ReticulumTCPInterfacePool.Snapshot] = []
     public private(set) var discoveredNetworkInterfaces: [DiscoveredReticulumInterface] = []
     public private(set) var lastQuarantinedPersistenceURL: URL?
+    public private(set) var lastRecoveryDrillReport: SidebandRecoveryDrillReport?
+    public private(set) var canRollbackSnapshotRestore = false
     public private(set) var canRollbackLegacyImport = false
     public private(set) var lastLegacyImportAt: Date?
     public private(set) var lastLegacyImportSummary: String?
@@ -212,6 +217,18 @@ public final class SidebandStore {
     }
 
     public var currentSyncDeviceID: String { syncDeviceID }
+
+    public func exportSignedAcceptanceReportData(now: Date = .now) throws -> Data {
+        try SidebandSignedAcceptanceReport.signed(
+            report: deviceAcceptance.makeReport(now: now),
+            identity: messagingIdentity
+        ).encoded()
+    }
+
+    @discardableResult
+    public func importSignedAcceptanceReportData(_ data: Data) throws -> SidebandSignedAcceptanceReport {
+        try acceptancePortfolio.importReport(data)
+    }
     public var continuityDevices: [SidebandContinuityDevice] {
         ContinuityDeviceBuilder.build(currentID: syncDeviceID, knownDevices: knownSyncDevices, messages: messages)
     }
@@ -228,6 +245,9 @@ public final class SidebandStore {
     @ObservationIgnored private var legacyImportRollbackData: Data?
     private var legacyImportRollbackURL: URL {
         persistenceURL.deletingLastPathComponent().appending(path: "LegacyImportRollback.lsb", directoryHint: .notDirectory)
+    }
+    private var snapshotRestoreRollbackURL: URL {
+        persistenceURL.deletingLastPathComponent().appending(path: "SnapshotRestoreRollback.lsb", directoryHint: .notDirectory)
     }
     @ObservationIgnored private var lastSavedSnapshotDigest: Data?
     @ObservationIgnored private var messageIndexesAreDirty = true
@@ -388,10 +408,12 @@ public final class SidebandStore {
         self.transport = transport
         pluginRegistry = SidebandPluginRegistry(plugins: plugins)
         #if DEBUG
-        let soakPersistenceURL = ProcessInfo.processInfo.environment["SIDEBAND_SOAK_RUN_ID"].map { runID in
+        let testRunID = ProcessInfo.processInfo.environment["SIDEBAND_UI_TEST_RUN_ID"]
+            ?? ProcessInfo.processInfo.environment["SIDEBAND_SOAK_RUN_ID"]
+        let soakPersistenceURL = testRunID.map { runID in
             let safeID = runID.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
             return FileManager.default.temporaryDirectory
-                .appending(path: "LowerSidebandDeliverySoak", directoryHint: .isDirectory)
+                .appending(path: "LowerSidebandIsolatedRuns", directoryHint: .isDirectory)
                 .appending(path: safeID.isEmpty ? "default" : safeID, directoryHint: .isDirectory)
                 .appending(path: "sideband.json")
         }
@@ -540,6 +562,9 @@ public final class SidebandStore {
             loadIdentityProfiles()
             if FileManager.default.fileExists(atPath: legacyImportRollbackURL.path) {
                 canRollbackLegacyImport = true
+            }
+            if FileManager.default.fileExists(atPath: snapshotRestoreRollbackURL.path) {
+                canRollbackSnapshotRestore = true
             }
         } else {
             lastError = "Secure Keychain data is temporarily unavailable. Lower Sideband will remain offline and will not read or overwrite encrypted data. Unlock the device and reopen the app."
@@ -3754,6 +3779,46 @@ public final class SidebandStore {
         return data
     }
 
+    /// Exercises the complete local recovery pipeline without mutating live app
+    /// data: validation, encryption, atomic disk write, readback and tamper rejection.
+    @discardableResult
+    public func runNonDestructiveRecoveryDrill() throws -> SidebandRecoveryDrillReport {
+        let plaintext = try exportSnapshotData()
+        let snapshot = try validatedSnapshot(from: plaintext)
+        let context = "recovery-drill-v1"
+        let encrypted = try localDataCipher.seal(plaintext, context: context)
+        let reopened = try localDataCipher.open(encrypted, context: context)
+        let roundTripPassed = reopened == plaintext && (try? validatedSnapshot(from: reopened)) != nil
+
+        var tampered = encrypted
+        if !tampered.isEmpty { tampered[tampered.index(before: tampered.endIndex)] ^= 0x01 }
+        let tamperDetectionPassed = (try? localDataCipher.open(tampered, context: context)) == nil
+
+        let drillDirectory = persistenceURL.deletingLastPathComponent()
+            .appending(path: "RecoveryDrills", directoryHint: .isDirectory)
+        let drillURL = drillDirectory.appending(path: "\(UUID().uuidString).lsb", directoryHint: .notDirectory)
+        try FileManager.default.createDirectory(at: drillDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: drillURL) }
+        try encrypted.write(to: drillURL, options: .atomic)
+        let diskData = try Data(contentsOf: drillURL)
+        let diskPlaintext = try localDataCipher.open(diskData, context: context)
+        let atomicWritePassed = diskPlaintext == plaintext && (try? validatedSnapshot(from: diskPlaintext)) != nil
+
+        let report = SidebandRecoveryDrillReport(
+            runID: UUID(),
+            completedAt: .now,
+            snapshotBytes: plaintext.count,
+            conversationCount: snapshot.conversations.count,
+            messageCount: snapshot.messages.count,
+            encryptedRoundTripPassed: roundTripPassed,
+            tamperDetectionPassed: tamperDetectionPassed,
+            atomicWritePassed: atomicWritePassed
+        )
+        lastRecoveryDrillReport = report
+        guard report.passed else { throw SidebandRecoveryError.drillFailed }
+        return report
+    }
+
     public func exportPrivateIdentityText() throws -> String {
         try ReticulumIdentityText.encodePrivate(messagingIdentity)
     }
@@ -4174,6 +4239,14 @@ public final class SidebandStore {
 
     public func restoreSnapshotData(_ data: Data) throws {
         let snapshot = try validatedSnapshot(from: data)
+        let rollbackPlaintext = try exportSnapshotData()
+        let rollback = try localDataCipher.seal(rollbackPlaintext, context: "snapshot-restore-rollback-v1")
+        try FileManager.default.createDirectory(
+            at: snapshotRestoreRollbackURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try rollback.write(to: snapshotRestoreRollbackURL, options: .atomic)
+        canRollbackSnapshotRestore = true
         conversations = snapshot.conversations
         messages = snapshot.messages
         sortConversations()
@@ -4187,6 +4260,30 @@ public final class SidebandStore {
         visibleConversationID = nil
         save()
         syncUnreadBadge()
+    }
+
+    public func rollbackLastSnapshotRestore() throws {
+        guard canRollbackSnapshotRestore,
+              let encrypted = try? Data(contentsOf: snapshotRestoreRollbackURL),
+              let plaintext = try? localDataCipher.open(encrypted, context: "snapshot-restore-rollback-v1") else {
+            throw SidebandRecoveryError.checkpointUnavailable
+        }
+        let snapshot = try validatedSnapshot(from: plaintext)
+        conversations = snapshot.conversations
+        messages = snapshot.messages
+        sortConversations()
+        discoveries = snapshot.discoveries
+        deletedConversationDestinations = snapshot.deletedConversationDestinations
+        voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
+        pluginAuditEvents = Array(snapshot.pluginAuditEvents.prefix(200))
+        if let continuity = snapshot.applicationServiceContinuity { meshFeatures.mergeContinuity(continuity) }
+        drafts = snapshot.drafts
+        selectedConversationID = conversations.first?.id
+        visibleConversationID = nil
+        save()
+        syncUnreadBadge()
+        try? FileManager.default.removeItem(at: snapshotRestoreRollbackURL)
+        canRollbackSnapshotRestore = false
     }
 
     public func startGatewayDiscovery() { lanDiscovery.start() }

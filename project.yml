@@ -27,8 +27,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.ReticulumKit
         PRODUCT_MODULE_NAME: ReticulumKit
-        MARKETING_VERSION: 1.3.93
-        CURRENT_PROJECT_VERSION: 131
+        MARKETING_VERSION: 1.3.94
+        CURRENT_PROJECT_VERSION: 132
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   ReticulumKitMac:
@@ -44,8 +44,8 @@ targets:
         PRODUCT_NAME: ReticulumKit
         PRODUCT_MODULE_NAME: ReticulumKit
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.ReticulumKit.mac
-        MARKETING_VERSION: 1.3.93
-        CURRENT_PROJECT_VERSION: 131
+        MARKETING_VERSION: 1.3.94
+        CURRENT_PROJECT_VERSION: 132
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandCore:
@@ -64,8 +64,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core
-        MARKETING_VERSION: 1.3.93
-        CURRENT_PROJECT_VERSION: 131
+        MARKETING_VERSION: 1.3.94
+        CURRENT_PROJECT_VERSION: 132
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandIOS:
@@ -86,8 +86,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Sideband
-        MARKETING_VERSION: 1.3.93
-        CURRENT_PROJECT_VERSION: 131
+        MARKETING_VERSION: 1.3.94
+        CURRENT_PROJECT_VERSION: 132
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-iOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -114,8 +114,8 @@ targets:
         PRODUCT_NAME: SidebandCore
         PRODUCT_MODULE_NAME: SidebandCore
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core.mac
-        MARKETING_VERSION: 1.3.93
-        CURRENT_PROJECT_VERSION: 131
+        MARKETING_VERSION: 1.3.94
+        CURRENT_PROJECT_VERSION: 132
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandMac:
@@ -136,8 +136,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Lower Sideband
-        MARKETING_VERSION: 1.3.93
-        CURRENT_PROJECT_VERSION: 131
+        MARKETING_VERSION: 1.3.94
+        CURRENT_PROJECT_VERSION: 132
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-macOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -145,11 +145,39 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: Support/Sideband.entitlements
         ENABLE_HARDENED_RUNTIME: YES
+  SidebandIOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/SidebandIOSUITests
+    dependencies:
+      - target: SidebandIOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.UITests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+  SidebandMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: Tests/SidebandMacUITests
+    dependencies:
+      - target: SidebandMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.UITests.mac
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
 schemes:
   SidebandIOS:
     build:
       targets:
         SidebandIOS: all
+        SidebandIOSUITests: [test]
+    test:
+      targets:
+        - SidebandIOSUITests
     run:
       config: Debug
     archive:
@@ -158,6 +186,10 @@ schemes:
     build:
       targets:
         SidebandMac: all
+        SidebandMacUITests: [test]
+    test:
+      targets:
+        - SidebandMacUITests
     run:
       config: Debug
     archive:

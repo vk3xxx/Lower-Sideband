@@ -43,6 +43,33 @@ xcodebuild -project MacSideband.xcodeproj -scheme SidebandIOS \
 
 Use separate derived-data directories when builds overlap.
 
+## Apple UI reliability
+
+The Xcode project contains dedicated UI-test targets for iPhone/iPad and
+macOS. Every run launches against an isolated temporary store, retains
+screenshots, and writes an `.xcresult` bundle containing failures and
+attachments:
+
+```sh
+Scripts/run-ui-reliability-suite.sh iphone
+Scripts/run-ui-reliability-suite.sh ipad
+Scripts/run-ui-reliability-suite.sh mac
+Scripts/run-ui-reliability-suite.sh all
+```
+
+Override simulator destinations with `SIDEBAND_UI_IPHONE_DESTINATION` and
+`SIDEBAND_UI_IPAD_DESTINATION`. Results default to
+`.build/ui-reliability/`.
+
+Settings → Diagnostics also provides a non-destructive recovery drill. It
+validates the current snapshot, encrypted round-trip, atomic write/readback,
+and authenticated tamper rejection. Snapshot imports first create an encrypted
+rollback checkpoint that can be restored from the same screen.
+
+Each device can export a signed acceptance report. Import the Mac, iPhone and
+iPad reports on one device to review the consolidated Apple platform matrix;
+modified or forged reports are rejected.
+
 ## Bundle validation
 
 ```sh

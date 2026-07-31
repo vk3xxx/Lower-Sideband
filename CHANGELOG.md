@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.94 (132) - 2026-07-31
+
+- Added encrypted, cryptographically signed Apple-device acceptance reports
+  and a Mac/iPhone/iPad evidence matrix that rejects altered imports and only
+  reports complete when all three platforms have passing evidence.
+- Added isolated end-to-end UI reliability targets for iPhone, iPad and macOS,
+  including retained screenshots, resize coverage and reusable `.xcresult`
+  artifacts without reading or modifying normal user data.
+- Added a non-destructive recovery drill covering snapshot validation,
+  encryption round trips, atomic disk writes and tamper rejection, plus an
+  encrypted rollback checkpoint before every user-initiated snapshot restore.
+
 ## 1.3.93 (131) - 2026-07-31
 
 - Upgraded Apple-device acceptance into traceable, versioned runs covering

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import ReticulumKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -98,6 +99,138 @@ public struct SidebandAcceptanceReport: Codable, Sendable, Equatable {
     public var failedCount: Int { results.values.count { $0.outcome == .failed } }
 }
 
+public struct SidebandSignedAcceptanceReport: Codable, Sendable, Equatable, Identifiable {
+    public let schemaVersion: Int
+    public let report: SidebandAcceptanceReport
+    public let signerPublicKey: Data
+    public let signature: Data
+
+    public var id: UUID { report.runID }
+    public var signerFingerprint: String {
+        ReticulumIdentity.fingerprint(of: signerPublicKey) ?? "Invalid signer"
+    }
+
+    public static func signed(
+        report: SidebandAcceptanceReport,
+        identity: ReticulumIdentity
+    ) throws -> Self {
+        let payload = try canonicalData(for: report)
+        return Self(
+            schemaVersion: 1,
+            report: report,
+            signerPublicKey: identity.publicKey,
+            signature: try identity.sign(payload)
+        )
+    }
+
+    public var isValid: Bool {
+        guard schemaVersion == 1,
+              let identity = try? ReticulumIdentity(publicKey: signerPublicKey),
+              let payload = try? Self.canonicalData(for: report) else { return false }
+        return identity.validate(signature: signature, message: payload)
+    }
+
+    public func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(self)
+    }
+
+    public static func decoded(from data: Data) throws -> Self {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(Self.self, from: data)
+    }
+
+    private static func canonicalData(for report: SidebandAcceptanceReport) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(report)
+    }
+}
+
+public enum SidebandAcceptancePortfolioError: LocalizedError {
+    case invalidSignature
+    case incompatibleSchema
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidSignature: "The acceptance report signature is invalid."
+        case .incompatibleSchema: "This acceptance report format is not supported."
+        }
+    }
+}
+
+@MainActor @Observable
+public final class SidebandAcceptancePortfolio {
+    public private(set) var reports: [SidebandSignedAcceptanceReport] = []
+    private let defaults: UserDefaults
+    private let cipher: LocalDataCipher
+    private let storageKey = "deviceAcceptancePortfolio.v1"
+    private let context = "device-acceptance-portfolio-v1"
+
+    init(defaults: UserDefaults = .standard, cipher: LocalDataCipher) {
+        self.defaults = defaults
+        self.cipher = cipher
+        guard let encrypted = defaults.data(forKey: storageKey),
+              let plaintext = try? cipher.open(encrypted, context: context),
+              let decoded = try? Self.decoder.decode([SidebandSignedAcceptanceReport].self, from: plaintext) else {
+            return
+        }
+        reports = Array(decoded.filter { $0.isValid }.prefix(100))
+    }
+
+    @discardableResult
+    public func importReport(_ data: Data) throws -> SidebandSignedAcceptanceReport {
+        let report = try SidebandSignedAcceptanceReport.decoded(from: data)
+        guard report.schemaVersion == 1 else { throw SidebandAcceptancePortfolioError.incompatibleSchema }
+        guard report.isValid else { throw SidebandAcceptancePortfolioError.invalidSignature }
+        reports.removeAll { $0.id == report.id }
+        reports.insert(report, at: 0)
+        reports = Array(reports.prefix(100))
+        persist()
+        return report
+    }
+
+    public func removeAll() {
+        reports.removeAll()
+        defaults.removeObject(forKey: storageKey)
+    }
+
+    public var latestByPlatform: [SidebandAcceptancePlatform: SidebandSignedAcceptanceReport] {
+        Dictionary(grouping: reports, by: \.report.platform).compactMapValues {
+            $0.max { $0.report.generatedAt < $1.report.generatedAt }
+        }
+    }
+
+    public var allPrimaryPlatformsReady: Bool {
+        [SidebandAcceptancePlatform.mac, .iPhone, .iPad].allSatisfy {
+            latestByPlatform[$0]?.report.isReadyForReleaseReview == true
+        }
+    }
+
+    private func persist() {
+        guard let plaintext = try? Self.encoder.encode(reports),
+              let encrypted = try? cipher.seal(plaintext, context: context) else { return }
+        defaults.set(encrypted, forKey: storageKey)
+    }
+
+    private static var encoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    private static var decoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
 @MainActor @Observable
 public final class SidebandDeviceAcceptance {
     public private(set) var results: [SidebandAcceptanceScenario: SidebandAcceptanceResult] = [:]
@@ -192,7 +325,15 @@ public final class SidebandDeviceAcceptance {
     }
 
     public func exportData(now: Date = .now) throws -> Data {
-        let report = SidebandAcceptanceReport(
+        let report = makeReport(now: now)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(report)
+    }
+
+    public func makeReport(now: Date = .now) -> SidebandAcceptanceReport {
+        SidebandAcceptanceReport(
             schemaVersion: 2,
             runID: runID,
             startedAt: startedAt,
@@ -207,10 +348,6 @@ public final class SidebandDeviceAcceptance {
                 ($0.rawValue, result(for: $0))
             })
         )
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(report)
     }
 
     private func persist() {
