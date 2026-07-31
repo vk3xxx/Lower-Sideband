@@ -29,6 +29,9 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
 - Permission-scoped native command, service, telemetry, structured status-card, and safe declarative plugin APIs
 - Native hosted RRC rooms, an authorised RNCP send/receive/share workspace, and
   a Nomad Mesh Server for publishing Micron pages and downloadable files
+- Interactive Micron fields and submissions, a persistent RRC community
+  experience, and a validated unified directory for Nomad, RRC, RNSH, RNX and
+  RNCP services
 
 ## Platform support
 

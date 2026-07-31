@@ -97,6 +97,8 @@ public enum MicronBlock: Identifiable, Equatable, Sendable {
     case paragraph(String)
     case separator
     case link(label: String, target: String)
+    case submission(label: String, target: String, fields: [String])
+    case input(MicronInputField)
 
     public var id: String {
         switch self {
@@ -104,7 +106,40 @@ public enum MicronBlock: Identifiable, Equatable, Sendable {
         case .paragraph(let text): "p:\(text)"
         case .separator: "separator"
         case .link(let label, let target): "l:\(label):\(target)"
+        case .submission(let label, let target, let fields): "s:\(label):\(target):\(fields.joined(separator: "|"))"
+        case .input(let field): "i:\(field.id)"
         }
+    }
+}
+
+public struct MicronInputField: Identifiable, Equatable, Sendable {
+    public enum Kind: String, Equatable, Sendable { case text, secure, checkbox, radio }
+
+    public var id: String { "\(kind.rawValue):\(name):\(value)" }
+    public let kind: Kind
+    public let name: String
+    public let width: Int
+    public let value: String
+    public let label: String
+    public let initialValue: String
+    public let isInitiallySelected: Bool
+
+    public init(
+        kind: Kind,
+        name: String,
+        width: Int = 24,
+        value: String = "",
+        label: String = "",
+        initialValue: String = "",
+        isInitiallySelected: Bool = false
+    ) {
+        self.kind = kind
+        self.name = String(name.prefix(128))
+        self.width = min(256, max(1, width))
+        self.value = String(value.prefix(4_096))
+        self.label = String(label.prefix(512))
+        self.initialValue = String(initialValue.prefix(4_096))
+        self.isInitiallySelected = isInitiallySelected
     }
 }
 
@@ -129,6 +164,9 @@ public enum MicronParser {
                 blocks.append(.heading(level: level, text: sanitized(line.dropFirst(level).trimmingCharacters(in: .whitespaces))))
                 continue
             }
+            if let input = parseInput(line) {
+                flush(); blocks.append(.input(input)); continue
+            }
             if let link = parseLink(line) {
                 flush(); blocks.append(link); continue
             }
@@ -139,15 +177,56 @@ public enum MicronParser {
     }
 
     private static func parseLink(_ line: String) -> MicronBlock? {
-        // Common Micron links: `[Label`destination:/path`query]
+        // Common Micron links: `[Label`destination:/path`field|field=value]
         guard let labelStart = line.firstIndex(of: "["),
               let separator = line[labelStart...].firstIndex(of: "`"),
               let end = line[separator...].lastIndex(of: "]"),
               separator < end else { return nil }
         let label = sanitized(line[line.index(after: labelStart)..<separator])
-        let target = String(line[line.index(after: separator)..<end]).trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+        let components = line[line.index(after: separator)..<end].split(
+            separator: "`",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        )
+        let target = String(components[0])
         guard !label.isEmpty, target.utf8.count <= 4_096 else { return nil }
+        if components.count > 1 {
+            let fields = components[1].split(separator: "|", omittingEmptySubsequences: true).map(String.init)
+            guard fields.count <= 64, fields.allSatisfy({ $0.utf8.count <= 4_224 }) else { return nil }
+            return .submission(label: label, target: target, fields: fields)
+        }
         return .link(label: label, target: target)
+    }
+
+    private static func parseInput(_ line: String) -> MicronInputField? {
+        guard let start = line.firstIndex(of: "<"),
+              let separator = line[start...].firstIndex(of: "`"),
+              let end = line[separator...].firstIndex(of: ">"),
+              separator < end else { return nil }
+        let specification = String(line[line.index(after: start)..<separator])
+        let fieldData = sanitized(line[line.index(after: separator)..<end])
+        let components = specification.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard components.count <= 4 else { return nil }
+        var flags = components.count > 1 ? components[0] : ""
+        let name = components.count > 1 ? components[1] : components[0]
+        guard !name.isEmpty, name.utf8.count <= 128 else { return nil }
+        let kind: MicronInputField.Kind
+        if flags.contains("^") { kind = .radio; flags.removeAll { $0 == "^" } }
+        else if flags.contains("?") { kind = .checkbox; flags.removeAll { $0 == "?" } }
+        else if flags.contains("!") { kind = .secure; flags.removeAll { $0 == "!" } }
+        else { kind = .text }
+        let width = Int(flags) ?? 24
+        let value = components.count > 2 ? components[2] : ""
+        let selected = components.count > 3 && components[3] == "*"
+        return MicronInputField(
+            kind: kind,
+            name: name,
+            width: width,
+            value: kind == .checkbox || kind == .radio ? (value.isEmpty ? fieldData : value) : "",
+            label: kind == .checkbox || kind == .radio ? fieldData : name,
+            initialValue: kind == .text || kind == .secure ? fieldData : "",
+            isInitiallySelected: selected
+        )
     }
 
     private static func sanitized<S: StringProtocol>(_ value: S) -> String {
@@ -260,6 +339,145 @@ public struct RelayChatTranscriptEntry: Identifiable, Codable, Hashable, Sendabl
         kind = message.type.rawValue
         sentAt = Date(timeIntervalSince1970: Double(message.timestampMilliseconds) / 1_000)
         self.isOutgoing = isOutgoing
+    }
+}
+
+public struct RelayRoomCommunityState: Codable, Hashable, Sendable {
+    public let roomID: String
+    public var isFavorite: Bool
+    public var unreadCount: Int
+    public var mentionCount: Int
+    public var lastReadAt: Date?
+
+    public init(
+        roomID: String,
+        isFavorite: Bool = false,
+        unreadCount: Int = 0,
+        mentionCount: Int = 0,
+        lastReadAt: Date? = nil
+    ) {
+        self.roomID = String(roomID.prefix(256))
+        self.isFavorite = isFavorite
+        self.unreadCount = min(100_000, max(0, unreadCount))
+        self.mentionCount = min(self.unreadCount, max(0, mentionCount))
+        self.lastReadAt = lastReadAt
+    }
+}
+
+public struct RelayRoomInvitation: Codable, Hashable, Sendable {
+    public let hubDestinationHash: String
+    public let room: String
+    public let accessKey: String?
+
+    public init?(hubDestinationHash: String, room: String, accessKey: String? = nil) {
+        let hub = hubDestinationHash.lowercased()
+        let normalizedRoom = room.trimmingCharacters(in: CharacterSet(charactersIn: "# ").union(.whitespacesAndNewlines))
+        guard DestinationHash.isValid(hub), !normalizedRoom.isEmpty,
+              normalizedRoom.utf8.count <= ReticulumRelayChatProtocol.maximumRoomBytes else { return nil }
+        self.hubDestinationHash = hub
+        self.room = normalizedRoom
+        let normalizedKey = accessKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.accessKey = normalizedKey?.isEmpty == false ? String(normalizedKey!.prefix(128)) : nil
+    }
+
+    public init?(string: String) {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("rrc://"),
+              let components = URLComponents(string: trimmed),
+              let hub = components.host else { return nil }
+        let room = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/#"))
+        let key = components.queryItems?.first(where: { $0.name == "key" })?.value
+        self.init(hubDestinationHash: hub, room: room, accessKey: key)
+    }
+
+    public var string: String {
+        var components = URLComponents()
+        components.scheme = "rrc"
+        components.host = hubDestinationHash
+        components.path = "/\(room)"
+        if let accessKey { components.queryItems = [URLQueryItem(name: "key", value: accessKey)] }
+        return components.string ?? "rrc://\(hubDestinationHash)/\(room)"
+    }
+}
+
+public enum ReticulumApplicationServiceKind: String, Codable, CaseIterable, Sendable, Identifiable {
+    case nomad
+    case relay
+    case shell
+    case execution
+    case copy
+
+    public var id: Self { self }
+    public var title: String {
+        switch self {
+        case .nomad: "Nomad page node"
+        case .relay: "Relay chat hub"
+        case .shell: "Remote shell"
+        case .execution: "Remote execution"
+        case .copy: "File transfer"
+        }
+    }
+    public var destinationName: String {
+        switch self {
+        case .nomad: NomadNetworkProtocol.destinationName
+        case .relay: ReticulumRelayChatProtocol.destinationName
+        case .shell: ReticulumShellProtocol.destinationName
+        case .execution: ReticulumRemoteExecutionProtocol.destinationName
+        case .copy: ReticulumCopyProtocol.destinationName
+        }
+    }
+    public var systemImage: String {
+        switch self {
+        case .nomad: "doc.richtext"
+        case .relay: "person.3"
+        case .shell: "terminal"
+        case .execution: "play.rectangle"
+        case .copy: "folder.badge.gearshape"
+        }
+    }
+}
+
+public struct ReticulumApplicationService: Identifiable, Codable, Hashable, Sendable {
+    public var id: String { "\(kind.rawValue):\(destinationHash)" }
+    public let destinationHash: String
+    public let kind: ReticulumApplicationServiceKind
+    public var name: String
+    public var detail: String
+    public var hops: UInt8
+    public var lastSeen: Date
+    public var isValidated: Bool
+    public var isFavorite: Bool
+    public var lastCheckedAt: Date?
+    public var lastUsedAt: Date?
+    public var routeLatencyMilliseconds: Int?
+    public var isReachable: Bool
+
+    public init(
+        destinationHash: String,
+        kind: ReticulumApplicationServiceKind,
+        name: String = "",
+        detail: String = "",
+        hops: UInt8,
+        lastSeen: Date = .now,
+        isValidated: Bool,
+        isFavorite: Bool = false,
+        lastCheckedAt: Date? = nil,
+        lastUsedAt: Date? = nil,
+        routeLatencyMilliseconds: Int? = nil,
+        isReachable: Bool = true
+    ) {
+        self.destinationHash = destinationHash.lowercased()
+        self.kind = kind
+        self.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
+        self.detail = String(detail.trimmingCharacters(in: .whitespacesAndNewlines).prefix(512))
+        self.hops = hops
+        self.lastSeen = lastSeen
+        self.isValidated = isValidated
+        self.isFavorite = isFavorite
+        self.lastCheckedAt = lastCheckedAt
+        self.lastUsedAt = lastUsedAt
+        self.routeLatencyMilliseconds = routeLatencyMilliseconds.map { min(120_000, max(0, $0)) }
+        self.isReachable = isReachable
     }
 }
 
@@ -468,6 +686,8 @@ public final class MeshChatFeatureStore {
     public private(set) var telephone = SidebandTelephonePreferences()
     public private(set) var relayRooms: [RelayChatRoom] = []
     public private(set) var relayTranscript: [RelayChatTranscriptEntry] = []
+    public private(set) var relayRoomStates: [String: RelayRoomCommunityState] = [:]
+    public private(set) var serviceDirectory: [ReticulumApplicationService] = []
     public private(set) var shellSessions: [RemoteShellSessionRecord] = []
     public private(set) var remoteToolRuns: [RemoteToolRun] = []
     public private(set) var relayHub = HostedRelayHubConfiguration()
@@ -485,6 +705,8 @@ public final class MeshChatFeatureStore {
         var telephone: SidebandTelephonePreferences
         var relayRooms: [RelayChatRoom]?
         var relayTranscript: [RelayChatTranscriptEntry]?
+        var relayRoomStates: [String: RelayRoomCommunityState]?
+        var serviceDirectory: [ReticulumApplicationService]?
         var shellSessions: [RemoteShellSessionRecord]?
         var remoteToolRuns: [RemoteToolRun]?
         var relayHub: HostedRelayHubConfiguration?
@@ -571,7 +793,84 @@ public final class MeshChatFeatureStore {
         let entry = RelayChatTranscriptEntry(message: message, hubDestinationHash: hubDestinationHash, isOutgoing: outgoing)
         guard !relayTranscript.contains(where: { $0.id == entry.id }) else { return }
         relayTranscript.append(entry)
-        relayTranscript = Array(relayTranscript.suffix(10_000)); persist()
+        relayTranscript = Array(relayTranscript.suffix(10_000))
+        if !outgoing, let room = relayRooms.first(where: { $0.id == entry.roomID }) {
+            var state = relayRoomStates[entry.roomID] ?? RelayRoomCommunityState(roomID: entry.roomID)
+            state.unreadCount = min(100_000, state.unreadCount + 1)
+            if ReticulumRelayChatProtocol.mentions(in: entry.body, nickname: room.nickname) {
+                state.mentionCount = min(state.unreadCount, state.mentionCount + 1)
+            }
+            relayRoomStates[entry.roomID] = state
+        }
+        persist()
+    }
+
+    public func setRelayRoomFavorite(_ roomID: String, favorite: Bool) {
+        var state = relayRoomStates[roomID] ?? RelayRoomCommunityState(roomID: roomID)
+        state.isFavorite = favorite
+        relayRoomStates[roomID] = state
+        persist()
+    }
+
+    public func markRelayRoomRead(_ roomID: String) {
+        var state = relayRoomStates[roomID] ?? RelayRoomCommunityState(roomID: roomID)
+        state.unreadCount = 0
+        state.mentionCount = 0
+        state.lastReadAt = .now
+        relayRoomStates[roomID] = state
+        persist()
+    }
+
+    public func observeService(_ service: ReticulumApplicationService) {
+        if let index = serviceDirectory.firstIndex(where: { $0.id == service.id }) {
+            let favorite = serviceDirectory[index].isFavorite
+            let lastCheckedAt = serviceDirectory[index].lastCheckedAt
+            let lastUsedAt = serviceDirectory[index].lastUsedAt
+            let latency = serviceDirectory[index].routeLatencyMilliseconds
+            serviceDirectory[index] = service
+            serviceDirectory[index].isFavorite = favorite
+            serviceDirectory[index].lastCheckedAt = lastCheckedAt
+            serviceDirectory[index].lastUsedAt = lastUsedAt
+            serviceDirectory[index].routeLatencyMilliseconds = latency
+        } else {
+            serviceDirectory.append(service)
+        }
+        let cutoff = Date.now.addingTimeInterval(-30 * 24 * 60 * 60)
+        serviceDirectory = Array(
+            serviceDirectory
+                .filter { $0.isFavorite || $0.lastSeen >= cutoff }
+                .sorted {
+                    if $0.isFavorite != $1.isFavorite { return $0.isFavorite }
+                    return $0.lastSeen > $1.lastSeen
+                }
+                .prefix(2_000)
+        )
+        persist()
+    }
+
+    public func setServiceFavorite(_ id: String, favorite: Bool) {
+        guard let index = serviceDirectory.firstIndex(where: { $0.id == id }) else { return }
+        serviceDirectory[index].isFavorite = favorite
+        persist()
+    }
+
+    public func markServiceUsed(_ id: String) {
+        guard let index = serviceDirectory.firstIndex(where: { $0.id == id }) else { return }
+        serviceDirectory[index].lastUsedAt = .now
+        persist()
+    }
+
+    public func updateServiceHealth(
+        _ id: String,
+        reachable: Bool,
+        latencyMilliseconds: Int?,
+        checkedAt: Date = .now
+    ) {
+        guard let index = serviceDirectory.firstIndex(where: { $0.id == id }) else { return }
+        serviceDirectory[index].isReachable = reachable
+        serviceDirectory[index].routeLatencyMilliseconds = latencyMilliseconds.map { min(120_000, max(0, $0)) }
+        serviceDirectory[index].lastCheckedAt = checkedAt
+        persist()
     }
 
     public func upsertShellSession(_ session: RemoteShellSessionRecord) {
@@ -669,6 +968,8 @@ public final class MeshChatFeatureStore {
         telephone = payload.telephone
         relayRooms = Array((payload.relayRooms ?? []).prefix(128))
         relayTranscript = Array((payload.relayTranscript ?? []).suffix(10_000))
+        relayRoomStates = payload.relayRoomStates ?? [:]
+        serviceDirectory = Array((payload.serviceDirectory ?? []).prefix(2_000))
         shellSessions = Array((payload.shellSessions ?? []).prefix(32))
         remoteToolRuns = Array((payload.remoteToolRuns ?? []).prefix(250))
         relayHub = payload.relayHub ?? HostedRelayHubConfiguration()
@@ -684,6 +985,7 @@ public final class MeshChatFeatureStore {
         let payload = Payload(
             pages: pages, bookmarks: bookmarks, history: history, telephone: telephone,
             relayRooms: relayRooms, relayTranscript: relayTranscript,
+            relayRoomStates: relayRoomStates, serviceDirectory: serviceDirectory,
             shellSessions: shellSessions, remoteToolRuns: remoteToolRuns,
             relayHub: relayHub, remoteCopy: remoteCopy,
             remoteFileTransfers: remoteFileTransfers, remoteFileShares: remoteFileShares,

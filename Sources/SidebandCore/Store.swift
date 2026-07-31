@@ -847,6 +847,20 @@ public final class SidebandStore {
         await updateHostedRelayHub(configuration)
     }
 
+    public func setHostedRelayMemberVoice(_ member: HostedRelayMember, voiced: Bool) async {
+        var configuration = meshFeatures.relayHub
+        guard let index = configuration.rooms.firstIndex(where: { $0.name == member.room }) else { return }
+        if voiced { configuration.rooms[index].voicedIdentityHashes.insert(member.identityHash) }
+        else { configuration.rooms[index].voicedIdentityHashes.remove(member.identityHash) }
+        await updateHostedRelayHub(configuration)
+    }
+
+    public func disconnectHostedRelayMember(_ member: HostedRelayMember) {
+        guard activeLinks[member.linkID] != nil else { return }
+        removeLink(member.linkID)
+        refreshHostedRelayMembers()
+    }
+
     public func updateRemoteCopyConfiguration(_ configuration: RemoteCopyConfiguration) async {
         meshFeatures.updateRemoteCopy(configuration)
         if configuration.receiverEnabled { _ = await announceApplicationServicesNow() }
@@ -973,11 +987,7 @@ public final class SidebandStore {
         guard networkState == .ready else { return false }
         var success = true
         if meshFeatures.relayHub.enabled {
-            let appData = (try? CanonicalCBOR.encode(.map([
-                .text("proto"): .text("rrc"),
-                .text("v"): .unsigned(1),
-                .text("hub"): .text(meshFeatures.relayHub.name)
-            ]))) ?? Data()
+            let appData = relayHubAnnounceAppData
             success = await announceService(destinationName: ReticulumRelayChatProtocol.destinationName, appData: appData) && success
         }
         if meshFeatures.remoteCopy.receiverEnabled {
@@ -987,6 +997,33 @@ public final class SidebandStore {
             success = await announceService(destinationName: NomadNetworkProtocol.destinationName, appData: Data(meshFeatures.nomadServer.name.utf8)) && success
         }
         return success
+    }
+
+    private var relayHubAnnounceAppData: Data {
+        (try? CanonicalCBOR.encode(.map([
+            .text("proto"): .text("rrc"),
+            .text("v"): .unsigned(1),
+            .text("hub"): .text(meshFeatures.relayHub.name),
+            .text("rooms"): .array(
+                meshFeatures.relayHub.rooms.prefix(32).map { .text($0.name) }
+            )
+        ]))) ?? Data()
+    }
+
+    public func checkApplicationService(_ service: ReticulumApplicationService) async {
+        guard networkState == .ready else {
+            meshFeatures.updateServiceHealth(service.id, reachable: false, latencyMilliseconds: nil)
+            return
+        }
+        let startedAt = Date.now
+        await requestPath(to: service.destinationHash, surfaceErrors: false)
+        let deadline = ContinuousClock.now + .seconds(12)
+        while !hasPath(to: service.destinationHash), ContinuousClock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        let reachable = hasPath(to: service.destinationHash)
+        let latency = reachable ? Int(Date.now.timeIntervalSince(startedAt) * 1_000) : nil
+        meshFeatures.updateServiceHealth(service.id, reachable: reachable, latencyMilliseconds: latency)
     }
 
     public func openRemoteShell(destinationHash: String, title: String = "Remote Shell") async throws -> UUID {
@@ -4830,6 +4867,9 @@ public final class SidebandStore {
         let announce = try? ReticulumAnnounce(packet: packet)
         let isValidated = announce?.validate() == true
         if isValidated, let announce {
+            if let service = applicationService(from: announce, packet: packet) {
+                meshFeatures.observeService(service)
+            }
             considerPropagationNode(announce, packet: packet)
             if let interface = ReticulumInterfaceDiscovery.decode(announce, hops: packet.hops) {
                 considerDiscoveredNetworkInterface(interface)
@@ -4872,6 +4912,41 @@ public final class SidebandStore {
         scheduleDiscoverySave()
     }
 
+    private func applicationService(
+        from announce: ReticulumAnnounce,
+        packet: ReticulumPacket
+    ) -> ReticulumApplicationService? {
+        guard let kind = ReticulumApplicationServiceKind.allCases.first(where: {
+            Data(ReticulumIdentity.fullHash(Data($0.destinationName.utf8)).prefix(10)) == announce.nameHash
+        }) else { return nil }
+        var name = kind.title
+        var detail = kind.destinationName
+        if kind == .relay,
+           case let .map(values) = try? CanonicalCBOR.decode(announce.appData),
+           case let .text(hubName)? = values[.text("hub")] {
+            name = hubName
+            if case let .array(rooms)? = values[.text("rooms")] {
+                let names = rooms.compactMap { value -> String? in
+                    if case let .text(room) = value { return "#\(room)" }
+                    return nil
+                }
+                if !names.isEmpty { detail = names.prefix(12).joined(separator: ", ") }
+            }
+        } else if let announcedName = String(data: announce.appData, encoding: .utf8),
+                  !announcedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            name = announcedName
+        }
+        return ReticulumApplicationService(
+            destinationHash: announce.destinationHash.hex,
+            kind: kind,
+            name: name,
+            detail: detail,
+            hops: packet.hops,
+            isValidated: true,
+            isReachable: true
+        )
+    }
+
     private func answerLocalPathRequest(
         _ request: (targetHash: Data, tag: Data),
         interfaceID: String?
@@ -4891,7 +4966,7 @@ public final class SidebandStore {
             appData = Data()
         case localRelayHubHash:
             destinationName = ReticulumRelayChatProtocol.destinationName
-            appData = Data(meshFeatures.relayHub.name.utf8)
+            appData = relayHubAnnounceAppData
         case localRemoteCopyHash:
             destinationName = ReticulumCopyProtocol.destinationName
             appData = Data("Lower Sideband RNCP".utf8)

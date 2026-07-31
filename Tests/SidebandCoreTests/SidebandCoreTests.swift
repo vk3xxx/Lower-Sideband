@@ -5026,6 +5026,82 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(blocks.contains(.separator))
 }
 
+@Test func micronParserSupportsReferenceFieldsAndSubmissions() {
+    let blocks = MicronParser.parse("""
+    `<username`Entered data>
+    `<!|password`Secret>
+    `<?|signup|yes|*`Sign me up>
+    `<^|colour|Blue`Blue>
+    `[Submit`:/page/form.mu`username|password|signup|colour|action=save]
+    """)
+    #expect(blocks.contains(.input(.init(kind: .text, name: "username", label: "username", initialValue: "Entered data"))))
+    #expect(blocks.contains(.input(.init(kind: .secure, name: "password", label: "password", initialValue: "Secret"))))
+    #expect(blocks.contains(.input(.init(kind: .checkbox, name: "signup", value: "yes", label: "Sign me up", isInitiallySelected: true))))
+    #expect(blocks.contains(.input(.init(kind: .radio, name: "colour", value: "Blue", label: "Blue"))))
+    #expect(blocks.contains(.submission(
+        label: "Submit",
+        target: ":/page/form.mu",
+        fields: ["username", "password", "signup", "colour", "action=save"]
+    )))
+}
+
+@Test func relayInvitationsRoundTripWithoutLeakingKeysIntoRoomIdentity() throws {
+    let invitation = try #require(RelayRoomInvitation(
+        hubDestinationHash: "0123456789abcdef0123456789abcdef",
+        room: "#operations",
+        accessKey: "correct horse"
+    ))
+    let restored = try #require(RelayRoomInvitation(string: invitation.string))
+    #expect(restored.hubDestinationHash == invitation.hubDestinationHash)
+    #expect(restored.room == "operations")
+    #expect(restored.accessKey == "correct horse")
+}
+
+@MainActor @Test func meshFeatureLibraryPersistsCommunityAndServiceDirectoryStateEncrypted() throws {
+    let suite = "mesh-community-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let cipher = LocalDataCipher(keyMaterial: Data(repeating: 0x51, count: 64))
+    let library = MeshChatFeatureStore(cipher: cipher, defaults: defaults)
+    let hub = "0123456789abcdef0123456789abcdef"
+    let room = RelayChatRoom(hubDestinationHash: hub, name: "general", nickname: "Swift")
+    library.upsertRelayRoom(room)
+    let incoming = try ReticulumRelayChatProtocol.Message(
+        type: .message,
+        source: Data(repeating: 0x22, count: 16),
+        room: "general",
+        body: .text("hello @Swift"),
+        nickname: "Peer"
+    )
+    library.recordRelayMessage(incoming, hubDestinationHash: hub, outgoing: false)
+    library.setRelayRoomFavorite(room.id, favorite: true)
+    let service = ReticulumApplicationService(
+        destinationHash: hub,
+        kind: .relay,
+        name: "Field Hub",
+        detail: "#general",
+        hops: 3,
+        isValidated: true
+    )
+    library.observeService(service)
+    library.setServiceFavorite(service.id, favorite: true)
+    library.updateServiceHealth(service.id, reachable: true, latencyMilliseconds: 145)
+    library.markServiceUsed(service.id)
+
+    let encrypted = try #require(defaults.data(forKey: "meshChatApplicationFeatures.v1"))
+    #expect(cipher.isEncrypted(encrypted))
+    #expect(!String(decoding: encrypted, as: UTF8.self).contains("Field Hub"))
+
+    let restored = MeshChatFeatureStore(cipher: cipher, defaults: defaults)
+    #expect(restored.relayRoomStates[room.id]?.unreadCount == 1)
+    #expect(restored.relayRoomStates[room.id]?.mentionCount == 1)
+    #expect(restored.relayRoomStates[room.id]?.isFavorite == true)
+    #expect(restored.serviceDirectory.first?.name == "Field Hub")
+    #expect(restored.serviceDirectory.first?.isFavorite == true)
+    #expect(restored.serviceDirectory.first?.routeLatencyMilliseconds == 145)
+    #expect(restored.serviceDirectory.first?.lastUsedAt != nil)
+}
+
 @MainActor @Test func meshFeatureLibraryEncryptsPagesAndTelephonePreferences() {
     let suite = "mesh-features-\(UUID().uuidString)"
     let defaults = try! #require(UserDefaults(suiteName: suite))

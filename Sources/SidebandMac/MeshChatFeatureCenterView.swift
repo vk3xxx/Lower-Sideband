@@ -30,6 +30,8 @@ struct MeshChatFeatureCenterView: View {
                     .tabItem { Label("Telephone", systemImage: "phone") }
                 RelayChatView(store: store)
                     .tabItem { Label("Rooms", systemImage: "person.3") }
+                ServiceDirectoryView(store: store)
+                    .tabItem { Label("Directory", systemImage: "rectangle.grid.1x2") }
                 HostedRelayView(store: store)
                     .tabItem { Label("Host", systemImage: "person.3.sequence.fill") }
                 RemoteFilesView(store: store)
@@ -131,8 +133,41 @@ private struct HostedRelayView: View {
                     Text("No members connected").foregroundStyle(.secondary)
                 }
                 ForEach(store.hostedRelayMembers) { member in
-                    LabeledContent(member.nickname, value: "#\(member.room) · \(member.identityHash)")
-                        .font(.caption)
+                    let room = configuration.rooms.first { $0.name == member.room }
+                    let isVoiced = room?.voicedIdentityHashes.contains(member.identityHash) == true
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(member.nickname).font(.headline)
+                                if isVoiced {
+                                    Label("May post", systemImage: "checkmark.shield.fill")
+                                        .font(.caption2).foregroundStyle(.blue)
+                                }
+                            }
+                            Text("#\(member.room) · \(member.identityHash)")
+                                .font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Menu {
+                            if room?.isModerated == true {
+                                Button(isVoiced ? "Remove Posting Permission" : "Allow Posting") {
+                                    Task {
+                                        await store.setHostedRelayMemberVoice(member, voiced: !isVoiced)
+                                        configuration = store.meshFeatures.relayHub
+                                    }
+                                }
+                            }
+                            Button("Disconnect") { store.disconnectHostedRelayMember(member) }
+                            Button("Ban and Disconnect", role: .destructive) {
+                                Task {
+                                    await store.banHostedRelayIdentity(member.identityHash)
+                                    configuration = store.meshFeatures.relayHub
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
                 }
             }
             Section("Moderation") {
@@ -344,6 +379,16 @@ private struct RelayChatView: View {
     @State private var selectedRoomID: String?
     @State private var message = ""
     @State private var isWorking = false
+    @State private var invitationText = ""
+
+    private var sortedRooms: [RelayChatRoom] {
+        store.meshFeatures.relayRooms.sorted {
+            let left = store.meshFeatures.relayRoomStates[$0.id]?.isFavorite == true
+            let right = store.meshFeatures.relayRoomStates[$1.id]?.isFavorite == true
+            if left != right { return left }
+            return $0.joinedAt > $1.joinedAt
+        }
+    }
 
     private var selectedRoom: RelayChatRoom? {
         store.meshFeatures.relayRooms.first { $0.id == selectedRoomID }
@@ -353,14 +398,44 @@ private struct RelayChatView: View {
         NavigationSplitView {
             List(selection: $selectedRoomID) {
                 Section("Joined Rooms") {
-                    ForEach(store.meshFeatures.relayRooms) { room in
-                        VStack(alignment: .leading) {
-                            Text(room.name).font(.headline)
-                            Text("\(room.nickname) · \(room.members.count) present")
-                                .font(.caption).foregroundStyle(.secondary)
+                    ForEach(sortedRooms) { room in
+                        let state = store.meshFeatures.relayRoomStates[room.id]
+                        HStack {
+                            VStack(alignment: .leading) {
+                                HStack(spacing: 5) {
+                                    if state?.isFavorite == true {
+                                        Image(systemName: "star.fill").foregroundStyle(.yellow)
+                                    }
+                                    Text(room.name).font(.headline)
+                                    if let mentions = state?.mentionCount, mentions > 0 {
+                                        Text("@\(mentions)")
+                                            .font(.caption2.bold())
+                                            .padding(.horizontal, 5)
+                                            .background(.orange, in: Capsule())
+                                    }
+                                }
+                                Text("\(room.nickname) · \(room.members.count) present")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if let unread = state?.unreadCount, unread > 0 {
+                                Text("\(unread)")
+                                    .font(.caption.bold())
+                                    .padding(6)
+                                    .background(.tint, in: Circle())
+                                    .foregroundStyle(.white)
+                            }
                         }
                         .tag(room.id)
                         .contextMenu {
+                            Button(state?.isFavorite == true ? "Remove Favourite" : "Add Favourite", systemImage: state?.isFavorite == true ? "star.slash" : "star") {
+                                store.meshFeatures.setRelayRoomFavorite(room.id, favorite: state?.isFavorite != true)
+                            }
+                            Button("Copy Invitation", systemImage: "person.badge.plus") {
+                                if let invitation = RelayRoomInvitation(hubDestinationHash: room.hubDestinationHash, room: room.name) {
+                                    copyMeshFeatureText(invitation.string)
+                                }
+                            }
                             Button("Part Room", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                                 Task { await store.partRelayChat(room) }
                             }
@@ -374,9 +449,20 @@ private struct RelayChatView: View {
                     SecureField("Room access key (optional)", text: $accessKey)
                     Button("Join Room", systemImage: "person.3.fill") { Task { await join() } }
                         .disabled(isWorking || hub.isEmpty || roomName.isEmpty || nickname.isEmpty)
+                    TextField("Paste rrc:// invitation", text: $invitationText)
+                        .font(.caption.monospaced())
+                        .onSubmit { applyInvitation() }
+                    Button("Use Invitation", systemImage: "link.badge.plus") { applyInvitation() }
+                        .disabled(RelayRoomInvitation(string: invitationText) == nil)
                 }
             }
             .navigationTitle("Relay Chat")
+            .onChange(of: selectedRoomID) { _, roomID in
+                if let roomID { store.meshFeatures.markRelayRoomRead(roomID) }
+            }
+            .onChange(of: store.meshFeatures.relayTranscript.count) { _, _ in
+                if let selectedRoomID { store.meshFeatures.markRelayRoomRead(selectedRoomID) }
+            }
         } detail: {
             if let room = selectedRoom {
                 VStack(spacing: 0) {
@@ -388,6 +474,19 @@ private struct RelayChatView: View {
                         }
                         Spacer()
                         Label("\(room.members.count)", systemImage: "person.2")
+                        Button {
+                            let favorite = store.meshFeatures.relayRoomStates[room.id]?.isFavorite == true
+                            store.meshFeatures.setRelayRoomFavorite(room.id, favorite: !favorite)
+                        } label: {
+                            Image(systemName: store.meshFeatures.relayRoomStates[room.id]?.isFavorite == true ? "star.fill" : "star")
+                        }
+                        .help("Favourite this room")
+                        Button {
+                            if let invitation = RelayRoomInvitation(hubDestinationHash: room.hubDestinationHash, room: room.name) {
+                                copyMeshFeatureText(invitation.string)
+                            }
+                        } label: { Image(systemName: "person.badge.plus") }
+                        .help("Copy a room invitation")
                     }.padding()
                     Divider()
                     ScrollView {
@@ -433,6 +532,161 @@ private struct RelayChatView: View {
         let body = message; message = ""
         do { try await store.sendRelayChatMessage(room: room, text: body) }
         catch { message = body; store.lastError = error.localizedDescription }
+    }
+
+    private func applyInvitation() {
+        guard let invitation = RelayRoomInvitation(string: invitationText) else { return }
+        hub = invitation.hubDestinationHash
+        roomName = invitation.room
+        accessKey = invitation.accessKey ?? ""
+    }
+}
+
+private struct ServiceDirectoryView: View {
+    @Bindable var store: SidebandStore
+    @State private var search = ""
+    @State private var kind: ReticulumApplicationServiceKind?
+    @State private var favoritesOnly = false
+    @State private var selectedID: String?
+    @State private var isChecking = false
+
+    private var services: [ReticulumApplicationService] {
+        store.meshFeatures.serviceDirectory.filter { service in
+            (!favoritesOnly || service.isFavorite)
+                && (kind == nil || service.kind == kind)
+                && (search.isEmpty
+                    || service.name.localizedCaseInsensitiveContains(search)
+                    || service.destinationHash.localizedCaseInsensitiveContains(search)
+                    || service.detail.localizedCaseInsensitiveContains(search))
+        }
+    }
+
+    private var selected: ReticulumApplicationService? {
+        store.meshFeatures.serviceDirectory.first { $0.id == selectedID }
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            List(selection: $selectedID) {
+                Section {
+                    TextField("Search services", text: $search)
+                        .textFieldStyle(.roundedBorder)
+                    Picker("Service", selection: $kind) {
+                        Text("All services").tag(ReticulumApplicationServiceKind?.none)
+                        ForEach(ReticulumApplicationServiceKind.allCases) { serviceKind in
+                            Text(serviceKind.title).tag(Optional(serviceKind))
+                        }
+                    }
+                    Toggle("Favourites only", isOn: $favoritesOnly)
+                }
+                Section("Discovered Services") {
+                    ForEach(services) { service in
+                        HStack(spacing: 10) {
+                            Image(systemName: service.kind.systemImage)
+                                .foregroundStyle(service.isReachable ? Color.green : Color.secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 4) {
+                                    Text(service.name.isEmpty ? service.kind.title : service.name)
+                                        .font(.headline)
+                                    if service.isFavorite {
+                                        Image(systemName: "star.fill").foregroundStyle(.yellow)
+                                    }
+                                }
+                                Text("\(service.hops) hop\(service.hops == 1 ? "" : "s") · \(service.lastSeen.formatted(.relative(presentation: .named)))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .tag(service.id)
+                    }
+                }
+            }
+            .navigationTitle("Service Directory")
+        } detail: {
+            if let service = selected {
+                Form {
+                    Section {
+                        Label(service.name.isEmpty ? service.kind.title : service.name, systemImage: service.kind.systemImage)
+                            .font(.title2.bold())
+                        LabeledContent("Type", value: service.kind.title)
+                        LabeledContent("Destination") {
+                            Text(service.destinationHash).font(.caption.monospaced()).textSelection(.enabled)
+                        }
+                        LabeledContent("Trust", value: service.isValidated ? "Validated announce" : "Unverified")
+                        LabeledContent("Route", value: service.isReachable ? "\(service.hops) hop\(service.hops == 1 ? "" : "s")" : "Unavailable")
+                        if let latency = service.routeLatencyMilliseconds {
+                            LabeledContent("Route discovery", value: "\(latency) ms")
+                        }
+                        if !service.detail.isEmpty {
+                            LabeledContent("Details", value: service.detail)
+                        }
+                        LabeledContent("Last seen", value: service.lastSeen.formatted(.relative(presentation: .named)))
+                        if let used = service.lastUsedAt {
+                            LabeledContent("Last used", value: used.formatted(.relative(presentation: .named)))
+                        }
+                    }
+                    Section("Actions") {
+                        Button(service.isFavorite ? "Remove Favourite" : "Add Favourite", systemImage: service.isFavorite ? "star.slash" : "star") {
+                            store.meshFeatures.setServiceFavorite(service.id, favorite: !service.isFavorite)
+                        }
+                        Button {
+                            copyMeshFeatureText(service.destinationHash)
+                            store.meshFeatures.markServiceUsed(service.id)
+                        } label: {
+                            Label("Copy Destination", systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            Task { await check(service) }
+                        } label: {
+                            if isChecking { ProgressView() }
+                            else { Label("Check Route", systemImage: "wave.3.right") }
+                        }
+                        .disabled(isChecking)
+                        switch service.kind {
+                        case .nomad:
+                            Button("Open Index Page", systemImage: "doc.richtext") {
+                                Task { await openNomad(service) }
+                            }
+                        case .relay:
+                            Button("Copy General Room Invitation", systemImage: "person.badge.plus") {
+                                if let invitation = RelayRoomInvitation(
+                                    hubDestinationHash: service.destinationHash,
+                                    room: "general"
+                                ) {
+                                    copyMeshFeatureText(invitation.string)
+                                    store.meshFeatures.markServiceUsed(service.id)
+                                }
+                            }
+                        case .shell, .execution, .copy:
+                            Text("Use this validated destination in the \(service.kind.title) workspace.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .navigationTitle("Service")
+            } else {
+                ContentUnavailableView(
+                    "No service selected",
+                    systemImage: "rectangle.grid.1x2",
+                    description: Text("Validated Reticulum application announces appear here automatically.")
+                )
+            }
+        }
+    }
+
+    @MainActor private func check(_ service: ReticulumApplicationService) async {
+        isChecking = true
+        await store.checkApplicationService(service)
+        isChecking = false
+    }
+
+    @MainActor private func openNomad(_ service: ReticulumApplicationService) async {
+        guard let address = NomadPageAddress(destinationHash: service.destinationHash) else { return }
+        do {
+            _ = try await store.fetchNomadPage(address)
+            store.meshFeatures.markServiceUsed(service.id)
+        } catch {
+            store.lastError = error.localizedDescription
+        }
     }
 }
 
@@ -569,6 +823,7 @@ private struct NomadPageBrowserView: View {
     @State private var isLoading = false
     @State private var showArchive = false
     @State private var mode: EditorMode = .preview
+    @State private var formValues: [String: String] = [:]
 
     private enum EditorMode: String, CaseIterable, Identifiable {
         case preview = "Preview"
@@ -690,7 +945,13 @@ private struct NomadPageBrowserView: View {
                         .accessibilityLabel("Micron page source editor")
                 } else {
                     ScrollView {
-                        MicronPreview(source: source)
+                        MicronPreview(
+                            source: source,
+                            values: $formValues,
+                            onNavigate: { target, fields in
+                                Task { await openMicronTarget(target, fields: fields) }
+                            }
+                        )
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(24)
                     }
@@ -706,6 +967,7 @@ private struct NomadPageBrowserView: View {
         addressText = ""
         title = "New Micron Page"
         source = "# New Micron Page\n\nWrite resilient, lightweight content here."
+        formValues = [:]
         mode = .source
     }
 
@@ -714,6 +976,7 @@ private struct NomadPageBrowserView: View {
         addressText = page.address?.string ?? ""
         title = page.title
         source = page.source
+        formValues = [:]
         mode = .preview
     }
 
@@ -740,6 +1003,7 @@ private struct NomadPageBrowserView: View {
         defer { isLoading = false }
         do {
             source = try await store.fetchNomadPage(address)
+            formValues = [:]
             title = address.path
             editingID = features.pages.first(where: { $0.address == address })?.id
             selectedID = editingID
@@ -748,10 +1012,57 @@ private struct NomadPageBrowserView: View {
             store.lastError = "Could not open Nomad page: \(error.localizedDescription)"
         }
     }
+
+    @MainActor private func openMicronTarget(_ target: String, fields: [String]) async {
+        guard let address = resolvedAddress(target, fields: fields) else {
+            store.lastError = "This Micron link does not contain a valid Nomad destination."
+            return
+        }
+        addressText = address.string
+        await openRemotePage()
+    }
+
+    private func resolvedAddress(_ target: String, fields: [String]) -> NomadPageAddress? {
+        let current = NomadPageAddress(string: addressText)
+        let base: NomadPageAddress?
+        if target.hasPrefix("#") {
+            return current
+        } else if target.hasPrefix("nomadnet://") {
+            base = NomadPageAddress(string: target)
+        } else if target.hasPrefix(":") || target.hasPrefix("/") {
+            guard let current else { return nil }
+            let relative = String(target.drop(while: { $0 == ":" }))
+            base = NomadPageAddress(string: "\(current.destinationHash)\(relative.hasPrefix("/") ? "" : "/")\(relative)")
+        } else if let colon = target.firstIndex(of: ":") {
+            let destination = String(target[..<colon])
+            let path = String(target[target.index(after: colon)...])
+            base = NomadPageAddress(string: "\(destination)\(path.hasPrefix("/") ? "" : "/")\(path)")
+        } else if let current {
+            base = NomadPageAddress(string: "\(current.destinationHash)/\(target)")
+        } else {
+            base = NomadPageAddress(string: target)
+        }
+        guard let base else { return nil }
+        var query = base.query
+        for field in fields.prefix(64) {
+            if field == "*" {
+                for (key, value) in formValues { query[key] = value }
+            } else if let equals = field.firstIndex(of: "=") {
+                let key = String(field[..<equals])
+                let value = String(field[field.index(after: equals)...])
+                if !key.isEmpty { query[key] = value }
+            } else if let value = formValues[field] {
+                query[field] = value
+            }
+        }
+        return NomadPageAddress(destinationHash: base.destinationHash, path: base.path, query: query)
+    }
 }
 
 private struct MicronPreview: View {
     let source: String
+    @Binding var values: [String: String]
+    let onNavigate: (String, [String]) -> Void
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
@@ -765,12 +1076,75 @@ private struct MicronPreview: View {
                 case .separator:
                     Divider()
                 case .link(let label, let target):
-                    Label(label, systemImage: "link")
-                        .foregroundStyle(.tint)
-                        .help(target)
+                    Button {
+                        onNavigate(target, [])
+                    } label: {
+                        Label(label, systemImage: "link")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .help(target)
+                case .submission(let label, let target, let fields):
+                    Button {
+                        onNavigate(target, fields)
+                    } label: {
+                        Label(label, systemImage: "paperplane")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .help("Submit \(fields.joined(separator: ", ")) to \(target)")
+                case .input(let field):
+                    input(field)
                 }
             }
         }
+    }
+
+    @ViewBuilder private func input(_ field: MicronInputField) -> some View {
+        switch field.kind {
+        case .text:
+            LabeledContent(field.label) {
+                TextField(field.label, text: valueBinding(for: field))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: CGFloat(max(120, min(520, field.width * 10))))
+            }
+        case .secure:
+            LabeledContent(field.label) {
+                SecureField(field.label, text: valueBinding(for: field))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: CGFloat(max(120, min(520, field.width * 10))))
+            }
+        case .checkbox:
+            Toggle(field.label, isOn: selectionBinding(for: field))
+        case .radio:
+            Button {
+                values[field.name] = field.value
+            } label: {
+                Label(
+                    field.label,
+                    systemImage: values[field.name, default: field.isInitiallySelected ? field.value : ""] == field.value
+                        ? "largecircle.fill.circle"
+                        : "circle"
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func valueBinding(for field: MicronInputField) -> Binding<String> {
+        Binding(
+            get: { values[field.name] ?? field.initialValue },
+            set: { values[field.name] = String($0.prefix(4_096)) }
+        )
+    }
+
+    private func selectionBinding(for field: MicronInputField) -> Binding<Bool> {
+        Binding(
+            get: {
+                if let value = values[field.name] { return value == field.value }
+                return field.isInitiallySelected
+            },
+            set: { values[field.name] = $0 ? field.value : "" }
+        )
     }
 }
 

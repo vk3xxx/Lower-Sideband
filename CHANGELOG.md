@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.90 (128) - 2026-07-31
+
+- Completed interactive Nomad browsing with reference-compatible text,
+  password, checkbox and radio fields, submitted query variables, actionable
+  links and bounded native form state.
+- Expanded Relay Chat with favourites, unread and mention counters, portable
+  invitations, active-room read tracking, room presence and host moderation
+  controls for posting permission, disconnects and bans.
+- Added an encrypted unified Reticulum service directory for Nomad, RRC, RNSH,
+  RNX and RNCP announces, including search, type filters, favourites, trust,
+  reachability, hop count, route-check latency and recent-use status.
+
 ## 1.3.89 (127) - 2026-07-31
 
 - Added a native hosted Reticulum Relay Chat hub with keyed rooms, member
