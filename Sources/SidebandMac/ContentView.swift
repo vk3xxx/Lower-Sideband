@@ -456,7 +456,9 @@ struct ContentView: View {
             await DeliverySoakRunner.runIfRequested(store)
         }
         .onOpenURL { url in
-            if url.scheme?.lowercased() == LXMURI.scheme {
+            if store.handleServiceURL(url) {
+                showingMeshTools = true
+            } else if url.scheme?.lowercased() == LXMURI.scheme {
                 let result = store.ingestPaperMessageURI(url.absoluteString)
                 if let error = paperMessageError(result) { store.lastError = error }
             } else {

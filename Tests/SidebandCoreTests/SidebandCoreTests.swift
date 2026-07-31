@@ -5300,6 +5300,54 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(merged.nomadBookmarks.allSatisfy { $0.address.query.isEmpty })
 }
 
+@Test func applicationServiceLinksRoundTripAndAcceptLegacySchemes() throws {
+    let destination = "0123456789abcdef0123456789abcdef"
+    let link = try #require(ReticulumServiceLink(
+        kind: .nomad,
+        destinationHash: destination,
+        name: "Field node",
+        path: "/page/status.mu"
+    ))
+    #expect(ReticulumServiceLink(url: link.url) == link)
+    #expect(ReticulumServiceLink(url: URL(string: "nomadnet://\(destination)/page/status.mu")!)?.kind == .nomad)
+    #expect(ReticulumServiceLink(url: URL(string: "rrc://\(destination)/general")!)?.kind == .relay)
+    #expect(!link.url.absoluteString.contains("key="))
+}
+
+@MainActor @Test func applicationServicePermissionsPersistEncryptedAndRevoke() throws {
+    let suite = "service-permissions-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let destination = "0123456789abcdef0123456789abcdef"
+    let cipher = LocalDataCipher(keyMaterial: Data(repeating: 0x71, count: 64))
+    let library = MeshChatFeatureStore(cipher: cipher, defaults: defaults)
+    library.setAuthorization(.openShell, destinationHash: destination, allowed: true)
+    #expect(library.isAuthorized(.openShell, destinationHash: destination))
+    let stored = try #require(defaults.data(forKey: "meshChatApplicationFeatures.v1"))
+    #expect(!String(decoding: stored, as: UTF8.self).contains(destination))
+
+    let restored = MeshChatFeatureStore(cipher: cipher, defaults: defaults)
+    #expect(restored.isAuthorized(.openShell, destinationHash: destination))
+    #expect(!restored.isAuthorized(.executeCommands, destinationHash: destination))
+    restored.revokeAuthorizations(destinationHash: destination)
+    #expect(!restored.isAuthorized(.openShell, destinationHash: destination))
+}
+
+@Test func liveAcceptanceReportsAreRedactedAndFailClosed() {
+    let destination = "0123456789abcdef0123456789abcdef"
+    let report = ApplicationServiceAcceptanceReport(
+        kind: .copy,
+        destinationReference: destination,
+        stages: [
+            .init(name: "Route discovery", state: .passed, durationMilliseconds: 42, detail: "2 hops"),
+            .init(name: "Encrypted link", state: .failed, durationMilliseconds: nil, detail: "Timed out")
+        ]
+    )
+    #expect(!report.passed)
+    #expect(!report.redactedText.contains(destination))
+    #expect(report.redactedText.contains("FAIL"))
+}
+
 private actor TestBootloaderTransport: RNodeBootloaderTransport {
     private var bytes = Data(); private var digest = Data()
     func begin(imageBytes: Int, sha256: Data) { bytes.removeAll(keepingCapacity: true); digest = sha256 }

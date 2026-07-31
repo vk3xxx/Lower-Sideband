@@ -34,6 +34,8 @@ Lower Sideband is a Swift and SwiftUI adaptation of [Sideband](https://github.co
   RNCP services
 - Unified application-service activity, built-in wire-format diagnostics and
   privacy-bounded encrypted continuity of safe service preferences across devices
+- Shareable service links and QR onboarding, encrypted per-service permissions,
+  and user-approved live ReticulumKit route/link/reconnect acceptance reports
 
 ## Platform support
 

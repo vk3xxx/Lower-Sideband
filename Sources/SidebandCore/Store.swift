@@ -64,6 +64,7 @@ public enum PaperMessageError: LocalizedError {
 
 @MainActor @Observable
 public final class SidebandStore {
+    public var pendingServiceLink: ReticulumServiceLink?
     public private(set) var conversations: [Conversation] = []
     public private(set) var messages: [Message] = [] {
         didSet {
@@ -311,6 +312,7 @@ public final class SidebandStore {
         case relayChat(hub: String)
         case shell(sessionID: UUID)
         case remoteTool
+        case acceptance
         case relayHubClient
         case remoteCopy
         case nomadServer
@@ -738,6 +740,7 @@ public final class SidebandStore {
     }
 
     public func fetchNomadPage(_ address: NomadPageAddress) async throws -> String {
+        try requireAuthorization(.browsePages, destinationHash: address.destinationHash)
         guard networkState == .ready else { throw NomadPageError.networkOffline }
         guard Data(hexadecimal: address.destinationHash) != nil,
               discoveries.contains(where: { $0.destinationHash == address.destinationHash && $0.isValidated && $0.publicKey != nil }) else {
@@ -787,6 +790,7 @@ public final class SidebandStore {
 
     public func joinRelayChat(hubDestinationHash: String, room: String, nickname: String, accessKey: String? = nil) async throws {
         let destination = try validatedApplicationDestination(hubDestinationHash)
+        try requireAuthorization(.joinRooms, destinationHash: destination)
         let session = try await applicationSession(to: destination, kind: .relayChat(hub: destination))
         try await identify(session)
         let source = Data(hexadecimal: messagingIdentityHash) ?? messagingIdentity.hash
@@ -885,6 +889,7 @@ public final class SidebandStore {
     @discardableResult
     public func sendRemoteFile(destinationHash: String, source: URL) async throws -> UUID {
         let destination = try validatedApplicationDestination(destinationHash)
+        try requireAuthorization(.sendFiles, destinationHash: destination)
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let attachment = try await attachmentStore.importFile(from: source)
@@ -927,6 +932,7 @@ public final class SidebandStore {
     @discardableResult
     public func fetchRemoteFile(destinationHash: String, remotePath: String) async throws -> UUID {
         let destination = try validatedApplicationDestination(destinationHash)
+        try requireAuthorization(.fetchFiles, destinationHash: destination)
         let path = try normalizedRemotePath(remotePath)
         var transfer = RemoteFileTransferRecord(
             destinationHash: destination,
@@ -1031,6 +1037,7 @@ public final class SidebandStore {
 
     public func openRemoteShell(destinationHash: String, title: String = "Remote Shell") async throws -> UUID {
         let destination = try validatedApplicationDestination(destinationHash)
+        try requireAuthorization(.openShell, destinationHash: destination)
         var record = RemoteShellSessionRecord(destinationHash: destination, title: title, state: "Connecting")
         meshFeatures.upsertShellSession(record)
         do {
@@ -1091,6 +1098,7 @@ public final class SidebandStore {
 
     public func executeRemoteCommand(destinationHash: String, command: String) async throws -> RemoteToolRun {
         let destination = try validatedApplicationDestination(destinationHash)
+        try requireAuthorization(.executeCommands, destinationHash: destination)
         var run = RemoteToolRun(destinationHash: destination, command: command, state: "Connecting")
         meshFeatures.upsertRemoteToolRun(run)
         do {
@@ -1235,6 +1243,7 @@ public final class SidebandStore {
 
     public enum ApplicationServiceError: LocalizedError {
         case networkOffline, unknownDestination, linkUnavailable, timedOut, invalidInput, invalidResponse
+        case authorizationRequired(ApplicationServicePermission)
         public var errorDescription: String? {
             switch self {
             case .networkOffline: "Reticulum is not connected."
@@ -1243,6 +1252,8 @@ public final class SidebandStore {
             case .timedOut: "The remote service did not respond in time."
             case .invalidInput: "The request contains invalid or oversized data."
             case .invalidResponse: "The remote service returned an invalid response."
+            case .authorizationRequired(let permission):
+                "Approve “\(permission.title)” for this service before continuing."
             }
         }
     }
@@ -1259,6 +1270,136 @@ public final class SidebandStore {
             throw ApplicationServiceError.unknownDestination
         }
         return destination
+    }
+
+    private func requireAuthorization(
+        _ permission: ApplicationServicePermission,
+        destinationHash: String
+    ) throws {
+        guard meshFeatures.isAuthorized(permission, destinationHash: destinationHash) else {
+            throw ApplicationServiceError.authorizationRequired(permission)
+        }
+    }
+
+    @discardableResult
+    public func handleServiceURL(_ url: URL) -> Bool {
+        guard let link = ReticulumServiceLink(url: url) else { return false }
+        pendingServiceLink = link
+        return true
+    }
+
+    public func consumePendingServiceLink() -> ReticulumServiceLink? {
+        defer { pendingServiceLink = nil }
+        return pendingServiceLink
+    }
+
+    public func runLiveApplicationServiceAcceptance(
+        _ service: ReticulumApplicationService
+    ) async -> ApplicationServiceAcceptanceReport {
+        var stages: [ApplicationServiceAcceptanceStage] = []
+        let destination = service.destinationHash
+
+        func stage(
+            _ name: String,
+            _ state: ApplicationServiceAcceptanceStage.State,
+            started: Date? = nil,
+            detail: String
+        ) {
+            stages.append(.init(
+                name: name,
+                state: state,
+                durationMilliseconds: started.map { max(0, Int(Date.now.timeIntervalSince($0) * 1_000)) },
+                detail: detail
+            ))
+        }
+
+        guard networkState == .ready else {
+            stage("Network", .failed, detail: "ReticulumKit transport is offline")
+            let report = ApplicationServiceAcceptanceReport(
+                kind: service.kind,
+                destinationReference: destination,
+                stages: stages
+            )
+            meshFeatures.recordAcceptanceReport(report)
+            return report
+        }
+        stage("Network", .passed, detail: "ReticulumKit transport is ready")
+
+        let routeStarted = Date.now
+        if !hasPath(to: destination) { await requestPath(to: destination, surfaceErrors: false) }
+        let routeDeadline = ContinuousClock.now + .seconds(12)
+        while !hasPath(to: destination), ContinuousClock.now < routeDeadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        guard hasPath(to: destination) else {
+            stage("Route discovery", .failed, started: routeStarted, detail: "No route before the 12 second timeout")
+            let report = ApplicationServiceAcceptanceReport(
+                kind: service.kind,
+                destinationReference: destination,
+                stages: stages
+            )
+            meshFeatures.recordAcceptanceReport(report)
+            return report
+        }
+        let route = await pathTable.path(to: Data(hexadecimal: destination)!)
+        stage(
+            "Route discovery",
+            .passed,
+            started: routeStarted,
+            detail: "\(route?.hops ?? service.hops) hop route via \(route?.interfaceID ?? "ReticulumKit")"
+        )
+
+        do {
+            let connectStarted = Date.now
+            let first = try await applicationSession(to: destination, kind: .acceptance)
+            try await identify(first)
+            stage("Encrypted link", .passed, started: connectStarted, detail: "Identity exchange completed")
+
+            let firstLinkID = first.linkID.hex
+            removeLink(firstLinkID)
+            let reconnectStarted = Date.now
+            let second = try await applicationSession(to: destination, kind: .acceptance)
+            try await identify(second)
+            stage(
+                "Reconnect",
+                .passed,
+                started: reconnectStarted,
+                detail: second.linkID.hex == firstLinkID ? "Session resumed" : "Fresh encrypted link established"
+            )
+            removeLink(second.linkID.hex)
+        } catch {
+            stage("Encrypted link", .failed, detail: error.localizedDescription)
+        }
+
+        if service.kind == .nomad {
+            let requestStarted = Date.now
+            do {
+                let address = NomadPageAddress(destinationHash: destination)!
+                let previous = meshFeatures.isAuthorized(.browsePages, destinationHash: destination)
+                if !previous { meshFeatures.setAuthorization(.browsePages, destinationHash: destination, allowed: true) }
+                defer {
+                    if !previous { meshFeatures.setAuthorization(.browsePages, destinationHash: destination, allowed: false) }
+                }
+                _ = try await fetchNomadPage(address)
+                stage("Request and response", .passed, started: requestStarted, detail: "Index page returned valid bounded UTF-8")
+            } catch {
+                stage("Request and response", .failed, started: requestStarted, detail: error.localizedDescription)
+            }
+        } else {
+            stage(
+                "Request and response",
+                .skipped,
+                detail: "No command, room membership or file operation was performed by this safe test"
+            )
+        }
+
+        let report = ApplicationServiceAcceptanceReport(
+            kind: service.kind,
+            destinationReference: destination,
+            stages: stages
+        )
+        meshFeatures.recordAcceptanceReport(report)
+        return report
     }
 
     private func rawApplicationSession(to destination: String) -> ReticulumLinkSession? {
@@ -5365,7 +5506,7 @@ public final class SidebandStore {
             }
             record.updatedAt = .now
             meshFeatures.upsertShellSession(record)
-        case .remoteTool:
+        case .remoteTool, .acceptance:
             break
         case .relayHubClient:
             guard let message = try? ReticulumRelayChatProtocol.Message.decode(plaintext),

@@ -838,6 +838,8 @@ public final class MeshChatFeatureStore {
     public private(set) var nomadServer = NomadServerConfiguration()
     public private(set) var hostedNomadPages: [NomadHostedPage] = []
     public private(set) var hostedNomadFiles: [NomadHostedFile] = []
+    public private(set) var serviceAuthorizations: [ApplicationServiceAuthorization] = []
+    public private(set) var acceptanceReports: [ApplicationServiceAcceptanceReport] = []
 
     private struct Payload: Codable {
         var pages: [NomadPageDocument]
@@ -857,6 +859,8 @@ public final class MeshChatFeatureStore {
         var nomadServer: NomadServerConfiguration?
         var hostedNomadPages: [NomadHostedPage]?
         var hostedNomadFiles: [NomadHostedFile]?
+        var serviceAuthorizations: [ApplicationServiceAuthorization]?
+        var acceptanceReports: [ApplicationServiceAcceptanceReport]?
         var nomadHistoryClearedAt: Date?
         var continuityClocks: [String: Date]?
         var nomadBookmarkTombstones: [String: NomadBookmarkContinuityPreference]?
@@ -1217,6 +1221,40 @@ public final class MeshChatFeatureStore {
         persist()
     }
 
+    public func isAuthorized(_ permission: ApplicationServicePermission, destinationHash: String) -> Bool {
+        serviceAuthorizations.first {
+            $0.destinationHash == destinationHash.lowercased()
+        }?.permissions.contains(permission) == true
+    }
+
+    public func setAuthorization(
+        _ permission: ApplicationServicePermission,
+        destinationHash: String,
+        allowed: Bool
+    ) {
+        let destination = destinationHash.lowercased()
+        guard DestinationHash.isValid(destination) else { return }
+        var authorization = serviceAuthorizations.first { $0.destinationHash == destination }
+            ?? ApplicationServiceAuthorization(destinationHash: destination, permissions: [])
+        if allowed { authorization.permissions.insert(permission) }
+        else { authorization.permissions.remove(permission) }
+        authorization.updatedAt = .now
+        serviceAuthorizations.removeAll { $0.destinationHash == destination }
+        if !authorization.permissions.isEmpty { serviceAuthorizations.append(authorization) }
+        persist()
+    }
+
+    public func revokeAuthorizations(destinationHash: String) {
+        serviceAuthorizations.removeAll { $0.destinationHash == destinationHash.lowercased() }
+        persist()
+    }
+
+    public func recordAcceptanceReport(_ report: ApplicationServiceAcceptanceReport) {
+        acceptanceReports.insert(report, at: 0)
+        acceptanceReports = Array(acceptanceReports.prefix(100))
+        persist()
+    }
+
     public func upsertShellSession(_ session: RemoteShellSessionRecord) {
         if let index = shellSessions.firstIndex(where: { $0.id == session.id }) { shellSessions[index] = session }
         else { shellSessions.insert(session, at: 0) }
@@ -1323,6 +1361,8 @@ public final class MeshChatFeatureStore {
         nomadServer = payload.nomadServer ?? NomadServerConfiguration()
         hostedNomadPages = Array((payload.hostedNomadPages ?? []).prefix(500))
         hostedNomadFiles = Array((payload.hostedNomadFiles ?? []).prefix(250))
+        serviceAuthorizations = Array((payload.serviceAuthorizations ?? []).prefix(2_000))
+        acceptanceReports = Array((payload.acceptanceReports ?? []).prefix(100))
         nomadHistoryClearedAt = payload.nomadHistoryClearedAt
         continuityClocks = payload.continuityClocks ?? [:]
         nomadBookmarkTombstones = payload.nomadBookmarkTombstones ?? [:]
@@ -1341,6 +1381,8 @@ public final class MeshChatFeatureStore {
             remoteFileTransfers: remoteFileTransfers, remoteFileShares: remoteFileShares,
             nomadServer: nomadServer, hostedNomadPages: hostedNomadPages,
             hostedNomadFiles: hostedNomadFiles,
+            serviceAuthorizations: serviceAuthorizations,
+            acceptanceReports: acceptanceReports,
             nomadHistoryClearedAt: nomadHistoryClearedAt,
             continuityClocks: continuityClocks,
             nomadBookmarkTombstones: nomadBookmarkTombstones,

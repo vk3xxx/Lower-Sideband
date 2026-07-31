@@ -1,9 +1,13 @@
 import SwiftUI
 import SidebandCore
+import CoreImage
+import CoreImage.CIFilterBuiltins
 #if os(macOS)
 import AppKit
+private typealias ServiceQRImage = NSImage
 #else
 import UIKit
+private typealias ServiceQRImage = UIImage
 #endif
 
 private func copyMeshFeatureText(_ text: String) {
@@ -18,32 +22,48 @@ private func copyMeshFeatureText(_ text: String) {
 struct MeshChatFeatureCenterView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var store: SidebandStore
+    @State private var selectedTab: Tab = .pages
+
+    private enum Tab: Hashable {
+        case pages, identities, telephone, rooms, activity, directory, host, files, server, shell, remote
+    }
 
     var body: some View {
         NavigationStack {
-            TabView {
+            TabView(selection: $selectedTab) {
                 NomadPageBrowserView(store: store)
                     .tabItem { Label("Pages", systemImage: "doc.richtext") }
+                    .tag(Tab.pages)
                 IdentityProfilesView(store: store)
                     .tabItem { Label("Identities", systemImage: "person.2.badge.key") }
+                    .tag(Tab.identities)
                 TelephoneCenterView(store: store)
                     .tabItem { Label("Telephone", systemImage: "phone") }
+                    .tag(Tab.telephone)
                 RelayChatView(store: store)
                     .tabItem { Label("Rooms", systemImage: "person.3") }
+                    .tag(Tab.rooms)
                 ServiceActivityCenterView(store: store)
                     .tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }
+                    .tag(Tab.activity)
                 ServiceDirectoryView(store: store)
                     .tabItem { Label("Directory", systemImage: "rectangle.grid.1x2") }
+                    .tag(Tab.directory)
                 HostedRelayView(store: store)
                     .tabItem { Label("Host", systemImage: "person.3.sequence.fill") }
+                    .tag(Tab.host)
                 RemoteFilesView(store: store)
                     .tabItem { Label("Files", systemImage: "folder.badge.gearshape") }
+                    .tag(Tab.files)
                 NomadServerView(store: store)
                     .tabItem { Label("Server", systemImage: "server.rack") }
+                    .tag(Tab.server)
                 RemoteShellView(store: store)
                     .tabItem { Label("Shell", systemImage: "terminal") }
+                    .tag(Tab.shell)
                 RemoteToolsView(store: store)
                     .tabItem { Label("Remote", systemImage: "wrench.and.screwdriver") }
+                    .tag(Tab.remote)
             }
             .navigationTitle("Mesh Tools")
             .toolbar {
@@ -53,6 +73,19 @@ struct MeshChatFeatureCenterView: View {
             }
         }
         .frame(minWidth: 760, minHeight: 560)
+        .onAppear { routePendingLink() }
+        .onChange(of: store.pendingServiceLink) { _, _ in routePendingLink() }
+    }
+
+    private func routePendingLink() {
+        guard let link = store.pendingServiceLink else { return }
+        selectedTab = switch link.kind {
+        case .nomad: .pages
+        case .relay: .rooms
+        case .shell: .shell
+        case .execution: .remote
+        case .copy: .files
+        }
     }
 }
 
@@ -436,6 +469,7 @@ private struct RemoteFilesView: View {
                         .disabled(!DestinationHash.isValid(destination.lowercased()))
                     Button("Fetch File", systemImage: "arrow.down.doc") {
                         Task {
+                            store.meshFeatures.setAuthorization(.fetchFiles, destinationHash: destination, allowed: true)
                             do { _ = try await store.fetchRemoteFile(destinationHash: destination, remotePath: remotePath) }
                             catch { store.lastError = error.localizedDescription }
                         }
@@ -495,6 +529,9 @@ private struct RemoteFilesView: View {
         .onAppear {
             configuration = store.meshFeatures.remoteCopy
             allowedIdentities = configuration.allowedIdentityHashes.sorted().joined(separator: ", ")
+            if let link = store.pendingServiceLink, link.kind == .copy {
+                destination = link.destinationHash
+            }
         }
         .fileImporter(isPresented: Binding(
             get: { importerMode != nil },
@@ -506,6 +543,7 @@ private struct RemoteFilesView: View {
                 do {
                     switch mode {
                     case .send:
+                        store.meshFeatures.setAuthorization(.sendFiles, destinationHash: destination, allowed: true)
                         _ = try await store.sendRemoteFile(destinationHash: destination, source: url)
                     case .share:
                         try await store.addRemoteFileShare(from: url)
@@ -595,6 +633,7 @@ private struct RelayChatView: View {
     @State private var message = ""
     @State private var isWorking = false
     @State private var invitationText = ""
+    @State private var showingJoinConfirmation = false
 
     private var sortedRooms: [RelayChatRoom] {
         store.meshFeatures.relayRooms.sorted {
@@ -662,7 +701,7 @@ private struct RelayChatView: View {
                     TextField("Room", text: $roomName)
                     TextField("Nickname", text: $nickname)
                     SecureField("Room access key (optional)", text: $accessKey)
-                    Button("Join Room", systemImage: "person.3.fill") { Task { await join() } }
+                    Button("Join Room", systemImage: "person.3.fill") { showingJoinConfirmation = true }
                         .disabled(isWorking || hub.isEmpty || roomName.isEmpty || nickname.isEmpty)
                     TextField("Paste rrc:// invitation", text: $invitationText)
                         .font(.caption.monospaced())
@@ -728,6 +767,20 @@ private struct RelayChatView: View {
                 ContentUnavailableView("Join a Relay Chat room", systemImage: "person.3", description: Text("Enter a validated rrc.hub destination, room and nickname."))
             }
         }
+        .onAppear {
+            guard let link = store.pendingServiceLink, link.kind == .relay else { return }
+            hub = link.destinationHash
+            roomName = link.room ?? "#general"
+        }
+        .confirmationDialog("Allow this relay hub?", isPresented: $showingJoinConfirmation, titleVisibility: .visible) {
+            Button("Allow and Join") {
+                store.meshFeatures.setAuthorization(.joinRooms, destinationHash: hub, allowed: true)
+                Task { await join() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permits \(hub) to add this device to relay rooms. You can revoke access in the Service Directory.")
+        }
     }
 
     @MainActor private func join() async {
@@ -764,6 +817,10 @@ private struct ServiceDirectoryView: View {
     @State private var favoritesOnly = false
     @State private var selectedID: String?
     @State private var isChecking = false
+    @State private var isRunningAcceptance = false
+    @State private var showingAcceptanceConfirmation = false
+    @State private var showingQRCode = false
+    @State private var acceptanceReport: ApplicationServiceAcceptanceReport?
 
     private var services: [ReticulumApplicationService] {
         store.meshFeatures.serviceDirectory.filter { service in
@@ -778,6 +835,16 @@ private struct ServiceDirectoryView: View {
 
     private var selected: ReticulumApplicationService? {
         store.meshFeatures.serviceDirectory.first { $0.id == selectedID }
+    }
+
+    private func serviceLink(for service: ReticulumApplicationService) -> ReticulumServiceLink? {
+        ReticulumServiceLink(
+            kind: service.kind,
+            destinationHash: service.destinationHash,
+            name: service.name,
+            path: service.kind == .nomad ? NomadNetworkProtocol.indexPath : nil,
+            room: service.kind == .relay ? "general" : nil
+        )
     }
 
     var body: some View {
@@ -856,6 +923,14 @@ private struct ServiceDirectoryView: View {
                             else { Label("Check Route", systemImage: "wave.3.right") }
                         }
                         .disabled(isChecking)
+                        if let link = serviceLink(for: service) {
+                            ShareLink(item: link.url) {
+                                Label("Share Service Link", systemImage: "square.and.arrow.up")
+                            }
+                            Button("Show QR Code", systemImage: "qrcode") {
+                                showingQRCode = true
+                            }
+                        }
                         switch service.kind {
                         case .nomad:
                             Button("Open Index Page", systemImage: "doc.richtext") {
@@ -876,14 +951,92 @@ private struct ServiceDirectoryView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    Section {
+                        ForEach(ApplicationServicePermission.permissions(for: service.kind)) { permission in
+                            Toggle(
+                                permission.title,
+                                isOn: Binding(
+                                    get: {
+                                        store.meshFeatures.isAuthorized(
+                                            permission,
+                                            destinationHash: service.destinationHash
+                                        )
+                                    },
+                                    set: {
+                                        store.meshFeatures.setAuthorization(
+                                            permission,
+                                            destinationHash: service.destinationHash,
+                                            allowed: $0
+                                        )
+                                    }
+                                )
+                            )
+                        }
+                        Button("Revoke All Access", systemImage: "hand.raised.slash", role: .destructive) {
+                            store.meshFeatures.revokeAuthorizations(destinationHash: service.destinationHash)
+                        }
+                    } header: {
+                        Text("Permissions on This Device")
+                    } footer: {
+                        Text("Permissions are encrypted on this device. Opening a service link never grants access or starts a command.")
+                    }
+                    Section {
+                        Button {
+                            showingAcceptanceConfirmation = true
+                        } label: {
+                            if isRunningAcceptance { ProgressView() }
+                            else { Label("Run Safe Live Test", systemImage: "checkmark.shield") }
+                        }
+                        .disabled(isRunningAcceptance)
+                        if let report = acceptanceReport {
+                            Label(
+                                report.passed ? "Passed" : "Needs attention",
+                                systemImage: report.passed ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                            )
+                            .foregroundStyle(report.passed ? Color.green : Color.orange)
+                            ForEach(report.stages) { stage in
+                                LabeledContent(stage.name) {
+                                    Text(stage.state.rawValue.capitalized)
+                                        .foregroundStyle(stage.state == .failed ? Color.red : Color.secondary)
+                                }
+                            }
+                            ShareLink(item: report.redactedText) {
+                                Label("Export Redacted Report", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                    } header: {
+                        Text("Live Acceptance Test")
+                    } footer: {
+                        Text("The test discovers a route, establishes an encrypted link, reconnects, and performs only a safe page request when supported. It never joins a room, runs a command, or transfers a file.")
+                    }
                 }
                 .navigationTitle("Service")
+                .sheet(isPresented: $showingQRCode) {
+                    if let link = serviceLink(for: service) {
+                        ServiceQRCodeView(title: service.name.isEmpty ? service.kind.title : service.name, url: link.url)
+                    }
+                }
+                .confirmationDialog(
+                    "Run a live test against this service?",
+                    isPresented: $showingAcceptanceConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Run Test") { Task { await runAcceptance(service) } }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Lower Sideband will open and reconnect an encrypted ReticulumKit link. It will not execute commands, join rooms, or transfer files.")
+                }
             } else {
                 ContentUnavailableView(
                     "No service selected",
                     systemImage: "rectangle.grid.1x2",
                     description: Text("Validated Reticulum application announces appear here automatically.")
                 )
+            }
+        }
+        .onAppear {
+            if let link = store.pendingServiceLink {
+                selectedID = "\(link.kind.rawValue):\(link.destinationHash)"
             }
         }
     }
@@ -896,12 +1049,61 @@ private struct ServiceDirectoryView: View {
 
     @MainActor private func openNomad(_ service: ReticulumApplicationService) async {
         guard let address = NomadPageAddress(destinationHash: service.destinationHash) else { return }
+        store.meshFeatures.setAuthorization(.browsePages, destinationHash: service.destinationHash, allowed: true)
         do {
             _ = try await store.fetchNomadPage(address)
             store.meshFeatures.markServiceUsed(service.id)
         } catch {
             store.lastError = error.localizedDescription
         }
+    }
+
+    @MainActor private func runAcceptance(_ service: ReticulumApplicationService) async {
+        isRunningAcceptance = true
+        acceptanceReport = await store.runLiveApplicationServiceAcceptance(service)
+        isRunningAcceptance = false
+    }
+}
+
+private struct ServiceQRCodeView: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let url: URL
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Text(title).font(.title2.bold())
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+            if let image = image {
+                #if os(macOS)
+                Image(nsImage: image).resizable().interpolation(.none).scaledToFit()
+                #else
+                Image(uiImage: image).resizable().interpolation(.none).scaledToFit()
+                #endif
+            }
+            Text(url.absoluteString)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+            ShareLink(item: url) { Label("Share", systemImage: "square.and.arrow.up") }
+        }
+        .padding(24)
+        .frame(minWidth: 340, minHeight: 420)
+    }
+
+    private var image: ServiceQRImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(url.absoluteString.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)),
+              let cgImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
+        #if os(macOS)
+        return NSImage(cgImage: cgImage, size: .zero)
+        #else
+        return UIImage(cgImage: cgImage)
+        #endif
     }
 }
 
@@ -959,9 +1161,15 @@ private struct RemoteShellView: View {
         } message: {
             Text("Only connect to a destination you trust. Commands entered here execute on the remote system.")
         }
+        .onAppear {
+            if let link = store.pendingServiceLink, link.kind == .shell {
+                destination = link.destinationHash
+            }
+        }
     }
 
     @MainActor private func connect() async {
+        store.meshFeatures.setAuthorization(.openShell, destinationHash: destination, allowed: true)
         do { selectedID = try await store.openRemoteShell(destinationHash: destination) }
         catch { store.lastError = error.localizedDescription }
     }
@@ -1019,10 +1227,16 @@ private struct RemoteToolsView: View {
         } message: {
             Text(command)
         }
+        .onAppear {
+            if let link = store.pendingServiceLink, link.kind == .execution {
+                destination = link.destinationHash
+            }
+        }
     }
 
     @MainActor private func run() async {
         isRunning = true; defer { isRunning = false }
+        store.meshFeatures.setAuthorization(.executeCommands, destinationHash: destination, allowed: true)
         do { _ = try await store.executeRemoteCommand(destinationHash: destination, command: command) }
         catch { store.lastError = error.localizedDescription }
     }
@@ -1174,6 +1388,14 @@ private struct NomadPageBrowserView: View {
             }
             .navigationTitle(title.isEmpty ? "Page Browser" : title)
         }
+        .onAppear {
+            guard let link = store.pendingServiceLink, link.kind == .nomad,
+                  let address = NomadPageAddress(
+                    destinationHash: link.destinationHash,
+                    path: link.path ?? NomadNetworkProtocol.indexPath
+                  ) else { return }
+            addressText = address.string
+        }
     }
 
     private func newPage() {
@@ -1214,6 +1436,7 @@ private struct NomadPageBrowserView: View {
 
     @MainActor private func openRemotePage() async {
         guard let address = NomadPageAddress(string: addressText) else { return }
+        store.meshFeatures.setAuthorization(.browsePages, destinationHash: address.destinationHash, allowed: true)
         isLoading = true
         defer { isLoading = false }
         do {

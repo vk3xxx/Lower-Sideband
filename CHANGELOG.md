@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.92 (130) - 2026-07-31
+
+- Added safe `sideband://service` onboarding links, QR codes and sharing for
+  Nomad, RRC, RNSH, RNX and RNCP, with legacy `nomadnet://` and `rrc://`
+  routing into the correct macOS, iPhone and iPad workspace.
+- Added encrypted, device-local per-service permissions for page browsing,
+  room joins, shells, command execution and file transfer, including explicit
+  approval, central review and immediate revocation.
+- Added a user-authorised live ReticulumKit acceptance runner covering path
+  discovery, encrypted identity exchange, clean reconnects, bounded safe
+  request/response checks and exportable redacted diagnostics.
+
 ## 1.3.91 (129) - 2026-07-31
 
 - Added a unified application-service activity centre for Nomad browsing,
