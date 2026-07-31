@@ -29,7 +29,8 @@ do {
         "Migration & Restore", "Export Redacted Support Report",
         "Apple device acceptance", "Export Acceptance Report",
         "Release evidence", "Start New Acceptance Run",
-        "Accessibility and input", "Language and layout",
+        "Accessibility and input", "Assistive technology",
+        "Keyboard and pointer", "Adaptive layout and appearance", "Language and layout",
         "Memory, power and endurance"
     ] where strings[key] == nil {
         findings.append("Missing localisable critical string: \(key)")
@@ -74,8 +75,34 @@ let acceptanceSource = try text("Sources/SidebandCore/DeviceAcceptance.swift")
 for scenario in [
     "messaging", "attachments", "voice", "telemetry", "backgroundRecovery",
     "capturePermissions", "networkHandover", "accessibility", "localization", "endurance"
+] + [
+    "assistiveTechnology", "keyboardAndPointer", "adaptiveLayout"
 ] where !acceptanceSource.contains("case \(scenario)") {
     findings.append("Acceptance workflow is missing the \(scenario) scenario.")
+}
+
+do {
+    let policyObject = try JSONSerialization.jsonObject(with: data("Support/AppleExperienceCertification.json"))
+    guard let policy = policyObject as? [String: Any],
+          policy["schemaVersion"] as? Int == 1,
+          Set(policy["requiredPlatforms"] as? [String] ?? []) == Set(["mac", "iPhone", "iPad"]),
+          let accessibility = policy["accessibility"] as? [String: Any],
+          Set(accessibility["assistiveTechnologies"] as? [String] ?? []) == Set(["VoiceOver", "Voice Control", "Switch Control"]),
+          (accessibility["dynamicTypeSizes"] as? [String] ?? []).contains("AX5"),
+          Set(accessibility["inputMethods"] as? [String] ?? []).isSuperset(of: ["touch", "pointer", "hardwareKeyboard"]),
+          let localization = policy["localization"] as? [String: Any],
+          Set(localization["requiredLocales"] as? [String] ?? []).isSuperset(of: ["en-AU", "de-DE", "ar"]),
+          let endurance = policy["endurance"] as? [String: Any],
+          (endurance["minimumHours"] as? Int ?? 0) >= 8,
+          (endurance["minimumMessages"] as? Int ?? 0) >= 10_000,
+          (endurance["minimumAttachments"] as? Int ?? 0) >= 100,
+          (endurance["maximumMemoryGrowthPercent"] as? Int ?? 100) <= 15,
+          endurance["requiresZeroCrashes"] as? Bool == true,
+          endurance["requiresZeroMemoryWarnings"] as? Bool == true else {
+        throw AuditFailure.failed(["Apple experience certification policy is incomplete or below its production thresholds."])
+    }
+} catch {
+    findings.append("Apple experience certification policy validation failed: \(error)")
 }
 if !settings.contains("accessibilityIdentifier(\"acceptance-\\(scenario.rawValue)\")") {
     findings.append("Acceptance workflow does not expose stable per-scenario accessibility identifiers.")

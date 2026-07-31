@@ -14,6 +14,9 @@ public enum SidebandAcceptanceScenario: String, CaseIterable, Codable, Identifia
     case capturePermissions
     case networkHandover
     case accessibility
+    case assistiveTechnology
+    case keyboardAndPointer
+    case adaptiveLayout
     case localization
     case endurance
 
@@ -29,6 +32,9 @@ public enum SidebandAcceptanceScenario: String, CaseIterable, Codable, Identifia
         case .capturePermissions: "Camera and microphone"
         case .networkHandover: "Wi-Fi and cellular handover"
         case .accessibility: "Accessibility and input"
+        case .assistiveTechnology: "Assistive technology"
+        case .keyboardAndPointer: "Keyboard and pointer"
+        case .adaptiveLayout: "Adaptive layout and appearance"
         case .localization: "Language and layout"
         case .endurance: "Memory, power and endurance"
         }
@@ -44,6 +50,9 @@ public enum SidebandAcceptanceScenario: String, CaseIterable, Codable, Identifia
         case .capturePermissions: "Exercise QR scanning, image selection, microphone denial and later permission recovery from System Settings."
         case .networkHandover: "Move between Wi-Fi and cellular or another Wi-Fi network and verify queued content resumes exactly once."
         case .accessibility: "Use VoiceOver, keyboard navigation, Dynamic Type, Increase Contrast and Reduce Motion; verify every core action remains labelled, reachable and understandable."
+        case .assistiveTechnology: "Complete messaging, settings, network management, attachments, maps and calls with VoiceOver, Voice Control and Switch Control; verify meaningful labels, values, state changes and reading order."
+        case .keyboardAndPointer: "Complete every core workflow without touch on iPad and without a mouse on Mac; verify predictable focus, shortcuts, default actions, context menus, hover help and escape/cancel behaviour."
+        case .adaptiveLayout: "Exercise every Dynamic Type size through AX5, iPad Split View, the minimum Mac window, light/dark appearance, increased contrast, reduced transparency, reduced motion and differentiate-without-colour."
         case .localization: "Run with the system language and region changed, verify text expansion, dates, times and numbers, and confirm no controls clip or expose untranslated keys."
         case .endurance: "Leave the app connected for at least one hour while exchanging messages and attachments; verify stable memory, acceptable energy use and automatic recovery."
         }
@@ -268,7 +277,7 @@ public final class SidebandAcceptancePortfolio {
             }
             let report = signed.report
             if !signed.isValid { reasons.append("\(platform.title) report signature is invalid.") }
-            if report.schemaVersion < 3 { reasons.append("\(platform.title) report predates environment-certified schema 3.") }
+            if report.schemaVersion < 4 { reasons.append("\(platform.title) report predates professional-experience schema 4.") }
             if !report.isPhysicalDevice { reasons.append("\(platform.title) evidence came from a simulator or unsupported environment.") }
             if !report.isReadyForReleaseReview { reasons.append("\(platform.title) did not pass every acceptance scenario.") }
             if report.operatingSystem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -438,7 +447,7 @@ public final class SidebandDeviceAcceptance {
 
     public func makeReport(now: Date = .now) -> SidebandAcceptanceReport {
         SidebandAcceptanceReport(
-            schemaVersion: 3,
+            schemaVersion: 4,
             runID: runID,
             startedAt: startedAt,
             generatedAt: now,
@@ -451,13 +460,17 @@ public final class SidebandDeviceAcceptance {
             results: Dictionary(uniqueKeysWithValues: SidebandAcceptanceScenario.allCases.map {
                 ($0.rawValue, result(for: $0))
             }),
-            environment: SidebandAcceptanceEnvironment(
-                localeIdentifier: Locale.current.identifier,
-                preferredLanguages: Array(Locale.preferredLanguages.prefix(10)),
-                lowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
-                thermalState: ProcessInfo.processInfo.thermalState.rawValue,
-                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
-            )
+            environment: environmentEvidence
+        )
+    }
+
+    public var environmentEvidence: SidebandAcceptanceEnvironment {
+        SidebandAcceptanceEnvironment(
+            localeIdentifier: Locale.current.identifier,
+            preferredLanguages: Array(Locale.preferredLanguages.prefix(10)),
+            lowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            thermalState: ProcessInfo.processInfo.thermalState.rawValue,
+            physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
         )
     }
 

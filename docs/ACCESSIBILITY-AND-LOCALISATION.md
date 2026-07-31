@@ -48,3 +48,14 @@ acceptance scenario, Reduce Motion and Differentiate Without Color handling,
 and a valid upstream compatibility manifest. Physical-device VoiceOver,
 keyboard, Dynamic Type, contrast, language and region review is recorded in
 the versioned Apple-device acceptance report.
+
+`Support/AppleExperienceCertification.json` is the fail-closed experience
+policy. It requires physical Mac, iPhone and iPad coverage for every core
+workflow; VoiceOver, Voice Control and Switch Control; touch, pointer and
+hardware keyboard input; all Dynamic Type sizes through AX5; light/dark and
+accessibility appearances; English, text-expansion and right-to-left locales;
+and an eight-hour large-history endurance run. The quality audit refuses policy
+changes below 10,000 messages, 100 attachments, zero crashes/warnings and a 15%
+memory-growth ceiling. Passing deterministic gates confirms the policy and UI
+hooks exist; the signed physical-device reports remain the evidence that a
+person actually completed it on each platform.

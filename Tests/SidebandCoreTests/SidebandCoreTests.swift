@@ -1708,7 +1708,7 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     let report = try decoder.decode(SidebandAcceptanceReport.self, from: data)
-    #expect(report.schemaVersion == 3)
+    #expect(report.schemaVersion == 4)
     #expect(report.runID == initialRunID)
     #expect(report.generatedAt == Date(timeIntervalSince1970: 321))
     #expect(report.passedCount == 1)
@@ -5425,7 +5425,7 @@ private func fileExists(_ url: URL) -> Bool {
         })
         return try SidebandSignedAcceptanceReport.signed(
             report: SidebandAcceptanceReport(
-                schemaVersion: 3,
+                schemaVersion: 4,
                 runID: UUID(),
                 startedAt: startedAt,
                 generatedAt: generatedAt,
@@ -5511,7 +5511,7 @@ private func fileExists(_ url: URL) -> Bool {
     let assessment = portfolio.assessment(forBuild: report.appBuild)
     #expect(!assessment.isCertified)
     #expect(assessment.blockingReasons.contains { $0.contains("simulator") })
-    #expect(assessment.blockingReasons.contains { $0.contains("schema 3") })
+    #expect(assessment.blockingReasons.contains { $0.contains("schema 4") })
 }
 
 @MainActor @Test func recoveryDrillAndRestoreRollbackPreserveValidatedData() throws {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.99 (137) - 2026-07-31
+
+- Added explicit physical-device acceptance for VoiceOver/Voice Control/Switch
+  Control, complete keyboard and pointer operation, and adaptive Apple layouts.
+- Added a machine-validated Apple experience policy covering all core workflows,
+  Dynamic Type through AX5, appearance modes, RTL locales and input methods.
+- Established production endurance thresholds of eight hours, 10,000 messages,
+  100 attachments, at most 15% memory growth, and zero crashes or warnings.
+
 ## 1.3.98 (136) - 2026-07-31
 
 - Upgraded public-Internet soak evidence with cryptographic route fingerprints,

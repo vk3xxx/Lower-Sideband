@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "requiredPlatforms": ["mac", "iPhone", "iPad"],
+  "coreWorkflows": [
+    "identity and onboarding",
+    "new conversation and messaging",
+    "attachments and inline media",
+    "voice messages and encrypted calls",
+    "network connections and route state",
+    "maps and telemetry",
+    "settings, backup and recovery"
+  ],
+  "accessibility": {
+    "assistiveTechnologies": ["VoiceOver", "Voice Control", "Switch Control"],
+    "dynamicTypeSizes": ["xSmall", "Small", "Medium", "Large", "xLarge", "xxLarge", "xxxLarge", "AX1", "AX2", "AX3", "AX4", "AX5"],
+    "appearances": ["light", "dark", "increasedContrast", "differentiateWithoutColor", "reduceMotion", "reduceTransparency"],
+    "inputMethods": ["touch", "pointer", "hardwareKeyboard"]
+  },
+  "localization": {
+    "requiredLocales": ["en-AU", "de-DE", "ar"],
+    "requiresRightToLeftLayout": true,
+    "requiresUntranslatedKeyAudit": true
+  },
+  "endurance": {
+    "minimumHours": 8,
+    "minimumMessages": 10000,
+    "minimumAttachments": 100,
+    "maximumMemoryGrowthPercent": 15,
+    "requiresZeroCrashes": true,
+    "requiresZeroMemoryWarnings": true,
+    "requiresBackgroundRecovery": true,
+    "requiresNetworkHandover": true
+  }
+}

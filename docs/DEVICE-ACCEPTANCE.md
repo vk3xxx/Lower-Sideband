@@ -12,13 +12,17 @@ that differ materially between Simulator and real Apple hardware:
 - camera and microphone permission recovery; and
 - Wi-Fi/cellular network handover;
 - VoiceOver, keyboard navigation, Dynamic Type, contrast and reduced motion;
+- Voice Control and Switch Control across every core workflow;
+- keyboard-only Mac and pointer/hardware-keyboard iPad operation;
+- every Dynamic Type size through AX5, iPad Split View and minimum Mac sizing;
 - language, region, text expansion and right-to-left layout; and
-- hour-long memory, power and recovery endurance.
+- eight-hour memory, power and recovery endurance with at least 10,000 messages
+  and 100 attachments.
 
 Each run has a unique identifier and start time. Every scenario includes
 explicit instructions, pass/fail state, bounded notes, timestamp, application
 build and operating-system evidence. Results persist on the tested device and
-can be exported as a versioned, cryptographically signed JSON report. Schema 3
+can be exported as a versioned, cryptographically signed JSON report. Schema 4
 also records the locale, preferred languages, low-power state, thermal state
 and physical memory present when the evidence is generated.
 

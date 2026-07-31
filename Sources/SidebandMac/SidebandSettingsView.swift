@@ -1194,6 +1194,13 @@ struct SidebandSettingsView: View {
                     icon: store.deviceAcceptance.isReadyForReleaseReview ? "checkmark.shield.fill" : "checklist.unchecked",
                     tint: store.deviceAcceptance.isReadyForReleaseReview ? .green : .orange
                 )
+                LabeledContent("Locale", value: store.deviceAcceptance.environmentEvidence.localeIdentifier)
+                LabeledContent("Power mode", value: store.deviceAcceptance.environmentEvidence.lowPowerModeEnabled ? "Low Power Mode" : "Normal")
+                LabeledContent("Thermal state", value: acceptanceThermalState)
+                LabeledContent("Physical memory", value: ByteCountFormatter.string(
+                    fromByteCount: Int64(clamping: store.deviceAcceptance.environmentEvidence.physicalMemoryBytes),
+                    countStyle: .memory
+                ))
                 LabeledContent("Run", value: store.deviceAcceptance.runID.uuidString)
                     .font(.caption.monospaced())
                     .textSelection(.enabled)
@@ -1345,6 +1352,16 @@ struct SidebandSettingsView: View {
         if let complete = store.acceptancePortfolio.latestCompleteBuild { return complete }
         return store.acceptancePortfolio.reports.map(\.report.appBuild).max {
             $0.compare($1, options: .numeric) == .orderedAscending
+        }
+    }
+
+    private var acceptanceThermalState: String {
+        switch store.deviceAcceptance.environmentEvidence.thermalState {
+        case 0: "Nominal"
+        case 1: "Fair"
+        case 2: "Serious"
+        case 3: "Critical"
+        default: "Unknown"
         }
     }
 
