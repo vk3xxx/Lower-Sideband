@@ -222,6 +222,27 @@ import Testing
     #expect(announce.emissionTimebase == 1_700_000_123)
 }
 
+@Test func rapidLocalAnnouncesAdvanceRouteTimebaseAcrossReconnects() async throws {
+    let identity = ReticulumIdentity()
+    let clock = ReticulumAnnounceEmissionClock()
+    let emittedAt = Date(timeIntervalSince1970: 1_700_000_123)
+    let firstRaw = try await clock.packet(
+        identity: identity,
+        destinationName: "lxmf.delivery",
+        emittedAt: emittedAt
+    )
+    let secondRaw = try await clock.packet(
+        identity: identity,
+        destinationName: "lxmf.delivery",
+        emittedAt: emittedAt
+    )
+    let first = try ReticulumAnnounce(packet: ReticulumPacket(raw: firstRaw))
+    let second = try ReticulumAnnounce(packet: ReticulumPacket(raw: secondRaw))
+    #expect(first.validate())
+    #expect(second.validate())
+    #expect(second.emissionTimebase == first.emissionTimebase + 1)
+}
+
 @Test func pathTableRejectsOlderReplayedAnnounceEvenWithLowerHopCount() async throws {
     let identity = ReticulumIdentity()
     var newerRaw = try ReticulumAnnounceBuilder.packet(
@@ -863,15 +884,20 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(!ReticulumProof.validates(wrongSignatureProof, packetHash: packetHash, identity: identity))
 }
 
-@Test func outboundPacketOnlyAddsTransportHeaderForMultiHopPath() throws {
+@Test func outboundPacketAddsTransportHeaderWheneverRouteHasNextHop() throws {
     let destination = Data(repeating: 0x24, count: 16)
     let normalRaw = Data([0x00, 0x00]) + destination + Data([0x00, 0x44])
     let packet = try ReticulumPacket(raw: normalRaw)
     let nextHop = Data(repeating: 0x25, count: 16)
-    let direct = ReticulumPath(destinationHash: destination, nextHop: nextHop, hops: 1, updatedAt: .now, expiresAt: .distantFuture, publicKey: Data(), appData: Data(), interfaceID: "direct")
+    let direct = ReticulumPath(destinationHash: destination, nextHop: nil, hops: 1, updatedAt: .now, expiresAt: .distantFuture, publicKey: Data(), appData: Data(), interfaceID: "direct")
+    let gatewayAdjacent = ReticulumPath(destinationHash: destination, nextHop: nextHop, hops: 1, updatedAt: .now, expiresAt: .distantFuture, publicKey: Data(), appData: Data(), interfaceID: "tcp-gateway")
     let transported = ReticulumPath(destinationHash: destination, nextHop: nextHop, hops: 2, updatedAt: .now, expiresAt: .distantFuture, publicKey: Data(), appData: Data(), interfaceID: "transport")
 
     #expect(try packet.prepared(for: direct) == normalRaw)
+    let oneHopRouted = try ReticulumPacket(raw: packet.prepared(for: gatewayAdjacent))
+    #expect(oneHopRouted.headerType == .transport)
+    #expect(oneHopRouted.transportID == nextHop)
+    #expect(oneHopRouted.packetHash == packet.packetHash)
     let routed = try ReticulumPacket(raw: packet.prepared(for: transported))
     #expect(routed.headerType == .transport)
     #expect(routed.transportID == nextHop)

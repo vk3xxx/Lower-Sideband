@@ -425,11 +425,27 @@ public final class RNodeManager {
     }
 
     public func startAll() async {
-        if automaticDiscoveryEnabled && !configurations.contains(where: { $0.transport == .bluetoothLE && $0.target.isEmpty }) {
+        #if targetEnvironment(simulator)
+        // CoreBluetooth is intentionally unavailable in Apple simulators.
+        // Starting an automatic BLE RNode there causes repeated XPC failures
+        // that can starve app launch and acceptance tests. Explicit TCP and
+        // simulated RNode configurations remain available.
+        let automaticBluetoothDiscoveryAvailable = false
+        #else
+        let automaticBluetoothDiscoveryAvailable = true
+        #endif
+        if automaticDiscoveryEnabled,
+           automaticBluetoothDiscoveryAvailable,
+           !configurations.contains(where: { $0.transport == .bluetoothLE && $0.target.isEmpty }) {
             configurations.append(RNodeConfiguration(name: "Automatic Bluetooth RNode", transport: .bluetoothLE, target: ""))
             save()
         }
-        for configuration in configurations where configuration.enabled { await start(configuration) }
+        for configuration in configurations where configuration.enabled {
+            #if targetEnvironment(simulator)
+            if configuration.transport == .bluetoothLE { continue }
+            #endif
+            await start(configuration)
+        }
     }
 
     public func stopAll() async {

@@ -71,8 +71,34 @@ struct SidebandApp: App {
             if store.privacyLock.isUnlocked { ContentView(store: store) }
             else { PrivacyLockView(lock: store.privacyLock) }
         }
+        .id(ObjectIdentifier(store))
+        .task {
+            // The first scene can already be active before SwiftUI delivers a
+            // scenePhase change. Retry here as well so a short Keychain delay
+            // never requires the user to dismiss an alert or reopen the app.
+            if !store.secureStorageAvailable {
+                await recoverSecureStorageWhenAvailable()
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { store.privacyLock.lock() }
+            if phase != .active {
+                store.privacyLock.lock()
+            } else if !store.secureStorageAvailable {
+                Task { await recoverSecureStorageWhenAvailable() }
+            }
+        }
+    }
+
+    @MainActor private func recoverSecureStorageWhenAvailable() async {
+        guard !store.secureStorageAvailable else { return }
+        for attempt in 0..<30 {
+            if attempt > 0 { try? await Task.sleep(for: .seconds(1)) }
+            guard !Task.isCancelled, !store.secureStorageAvailable else { return }
+            let candidate = SidebandStore()
+            guard candidate.secureStorageAvailable else { continue }
+            store = candidate
+            NotificationInteractionBridge.shared.install(store: candidate)
+            return
         }
     }
 
@@ -699,6 +725,21 @@ enum DeliverySoakRunner {
             max(1, Int(environment["SIDEBAND_SOAK_ATTACHMENT_BYTES"] ?? "1048576") ?? 1_048_576)
         )
         let reconnectInterval = max(0, Int(environment["SIDEBAND_SOAK_RECONNECT_INTERVAL"] ?? "0") ?? 0)
+        let queueRecoveryRequested = environment["SIDEBAND_SOAK_QUEUE_RECOVERY"] == "1"
+        if queueRecoveryRequested {
+            store.autoConnectEnabled = false
+            await store.disconnectNetwork()
+            await writeReport(
+                store: store,
+                destination: destination,
+                outboundPrefix: outboundPrefix,
+                inboundPrefix: inboundPrefix,
+                count: count,
+                startedAt: startedAt,
+                reportURL: reportURL,
+                phase: "enqueueing-offline"
+            )
+        }
         var randomState = UInt64(environment["SIDEBAND_SOAK_SEED"] ?? "") ?? 0x5B1D_BA5E_CAFE_F00D
         let existingBodies = Set(store.messages.map(\.body))
         for sequence in 1...count {
@@ -741,6 +782,25 @@ enum DeliverySoakRunner {
             let delayRange = UInt64(jitterMaximum - jitterMinimum + 1)
             let delay = jitterMinimum + Int(randomState % delayRange)
             if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+        }
+
+        if queueRecoveryRequested {
+            await writeReport(
+                store: store,
+                destination: destination,
+                outboundPrefix: outboundPrefix,
+                inboundPrefix: inboundPrefix,
+                count: count,
+                startedAt: startedAt,
+                reportURL: reportURL,
+                phase: "flushing-queued-messages"
+            )
+            _ = await connect(store, mode: environment["SIDEBAND_SOAK_NETWORK_MODE"] ?? "local")
+            guard await waitForPeer(store, destination: destination, timeout: peerTimeout) else {
+                await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "queue-recovery-peer-timeout")
+                return
+            }
+            await store.flushQueuedMessagesOnThisDevice()
         }
 
         let deliveryDeadlineSeconds = max(30, Int(environment["SIDEBAND_SOAK_DEADLINE_SECONDS"] ?? "600") ?? 600)

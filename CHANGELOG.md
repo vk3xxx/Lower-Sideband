@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.1 (139) - 2026-07-31
+
+- Fixed one-hop TCP gateway routing so Reticulum packets are injected through
+  the announced transport identity instead of being incorrectly broadcast as
+  if the destination were directly attached.
+- Made rapid reconnect announces use a strictly increasing Reticulum timebase,
+  preventing a restored route from winning over a new client connection.
+- Removed the blocking Keychain launch alert and added automatic secure-storage
+  recovery while keeping encrypted data safely offline until access returns.
+- Removed the avoidable post-handshake delay before authenticated queued
+  delivery and strengthened the Mac/iPad queue-recovery acceptance harness.
+- Verified ordered bidirectional queue recovery with mixed messages and
+  attachments through a Reticulum TCP gateway.
+
 ## 1.4.0 (138) - 2026-07-31
 
 - Replaced the basic delivery log with a shared Reliability Centre for Mac,

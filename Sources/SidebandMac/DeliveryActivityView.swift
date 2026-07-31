@@ -144,7 +144,7 @@ struct DeliveryActivityView: View {
                 .disabled(recoveryRunning)
                 .help("Reconnect if required, refresh affected routes, retry failed messages and flush the queue")
 
-                Button("Reconnect") { Task { await store.reconnectNetwork() } }
+                Button("Reconnect") { Task { await store.reconnectNetwork(force: true) } }
                     .buttonStyle(.bordered)
                     .disabled(recoveryRunning)
                     .help("Restart automatic transport discovery and reconnect all configured interfaces")

@@ -69,12 +69,14 @@ public struct ReticulumPacket: Equatable, Sendable {
     }
 
     /// Prepares an endpoint-originated packet for the selected Reticulum path.
-    /// Direct, one-hop destinations receive a normal header. Only multi-hop
-    /// paths are injected into transport with the announced next-hop identity,
-    /// matching `RNS.Transport.outbound()`.
+    ///
+    /// A route with no announced next hop is directly attached and keeps its
+    /// normal header. When a next-hop transport identity is present, the
+    /// packet must be injected through it even if the destination is reported
+    /// as one hop away. This is the upstream shared-instance/TCP-client rule:
+    /// the gateway strips the transport header before forwarding to the peer.
     public func prepared(for path: ReticulumPath) throws -> Data {
-        guard path.hops > 1 else { return raw }
-        guard let nextHop = path.nextHop else { throw RoutingError.invalidRoute }
+        guard let nextHop = path.nextHop else { return raw }
         return try routed(via: nextHop)
     }
 

@@ -479,10 +479,32 @@ public final class SidebandStore {
            let result = try? JSONDecoder.sideband.decode(SidebandStorageCleanupResult.self, from: cleanupData) {
             lastStorageCleanupResult = result
         }
-        let transportMaterial = SecureIdentityStore.loadOrCreate(account: "reticulum.transport", legacyDefaultsKey: "reticulumTransportIdentity")
-        switch transportMaterial {
-        case .success(let material): transportIdentity = (try? ReticulumIdentity(privateKey: material)) ?? ReticulumIdentity()
-        case .failure: transportIdentity = ReticulumIdentity(); secureStorageAvailable = false
+        #if DEBUG
+        let acceptanceTransportMaterial = ProcessInfo.processInfo.environment["SIDEBAND_SOAK_TRANSPORT_IDENTITY_HEX"]
+            .flatMap(Data.init(hexadecimal:))
+            ?? ProcessInfo.processInfo.environment["SIDEBAND_SOAK_IDENTITY_HEX"]
+                .flatMap(Data.init(hexadecimal:))
+                .map { messagingMaterial in
+                    var domainSeparated = Data("reticulum.transport.acceptance".utf8)
+                    domainSeparated.append(messagingMaterial)
+                    return Data(SHA512.hash(data: domainSeparated))
+                }
+        let acceptanceTransportIdentity = acceptanceTransportMaterial
+            .flatMap { try? ReticulumIdentity(privateKey: $0) }
+        #else
+        let acceptanceTransportIdentity: ReticulumIdentity? = nil
+        #endif
+        if let acceptanceTransportIdentity {
+            // Deterministic acceptance processes intentionally run outside the
+            // app sandbox so their reports can be harvested by CI. Production
+            // builds always load the transport identity from Keychain.
+            transportIdentity = acceptanceTransportIdentity
+        } else {
+            let transportMaterial = SecureIdentityStore.loadOrCreate(account: "reticulum.transport", legacyDefaultsKey: "reticulumTransportIdentity")
+            switch transportMaterial {
+            case .success(let material): transportIdentity = (try? ReticulumIdentity(privateKey: material)) ?? ReticulumIdentity()
+            case .failure: transportIdentity = ReticulumIdentity(); secureStorageAvailable = false
+            }
         }
         let interfaceMaterial = UserDefaults.standard.data(forKey: "reticulumTCPInterfaceHash") ?? ReticulumIdentity.fullHash(Data(UUID().uuidString.utf8))
         tcpInterfaceHash = interfaceMaterial
@@ -606,7 +628,11 @@ public final class SidebandStore {
                 canRollbackSnapshotRestore = true
             }
         } else {
-            lastError = "Secure Keychain data is temporarily unavailable. Lower Sideband will remain offline and will not read or overwrite encrypted data. Unlock the device and reopen the app."
+            // Keychain availability can briefly lag application activation,
+            // particularly after login, device unlock or an application
+            // update. Remain safely offline and let the app lifecycle retry
+            // instead of interrupting launch with a modal alert.
+            automaticConnectionDescription = "Waiting for secure storage"
         }
         autoInterfaceDiscovery.setPacketHandler { [weak self] packet in await self?.receiveFromInterface(packet, interfaceID: "auto") }
         rnodeManager.setHandlers { [weak self] interfaceID, raw in
@@ -1241,7 +1267,7 @@ public final class SidebandStore {
 
     private func announceService(destinationName: String, appData: Data) async -> Bool {
         do {
-            let packet = try ReticulumAnnounceBuilder.packet(
+            let packet = try await ReticulumAnnounceEmissionClock.shared.packet(
                 identity: messagingIdentity,
                 destinationName: destinationName,
                 appData: appData
@@ -2943,7 +2969,7 @@ public final class SidebandStore {
 
     public func connectNetwork(forceIPv4: Bool = false, explicitHost: String? = nil, explicitPort: UInt16? = nil, internetGatewayID: String? = nil) async {
         guard secureStorageAvailable else {
-            lastError = "Secure Keychain data is unavailable. Reopen Lower Sideband after unlocking the device."
+            automaticConnectionDescription = "Waiting for secure storage"
             return
         }
         guard tcpNetworkState != .connecting, tcpNetworkState != .ready else { return }
@@ -3079,9 +3105,12 @@ public final class SidebandStore {
         activeNetworkPort = nil
     }
 
-    public func reconnectNetwork() async {
+    public func reconnectNetwork(force: Bool = false) async {
         await disconnectNetwork()
+        let previousAutoConnect = autoConnectEnabled
+        if force { autoConnectEnabled = true }
         await startAutomaticConnection()
+        if force { autoConnectEnabled = previousAutoConnect }
     }
 
     public func applicationDidBecomeActive() async {
@@ -4397,7 +4426,7 @@ public final class SidebandStore {
     public func stopGatewayDiscovery() { lanDiscovery.stop() }
     public func startAutoInterfaceDiscovery() {
         guard secureStorageAvailable else {
-            lastError = "Secure Keychain data is unavailable. Reopen Lower Sideband after unlocking the device."
+            automaticConnectionDescription = "Waiting for secure storage"
             return
         }
         autoInterfaceEnabled = true
@@ -4412,7 +4441,7 @@ public final class SidebandStore {
 
     public func connect(to gateway: LANGateway) async {
         guard secureStorageAvailable else {
-            lastError = "Secure Keychain data is unavailable. Reopen Lower Sideband after unlocking the device."
+            automaticConnectionDescription = "Waiting for secure storage"
             return
         }
         guard tcpNetworkState != .connecting else { return }
@@ -4949,7 +4978,7 @@ public final class SidebandStore {
 
     public func startAutomaticConnection() async {
         guard secureStorageAvailable else {
-            automaticConnectionDescription = "Secure Keychain data unavailable"
+            automaticConnectionDescription = "Waiting for secure storage"
             return
         }
         guard autoConnectEnabled, !intentionallyDisconnected || networkState == .stopped else { return }
@@ -5155,8 +5184,8 @@ public final class SidebandStore {
     @discardableResult
     private func announceLocalDeliveryDestination(on interfaceID: String? = nil) async -> Bool {
         do {
-            let packet = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: "lxmf.delivery", appData: localAnnounceAppData)
-            let voicePacket = try ReticulumAnnounceBuilder.packet(identity: messagingIdentity, destinationName: LXSTVoice.destinationName)
+            let packet = try await ReticulumAnnounceEmissionClock.shared.packet(identity: messagingIdentity, destinationName: "lxmf.delivery", appData: localAnnounceAppData)
+            let voicePacket = try await ReticulumAnnounceEmissionClock.shared.packet(identity: messagingIdentity, destinationName: LXSTVoice.destinationName)
             if let interfaceID {
                 try await transmitRawPacket(packet, on: interfaceID)
                 try await transmitRawPacket(voicePacket, on: interfaceID)
@@ -5385,7 +5414,7 @@ public final class SidebandStore {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
             do {
-                let response = try ReticulumAnnounceBuilder.packet(
+                let response = try await ReticulumAnnounceEmissionClock.shared.packet(
                     identity: messagingIdentity,
                     destinationName: destinationName,
                     appData: appData,
@@ -6359,7 +6388,11 @@ public final class SidebandStore {
                 session: session
             )
             try await identify(session)
-            try? await Task.sleep(for: .seconds(3))
+            // LINKIDENTIFY carries the signing identity inside the encrypted
+            // session, so the receiver can validate the first LXMF packet
+            // immediately. Waiting here used to leave a reconnecting queue in
+            // an avoidable race where the proven link could be replaced before
+            // it was ever marked delivery-ready.
             guard !Task.isCancelled else {
                 activatingOutboundLinkIDs.remove(session.linkID.hex)
                 return
@@ -6367,6 +6400,7 @@ public final class SidebandStore {
             guard activeLinks[session.linkID.hex] != nil else { return }
             activatingOutboundLinkIDs.remove(session.linkID.hex)
             deliveryReadyOutboundLinkIDs.insert(session.linkID.hex)
+            recordDeliveryDiagnosticEvent("Secure link ready for queued delivery \(session.linkID.hex)")
             await attemptDelivery(for: conversationID)
             await sendKeepalive(on: session)
         } catch {

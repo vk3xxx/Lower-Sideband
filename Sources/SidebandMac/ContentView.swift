@@ -1860,7 +1860,7 @@ private struct NetworkView: View {
                 Spacer()
                 if isConnectedOrConnecting {
                     if store.networkState == .ready {
-                        Button("Reconnect") { Task { await store.reconnectNetwork() } }
+                        Button("Reconnect") { Task { await store.reconnectNetwork(force: true) } }
                     }
                     Button("Disconnect") { Task { await store.disconnectNetwork() } }
                 } else {

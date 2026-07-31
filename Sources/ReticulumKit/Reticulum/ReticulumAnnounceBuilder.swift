@@ -1,5 +1,41 @@
 import Foundation
 
+/// Supplies strictly increasing Reticulum announce timebases for each local
+/// destination. Reticulum transports only replace an existing route when the
+/// new announce has a later whole-second timebase. Without this coordinator,
+/// disconnecting and reconnecting within one second can leave a gateway
+/// forwarding to the socket that was just closed.
+public actor ReticulumAnnounceEmissionClock {
+    public static let shared = ReticulumAnnounceEmissionClock()
+
+    private var lastEmissionSecond: [Data: UInt64] = [:]
+
+    public init() {}
+
+    public func packet(
+        identity: ReticulumIdentity,
+        destinationName: String,
+        appData: Data = Data(),
+        ratchet: Data? = nil,
+        emittedAt: Date = .now,
+        context: UInt8 = 0x00
+    ) throws -> Data {
+        let nameHash = Data(ReticulumIdentity.fullHash(Data(destinationName.utf8)).prefix(10))
+        let destinationHash = ReticulumIdentity.truncatedHash(nameHash + identity.hash)
+        let wallClockSecond = UInt64(max(0, emittedAt.timeIntervalSince1970.rounded(.down))) & 0xFF_FFFF_FFFF
+        let emissionSecond = max(wallClockSecond, (lastEmissionSecond[destinationHash] ?? 0) + 1)
+        lastEmissionSecond[destinationHash] = emissionSecond
+        return try ReticulumAnnounceBuilder.packet(
+            identity: identity,
+            destinationName: destinationName,
+            appData: appData,
+            randomHash: ReticulumAnnounceBuilder.announceRandomHash(emissionSecond: emissionSecond),
+            ratchet: ratchet,
+            context: context
+        )
+    }
+}
+
 public enum ReticulumAnnounceBuilder {
     public static func packet(
         identity: ReticulumIdentity,
@@ -28,8 +64,12 @@ public enum ReticulumAnnounceBuilder {
     }
 
     static func announceRandomHash(emittedAt: Date) -> Data {
-        var result = Data(ReticulumIdentity.fullHash(Data(UUID().uuidString.utf8)).prefix(5))
         let seconds = UInt64(max(0, emittedAt.timeIntervalSince1970.rounded(.down))) & 0xFF_FFFF_FFFF
+        return announceRandomHash(emissionSecond: seconds)
+    }
+
+    static func announceRandomHash(emissionSecond seconds: UInt64) -> Data {
+        var result = Data(ReticulumIdentity.fullHash(Data(UUID().uuidString.utf8)).prefix(5))
         for shift in stride(from: 32, through: 0, by: -8) {
             result.append(UInt8((seconds >> UInt64(shift)) & 0xFF))
         }

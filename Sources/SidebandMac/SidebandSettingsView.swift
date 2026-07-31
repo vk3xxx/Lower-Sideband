@@ -1307,7 +1307,7 @@ struct SidebandSettingsView: View {
     private var connectionActions: some View {
         if isConnectedOrConnecting {
             if store.networkState == .ready {
-                Button("Reconnect") { Task { await store.reconnectNetwork() } }
+                Button("Reconnect") { Task { await store.reconnectNetwork(force: true) } }
                     .disabled(!configuredPortIsValid || !internetPortIsValid)
             }
             Button("Disconnect", role: .destructive) { Task { await store.disconnectNetwork() } }
