@@ -1708,12 +1708,14 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     let report = try decoder.decode(SidebandAcceptanceReport.self, from: data)
-    #expect(report.schemaVersion == 2)
+    #expect(report.schemaVersion == 3)
     #expect(report.runID == initialRunID)
     #expect(report.generatedAt == Date(timeIntervalSince1970: 321))
     #expect(report.passedCount == 1)
     #expect(report.failedCount == 1)
     #expect(report.results.count == SidebandAcceptanceScenario.allCases.count)
+    #expect(report.environment?.localeIdentifier.isEmpty == false)
+    #expect(report.environment?.physicalMemoryBytes ?? 0 > 0)
     #expect(!report.isReadyForReleaseReview)
 
     restored.startNewRun(now: Date(timeIntervalSince1970: 400))
@@ -5406,24 +5408,35 @@ private func fileExists(_ url: URL) -> Bool {
     defer { defaults.removePersistentDomain(forName: suite) }
     let cipher = LocalDataCipher(keyMaterial: Data(repeating: 0x52, count: 64))
     let identity = ReticulumIdentity()
-    let results = Dictionary(uniqueKeysWithValues: SidebandAcceptanceScenario.allCases.map {
-        ($0.rawValue, SidebandAcceptanceResult(outcome: .passed, testedAt: .now, notes: "", build: "132", operatingSystem: "Test OS"))
-    })
+    let startedAt = Date(timeIntervalSince1970: 1_000)
+    let testedAt = Date(timeIntervalSince1970: 1_100)
+    let generatedAt = Date(timeIntervalSince1970: 1_200)
+    let environment = SidebandAcceptanceEnvironment(
+        localeIdentifier: "en_AU",
+        preferredLanguages: ["en-AU"],
+        lowPowerModeEnabled: false,
+        thermalState: 0,
+        physicalMemoryBytes: 8_000_000_000
+    )
 
     func signed(_ platform: SidebandAcceptancePlatform, build: String = "1.3.94 (132)") throws -> SidebandSignedAcceptanceReport {
-        try SidebandSignedAcceptanceReport.signed(
+        let results = Dictionary(uniqueKeysWithValues: SidebandAcceptanceScenario.allCases.map {
+            ($0.rawValue, SidebandAcceptanceResult(outcome: .passed, testedAt: testedAt, notes: "", build: build, operatingSystem: "Test OS"))
+        })
+        return try SidebandSignedAcceptanceReport.signed(
             report: SidebandAcceptanceReport(
-                schemaVersion: 1,
+                schemaVersion: 3,
                 runID: UUID(),
-                startedAt: .now,
-                generatedAt: .now,
+                startedAt: startedAt,
+                generatedAt: generatedAt,
                 device: platform.title,
                 platform: platform,
                 operatingSystem: "Test OS",
                 appBuild: build,
                 isPhysicalDevice: true,
                 isReadyForReleaseReview: true,
-                results: results
+                results: results,
+                environment: environment
             ),
             identity: identity
         )
@@ -5436,6 +5449,10 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(portfolio.allPrimaryPlatformsReady)
     #expect(portfolio.latestByPlatform.count == 3)
     #expect(portfolio.latestCompleteBuild == "1.3.94 (132)")
+
+    let assessment = portfolio.assessment(forBuild: "1.3.94 (132)")
+    #expect(assessment.isCertified)
+    #expect(assessment.blockingReasons.isEmpty)
 
     let archive = try portfolio.exportReports(build: "1.3.94 (132)")
     let importedDefaults = try #require(UserDefaults(suiteName: "\(suite)-imported"))
@@ -5462,6 +5479,39 @@ private func fileExists(_ url: URL) -> Bool {
     let stored = try #require(defaults.data(forKey: "deviceAcceptancePortfolio.v1"))
     #expect(!String(decoding: stored, as: UTF8.self).contains("Test OS"))
     #expect(SidebandAcceptancePortfolio(defaults: defaults, cipher: cipher).allPrimaryPlatformsReady)
+}
+
+@MainActor @Test func acceptanceCampaignRejectsSimulatorAndLegacyEvidence() throws {
+    let suite = "acceptance-strict-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let portfolio = SidebandAcceptancePortfolio(
+        defaults: defaults,
+        cipher: LocalDataCipher(keyMaterial: Data(repeating: 0x31, count: 64))
+    )
+    let identity = ReticulumIdentity()
+    let now = Date(timeIntervalSince1970: 2_000)
+    let results = Dictionary(uniqueKeysWithValues: SidebandAcceptanceScenario.allCases.map {
+        ($0.rawValue, SidebandAcceptanceResult(outcome: .passed, testedAt: now, notes: "", build: "1.3.97 (135)", operatingSystem: "Test OS"))
+    })
+    let report = SidebandAcceptanceReport(
+        schemaVersion: 2,
+        runID: UUID(),
+        startedAt: now,
+        generatedAt: now,
+        device: "Apple Simulator",
+        platform: .mac,
+        operatingSystem: "Test OS",
+        appBuild: "1.3.97 (135)",
+        isPhysicalDevice: false,
+        isReadyForReleaseReview: true,
+        results: results
+    )
+    _ = try portfolio.importReport(SidebandSignedAcceptanceReport.signed(report: report, identity: identity).encoded())
+    let assessment = portfolio.assessment(forBuild: report.appBuild)
+    #expect(!assessment.isCertified)
+    #expect(assessment.blockingReasons.contains { $0.contains("simulator") })
+    #expect(assessment.blockingReasons.contains { $0.contains("schema 3") })
 }
 
 @MainActor @Test func recoveryDrillAndRestoreRollbackPreserveValidatedData() throws {

@@ -1237,6 +1237,17 @@ struct SidebandSettingsView: View {
                 if let build = acceptanceCampaignBuild {
                     LabeledContent("Campaign build", value: build)
                         .font(.caption.monospaced())
+                    let assessment = store.acceptancePortfolio.assessment(forBuild: build)
+                    if assessment.isCertified {
+                        Label("Signed physical-device campaign certified", systemImage: "checkmark.shield.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        ForEach(assessment.blockingReasons, id: \.self) { reason in
+                            Label(reason, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
                 }
                 ForEach([SidebandAcceptancePlatform.mac, .iPhone, .iPad], id: \.rawValue) { platform in
                     if let signed = acceptanceCampaignBuild.flatMap({

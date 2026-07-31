@@ -18,7 +18,9 @@ that differ materially between Simulator and real Apple hardware:
 Each run has a unique identifier and start time. Every scenario includes
 explicit instructions, pass/fail state, bounded notes, timestamp, application
 build and operating-system evidence. Results persist on the tested device and
-can be exported as a versioned JSON report.
+can be exported as a versioned, cryptographically signed JSON report. Schema 3
+also records the locale, preferred languages, low-power state, thermal state
+and physical memory present when the evidence is generated.
 
 The workspace labels Simulator runs clearly. Simulator evidence is useful for
 development, but does not certify physical camera, microphone, background,
@@ -26,3 +28,10 @@ cellular or hardware behaviour. RNode and other radio-hardware acceptance
 remains separately parked until supported physical devices are available.
 A run is marked ready for release review only when every scenario passed on
 physical Apple hardware.
+
+The combined campaign is stricter than an individual report. It certifies only
+when signed physical Mac, iPhone and iPad reports all cover the exact same app
+build, every expected scenario is present and passed, each result's build and
+OS match its report, and all test timestamps fall within the recorded run. The
+settings screen lists every blocking reason instead of presenting incomplete
+evidence as a pass.

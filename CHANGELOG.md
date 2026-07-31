@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.97 (135) - 2026-07-31
+
+- Strengthened Apple physical-device acceptance into a fail-closed signed
+  certification covering Mac, iPhone and iPad on one exact application build.
+- Added locale, language, low-power, thermal and physical-memory evidence to
+  acceptance reports, while continuing to reject simulator evidence.
+- Added clear per-platform campaign blockers for missing, legacy, incomplete,
+  mistimed, mismatched-build or cryptographically invalid evidence.
+
 ## 1.3.96 (134) - 2026-07-31
 
 - Restored the dedicated Network Connections screen and made it directly

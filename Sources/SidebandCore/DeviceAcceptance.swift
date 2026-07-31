@@ -82,6 +82,14 @@ public struct SidebandAcceptanceResult: Codable, Sendable, Equatable {
     public var operatingSystem: String?
 }
 
+public struct SidebandAcceptanceEnvironment: Codable, Sendable, Equatable {
+    public let localeIdentifier: String
+    public let preferredLanguages: [String]
+    public let lowPowerModeEnabled: Bool
+    public let thermalState: Int
+    public let physicalMemoryBytes: UInt64
+}
+
 public struct SidebandAcceptanceReport: Codable, Sendable, Equatable {
     public let schemaVersion: Int
     public let runID: UUID
@@ -94,9 +102,17 @@ public struct SidebandAcceptanceReport: Codable, Sendable, Equatable {
     public let isPhysicalDevice: Bool
     public let isReadyForReleaseReview: Bool
     public let results: [String: SidebandAcceptanceResult]
+    public var environment: SidebandAcceptanceEnvironment? = nil
 
     public var passedCount: Int { results.values.count { $0.outcome == .passed } }
     public var failedCount: Int { results.values.count { $0.outcome == .failed } }
+}
+
+public struct SidebandAcceptanceCampaignAssessment: Sendable, Equatable {
+    public let build: String
+    public let blockingReasons: [String]
+
+    public var isCertified: Bool { blockingReasons.isEmpty }
 }
 
 public struct SidebandSignedAcceptanceReport: Codable, Sendable, Equatable, Identifiable {
@@ -222,11 +238,9 @@ public final class SidebandAcceptancePortfolio {
     }
 
     public var completeBuilds: [String] {
-        let primary: Set<SidebandAcceptancePlatform> = [.mac, .iPhone, .iPad]
-        let grouped = Dictionary(grouping: reports.filter(\.report.isReadyForReleaseReview), by: \.report.appBuild)
-        return grouped.compactMap { build, reports in
-            primary.isSubset(of: Set(reports.map(\.report.platform))) ? build : nil
-        }.sorted(by: Self.compareBuilds)
+        Set(reports.map(\.report.appBuild))
+            .filter { assessment(forBuild: $0).isCertified }
+            .sorted(by: Self.compareBuilds)
     }
 
     public var latestCompleteBuild: String? { completeBuilds.last }
@@ -239,6 +253,49 @@ public final class SidebandAcceptancePortfolio {
         Dictionary(grouping: reports.filter { $0.report.appBuild == build }, by: \.report.platform).compactMapValues {
             $0.max { $0.report.generatedAt < $1.report.generatedAt }
         }
+    }
+
+    public func assessment(forBuild build: String) -> SidebandAcceptanceCampaignAssessment {
+        let required: [SidebandAcceptancePlatform] = [.mac, .iPhone, .iPad]
+        let latest = latestByPlatform(forBuild: build)
+        var reasons: [String] = []
+        let expectedScenarios = Set(SidebandAcceptanceScenario.allCases.map(\.rawValue))
+
+        for platform in required {
+            guard let signed = latest[platform] else {
+                reasons.append("Missing signed physical \(platform.title) report.")
+                continue
+            }
+            let report = signed.report
+            if !signed.isValid { reasons.append("\(platform.title) report signature is invalid.") }
+            if report.schemaVersion < 3 { reasons.append("\(platform.title) report predates environment-certified schema 3.") }
+            if !report.isPhysicalDevice { reasons.append("\(platform.title) evidence came from a simulator or unsupported environment.") }
+            if !report.isReadyForReleaseReview { reasons.append("\(platform.title) did not pass every acceptance scenario.") }
+            if report.operatingSystem.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                reasons.append("\(platform.title) operating-system evidence is missing.")
+            }
+            if report.generatedAt < report.startedAt {
+                reasons.append("\(platform.title) report timestamps are inconsistent.")
+            }
+            if report.environment == nil {
+                reasons.append("\(platform.title) environment evidence is missing.")
+            }
+            if Set(report.results.keys) != expectedScenarios {
+                reasons.append("\(platform.title) scenario coverage is incomplete.")
+            }
+            for scenario in SidebandAcceptanceScenario.allCases {
+                guard let result = report.results[scenario.rawValue] else { continue }
+                if result.outcome != .passed
+                    || result.build != build
+                    || result.operatingSystem != report.operatingSystem
+                    || result.testedAt == nil
+                    || result.testedAt! < report.startedAt
+                    || result.testedAt! > report.generatedAt {
+                    reasons.append("\(platform.title) has invalid evidence for \(scenario.title).")
+                }
+            }
+        }
+        return SidebandAcceptanceCampaignAssessment(build: build, blockingReasons: reasons)
     }
 
     private func importVerified(
@@ -381,7 +438,7 @@ public final class SidebandDeviceAcceptance {
 
     public func makeReport(now: Date = .now) -> SidebandAcceptanceReport {
         SidebandAcceptanceReport(
-            schemaVersion: 2,
+            schemaVersion: 3,
             runID: runID,
             startedAt: startedAt,
             generatedAt: now,
@@ -393,7 +450,14 @@ public final class SidebandDeviceAcceptance {
             isReadyForReleaseReview: isReadyForReleaseReview,
             results: Dictionary(uniqueKeysWithValues: SidebandAcceptanceScenario.allCases.map {
                 ($0.rawValue, result(for: $0))
-            })
+            }),
+            environment: SidebandAcceptanceEnvironment(
+                localeIdentifier: Locale.current.identifier,
+                preferredLanguages: Array(Locale.preferredLanguages.prefix(10)),
+                lowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                thermalState: ProcessInfo.processInfo.thermalState.rawValue,
+                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+            )
         )
     }
 
