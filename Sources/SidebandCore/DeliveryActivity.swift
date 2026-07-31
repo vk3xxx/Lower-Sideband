@@ -35,6 +35,116 @@ public struct DeliveryActivityItem: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct DeliveryReliabilitySnapshot: Equatable, Sendable {
+    public enum Health: String, Sendable {
+        case healthy, recovering, degraded, needsAttention, offline
+
+        public var title: String {
+            switch self {
+            case .healthy: "Healthy"
+            case .recovering: "Recovering"
+            case .degraded: "Degraded"
+            case .needsAttention: "Needs attention"
+            case .offline: "Offline"
+            }
+        }
+    }
+
+    public struct Interface: Identifiable, Equatable, Sendable {
+        public let id: String
+        public let name: String
+        public let endpoint: String?
+        public let isReady: Bool
+        public let connectedAt: Date?
+        public let lastPacketAt: Date?
+
+        public init(id: String, name: String, endpoint: String?, isReady: Bool, connectedAt: Date?, lastPacketAt: Date?) {
+            self.id = id
+            self.name = name
+            self.endpoint = endpoint
+            self.isReady = isReady
+            self.connectedAt = connectedAt
+            self.lastPacketAt = lastPacketAt
+        }
+    }
+
+    public let health: Health
+    public let summary: String
+    public let recommendedAction: String?
+    public let automaticRecoveryEnabled: Bool
+    public let queuedCount: Int
+    public let awaitingProofCount: Int
+    public let deliveredCount: Int
+    public let failedCount: Int
+    public let deliveryTimeoutCount: Int
+    public let recoveredOutboundCount: Int
+    public let deferredKeepaliveCount: Int
+    public let deferredTunnelCount: Int
+    public let knownRouteCount: Int
+    public let activeLinkCount: Int
+    public let reconnectDelaySeconds: Int?
+    public let lastNetworkReadyAt: Date?
+    public let interfaces: [Interface]
+
+    public init(
+        networkReady: Bool,
+        networkConnecting: Bool,
+        automaticRecoveryEnabled: Bool,
+        queuedCount: Int,
+        awaitingProofCount: Int,
+        deliveredCount: Int,
+        failedCount: Int,
+        deliveryTimeoutCount: Int,
+        recoveredOutboundCount: Int,
+        deferredKeepaliveCount: Int,
+        deferredTunnelCount: Int,
+        knownRouteCount: Int,
+        activeLinkCount: Int,
+        reconnectDelaySeconds: Int?,
+        lastNetworkReadyAt: Date?,
+        interfaces: [Interface]
+    ) {
+        self.automaticRecoveryEnabled = automaticRecoveryEnabled
+        self.queuedCount = queuedCount
+        self.awaitingProofCount = awaitingProofCount
+        self.deliveredCount = deliveredCount
+        self.failedCount = failedCount
+        self.deliveryTimeoutCount = deliveryTimeoutCount
+        self.recoveredOutboundCount = recoveredOutboundCount
+        self.deferredKeepaliveCount = deferredKeepaliveCount
+        self.deferredTunnelCount = deferredTunnelCount
+        self.knownRouteCount = knownRouteCount
+        self.activeLinkCount = activeLinkCount
+        self.reconnectDelaySeconds = reconnectDelaySeconds
+        self.lastNetworkReadyAt = lastNetworkReadyAt
+        self.interfaces = interfaces
+
+        if failedCount > 0 {
+            health = .needsAttention
+            summary = "(failedCount) message\(failedCount == 1 ? "" : "s") need recovery."
+            recommendedAction = networkReady ? "Retry failed deliveries and refresh their routes." : "Reconnect, refresh routes and retry failed deliveries."
+        } else if networkConnecting || reconnectDelaySeconds != nil {
+            health = .recovering
+            summary = reconnectDelaySeconds.map { "Automatic recovery will retry in \($0) seconds." } ?? "Lower Sideband is restoring network connectivity."
+            recommendedAction = automaticRecoveryEnabled ? nil : "Enable automatic connection or reconnect now."
+        } else if !networkReady {
+            health = .offline
+            summary = "No Reticulum transport is ready."
+            recommendedAction = automaticRecoveryEnabled ? "Check available interfaces if reconnection does not complete." : "Enable automatic connection or reconnect now."
+        } else if queuedCount > 0 || awaitingProofCount > 0 {
+            health = .degraded
+            summary = "Connected; (queuedCount) queued and (awaitingProofCount) awaiting proof."
+            recommendedAction = queuedCount > 0 ? "Refresh routes and flush the delivery queue." : nil
+        } else {
+            health = .healthy
+            summary = interfaces.count(where: \.isReady) > 1
+                ? "Delivery is ready across multiple transports."
+                : "Delivery is ready and no messages need attention."
+            recommendedAction = nil
+        }
+    }
+}
+
 public enum DeliveryActivityBuilder {
     public static func build(
         messages: [Message],

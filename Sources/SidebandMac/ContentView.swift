@@ -184,9 +184,9 @@ struct ContentView: View {
                         Label("Situation map", systemImage: "map")
                     }.help("Show the latest trusted telemetry from every contact and any installed offline GeoJSON overlay")
                     Button { showingDeliveryActivity = true } label: {
-                        Label("Delivery activity", systemImage: "checkmark.circle.badge.questionmark")
+                        Label("Reliability Centre", systemImage: "checkmark.shield")
                     }
-                    .help("Review queued, delivered and failed messages, delivery proofs, retries and active routes")
+                    .help("Review delivery health, proofs, routes and recovery controls")
                     Button { showingConversationOrganizer = true } label: {
                         Label("Organize conversations", systemImage: "square.grid.2x2")
                     }
@@ -570,7 +570,7 @@ struct ContentView: View {
                 Button("Settings", systemImage: "gearshape", action: openAppSettings)
                 Divider()
                 Button("New Conversation", systemImage: "square.and.pencil") { showingNewConversation = true }
-                Button("Delivery Activity", systemImage: "checkmark.circle.badge.questionmark") { showingDeliveryActivity = true }
+                Button("Reliability Centre", systemImage: "checkmark.shield") { showingDeliveryActivity = true }
                 Button("Organize Conversations", systemImage: "square.grid.2x2") { showingConversationOrganizer = true }
                 Divider()
                 Button("Situation Map", systemImage: "map") { showingSituationMap = true }

@@ -638,17 +638,24 @@ struct SidebandSettingsView: View {
                 LabeledContent("Failed", value: store.failedMessageCount.formatted())
                 ViewThatFits(in: .horizontal) {
                     HStack {
-                        Button("Flush Queue") { Task { await store.flushQueuedMessages() } }
-                            .disabled(store.queuedMessageCount == 0 || store.networkState != .ready)
+                        Button("Flush Queue") { Task { await store.flushQueuedMessagesOnThisDevice() } }
+                            .disabled(store.queuedMessageCount == 0)
+                            .help("Take over eligible queued messages on this device, reconnect if needed, refresh their routes and resume delivery")
                         Button("Retry Failed") { Task { await store.retryAllFailedMessages() } }
                             .disabled(store.failedMessageCount == 0)
                     }
                     VStack(alignment: .leading) {
-                        Button("Flush Queue") { Task { await store.flushQueuedMessages() } }
-                            .disabled(store.queuedMessageCount == 0 || store.networkState != .ready)
+                        Button("Flush Queue") { Task { await store.flushQueuedMessagesOnThisDevice() } }
+                            .disabled(store.queuedMessageCount == 0)
+                            .help("Take over eligible queued messages on this device, reconnect if needed, refresh their routes and resume delivery")
                         Button("Retry Failed") { Task { await store.retryAllFailedMessages() } }
                             .disabled(store.failedMessageCount == 0)
                     }
+                }
+                if let status = store.queueFlushStatus {
+                    Label(status, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 

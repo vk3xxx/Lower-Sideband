@@ -122,6 +122,7 @@ public final class SidebandStore {
     public private(set) var deliveryTimeoutCount = 0
     public private(set) var reconnectDelaySeconds: Int?
     public private(set) var recoveredOutboundCount = 0
+    public private(set) var queueFlushStatus: String?
     public private(set) var lastBackgroundRefreshAt: Date?
     public private(set) var lastBackgroundRefreshSucceeded: Bool?
     public private(set) var incomingResourceProgress: [String: Double] = [:]
@@ -213,6 +214,38 @@ public final class SidebandStore {
             conversations: conversations,
             diagnostics: deliveryDiagnosticEvents,
             routes: connectedRoutes
+        )
+    }
+
+    public var deliveryReliability: DeliveryReliabilitySnapshot {
+        DeliveryReliabilitySnapshot(
+            networkReady: networkState == .ready,
+            networkConnecting: networkState == .connecting,
+            automaticRecoveryEnabled: autoConnectEnabled,
+            queuedCount: queuedMessageCount,
+            awaitingProofCount: sentMessageCount,
+            deliveredCount: deliveredMessageCount,
+            failedCount: failedMessageCount,
+            deliveryTimeoutCount: deliveryTimeoutCount,
+            recoveredOutboundCount: recoveredOutboundCount,
+            deferredKeepaliveCount: deferredKeepalives,
+            deferredTunnelCount: deferredTunnelSyntheses,
+            knownRouteCount: knownPathCount,
+            activeLinkCount: activeLinkCount,
+            reconnectDelaySeconds: reconnectDelaySeconds,
+            lastNetworkReadyAt: lastNetworkReadyAt,
+            interfaces: networkInterfaces.map { interface in
+                DeliveryReliabilitySnapshot.Interface(
+                    id: interface.id,
+                    name: interface.name,
+                    endpoint: interface.host.map { host in
+                        interface.port.map { "\(host):\($0)" } ?? host
+                    },
+                    isReady: interface.state == .ready,
+                    connectedAt: interface.connectedAt,
+                    lastPacketAt: interface.lastPacketAt
+                )
+            }
         )
     }
 
@@ -2627,6 +2660,72 @@ public final class SidebandStore {
             $0.direction == .outgoing && $0.state == .failed
         }.map(\.conversationID))
         for conversationID in conversationIDs { await retryAllFailedMessages(in: conversationID) }
+    }
+
+    /// Performs the complete, user-requested delivery recovery sequence. The
+    /// operation is safe to repeat: it reconnects only when necessary,
+    /// refreshes routes for affected conversations, retries failed messages,
+    /// and finally flushes the owned outbox.
+    public func recoverMessageDelivery() async {
+        if networkState != .ready {
+            await reconnectNetwork()
+        }
+        guard networkState == .ready else {
+            queueFlushStatus = "Recovery is waiting for a usable network connection."
+            return
+        }
+        let affectedConversationIDs = Set(messages.lazy.filter {
+            $0.direction == .outgoing && ($0.state == .queued || $0.state == .sent || $0.state == .failed)
+        }.map(\.conversationID))
+        for conversationID in affectedConversationIDs {
+            guard let destination = conversations.first(where: { $0.id == conversationID })?.destinationHash else { continue }
+            await requestPath(to: destination, surfaceErrors: false)
+        }
+        await retryAllFailedMessages()
+        await flushQueuedMessagesOnThisDevice()
+    }
+
+    /// Explicit manual flushing also transfers eligible queued work from a
+    /// previously active synced device. This is intentionally separate from
+    /// background flushing, which preserves ownership to avoid two devices
+    /// racing the same outbox. LXMF message IDs remain stable if the former
+    /// owner later returns, so receiver-side de-duplication is preserved.
+    public func flushQueuedMessagesOnThisDevice() async {
+        let eligibleIndices = messages.indices.filter {
+            messages[$0].direction == .outgoing &&
+                messages[$0].state == .queued &&
+                (messages[$0].scheduledFor ?? .distantPast) <= .now
+        }
+        guard !eligibleIndices.isEmpty else {
+            queueFlushStatus = "No eligible queued messages. Scheduled messages remain queued until their send time."
+            return
+        }
+
+        queueFlushStatus = "Preparing \(eligibleIndices.count) queued message\(eligibleIndices.count == 1 ? "" : "s")…"
+        for index in eligibleIndices {
+            messages[index].outboxOwnerID = syncDeviceID
+            messages[index].outboxOwnerUpdatedAt = .now
+        }
+        save()
+
+        if networkState != .ready { await reconnectNetwork() }
+        guard networkState == .ready else {
+            queueFlushStatus = "Messages are safe. Automatic recovery will flush them when a transport is ready."
+            return
+        }
+
+        let conversationIDs = Set(eligibleIndices.map { messages[$0].conversationID })
+        for conversationID in conversationIDs {
+            if let destination = conversations.first(where: { $0.id == conversationID })?.destinationHash {
+                await requestPath(to: destination, surfaceErrors: false)
+            }
+        }
+        for conversationID in conversationIDs { await attemptDelivery(for: conversationID) }
+
+        let remaining = eligibleIndices.count { messages[$0].state == .queued }
+        queueFlushStatus = remaining == 0
+            ? "All eligible messages entered delivery."
+            : "Recovery started for \(eligibleIndices.count) messages; \(remaining) are waiting for peer routes."
     }
 
     public func flushQueuedMessages() async {

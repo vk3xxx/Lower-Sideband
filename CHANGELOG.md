@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 (138) - 2026-07-31
+
+- Replaced the basic delivery log with a shared Reliability Centre for Mac,
+  iPhone and iPad showing live transport, route, proof and retry health.
+- Added a single safe recovery action that reconnects when required, refreshes
+  affected routes, retries failed deliveries and flushes the owned outbox.
+- Added clear recovery history and automatic-recovery state without surfacing
+  disruptive connection alerts during normal background recovery.
+- Fixed manual queue flushing so it can safely take over eligible work from a
+  previously active synced device, reconnect, refresh routes and report why
+  any message is still waiting.
+
 ## 1.3.99 (137) - 2026-07-31
 
 - Added explicit physical-device acceptance for VoiceOver/Voice Control/Switch

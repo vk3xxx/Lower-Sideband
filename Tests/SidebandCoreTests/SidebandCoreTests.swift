@@ -5048,6 +5048,30 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(devices.first(where: { $0.id == other })?.queuedMessageCount == 1)
 }
 
+@MainActor @Test func manualQueueFlushClaimsSyncedOutboxAndExplainsOfflineRecovery() async throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).appending(path: "store.json")
+    let conversation = Conversation(destinationHash: "0123456789abcdef0123456789abcdef", displayName: "Peer")
+    let pending = Message(
+        conversationID: conversation.id,
+        body: "Pending from another device",
+        direction: .outgoing,
+        state: .queued,
+        outboxOwnerID: "OTHER-DEVICE",
+        outboxOwnerUpdatedAt: .distantPast
+    )
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try encoder.encode(AppSnapshot(conversations: [conversation], messages: [pending])).write(to: url)
+
+    let store = SidebandStore(persistenceURL: url)
+    store.setAutoConnect(false)
+    await store.flushQueuedMessagesOnThisDevice()
+
+    #expect(store.messages[0].outboxOwnerID == store.currentSyncDeviceID)
+    #expect(store.queueFlushStatus?.contains("safe") == true)
+}
+
 @Test func conversationMediaIndexerFindsAttachmentsTelemetryAndLinks() {
     let conversationID = UUID()
     let attachment = Attachment(
