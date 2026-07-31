@@ -37,6 +37,16 @@ import AppKit
         retainScreenshot("03-mac-settings-resized")
     }
 
+    func testNetworkConnectionsRemainDirectlyReachable() throws {
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15))
+        let connections = app.descendants(matching: .any)["network-connections"]
+        XCTAssertTrue(connections.waitForExistence(timeout: 8))
+        connections.click()
+        XCTAssertTrue(app.descendants(matching: .any)["network-connections-screen"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Network Status"].exists)
+        retainScreenshot("04-mac-network-connections")
+    }
+
     private func retainScreenshot(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name

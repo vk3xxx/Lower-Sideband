@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.96 (134) - 2026-07-31
+
+- Restored the dedicated Network Connections screen and made it directly
+  available from both the persistent identity bar and the main navigation
+  toolbar, with live connection-state help and accessibility descriptions.
+- Added an always-available All Features menu so network management, settings,
+  messaging, delivery activity, maps, mesh tools, identities and calls remain
+  reachable even when platform or window sizing compresses toolbar controls.
+- Added iOS and macOS interface regression coverage that verifies Network
+  Connections remains visible and opens the complete Network Status screen.
+
 ## 1.3.95 (133) - 2026-07-31
 
 - Expanded read-only Python Sideband migration to descriptive and plural

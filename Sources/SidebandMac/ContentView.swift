@@ -169,6 +169,12 @@ struct ContentView: View {
                 .searchable(text: $conversationSearch, prompt: "Search conversations")
                 .navigationTitle("Lower Sideband")
                 .toolbar {
+                    Button { showingNetwork = true } label: {
+                        Label("Network Connections", systemImage: networkToolbarIcon)
+                    }
+                    .accessibilityIdentifier("network-connections-toolbar")
+                    .accessibilityHint(networkToolbarHelp)
+                    .help("Network Connections · \(networkToolbarLabel). \(networkToolbarHelp)")
                     Button(action: openAppSettings) {
                         Label("Settings", systemImage: "gearshape")
                     }
@@ -312,7 +318,7 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
-        .sheet(isPresented: $showingNetwork) { SidebandSettingsView(store: store, showsCloseButton: true) }
+        .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
         .sheet(isPresented: $showingDeliveryActivity) { DeliveryActivityView(store: store) }
         .sheet(isPresented: $showingConversationOrganizer) { ConversationOrganizerView(store: store) }
         .sheet(isPresented: $showingMeshTools) { MeshChatFeatureCenterView(store: store) }
@@ -543,6 +549,50 @@ struct ContentView: View {
                     .accessibilityLabel("Current LXMF ID \\(store.localDeliveryHash)")
             }
             Spacer(minLength: 4)
+            Button {
+                showingNetwork = true
+            } label: {
+                if horizontalSizeClass == .compact {
+                    Image(systemName: networkToolbarIcon)
+                } else {
+                    Label("Connections", systemImage: networkToolbarIcon)
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .layoutPriority(2)
+            .accessibilityIdentifier("network-connections")
+            .accessibilityLabel("Network Connections, \(networkToolbarLabel)")
+            .accessibilityHint(networkToolbarHelp)
+            .help("Network Connections · \(networkToolbarLabel). \(networkToolbarHelp)")
+            Menu {
+                Button("Network Connections", systemImage: networkToolbarIcon) { showingNetwork = true }
+                Button("Settings", systemImage: "gearshape", action: openAppSettings)
+                Divider()
+                Button("New Conversation", systemImage: "square.and.pencil") { showingNewConversation = true }
+                Button("Delivery Activity", systemImage: "checkmark.circle.badge.questionmark") { showingDeliveryActivity = true }
+                Button("Organize Conversations", systemImage: "square.grid.2x2") { showingConversationOrganizer = true }
+                Divider()
+                Button("Situation Map", systemImage: "map") { showingSituationMap = true }
+                Button("Reticulum Network Map", systemImage: "point.3.connected.trianglepath.dotted") {
+                    #if os(macOS)
+                    openWindow(id: "network-map")
+                    #else
+                    showingNetworkMap = true
+                    #endif
+                }
+                Button("Mesh Tools", systemImage: "rectangle.3.group.bubble") { showingMeshTools = true }
+                Button("Identity Profiles", systemImage: "person.2.badge.key") { showingMeshTools = true }
+                Button("Call History", systemImage: "phone.badge.clock") { showingCallHistory = true }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityIdentifier("all-features")
+            .accessibilityLabel("All Features")
+            .accessibilityHint("Open every major Lower Sideband feature from one menu")
+            .help("All Features · Network, maps, messaging, identities, calls and settings")
             Button {
                 showingMeshTools = true
             } label: {
@@ -1818,6 +1868,7 @@ private struct NetworkView: View {
                 }
             }
         }.padding(24)
+        .accessibilityIdentifier("network-connections-screen")
         }
         .platformNetworkSheetSize()
         .sheet(isPresented: $showingLocalContactQR) {

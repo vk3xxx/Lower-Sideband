@@ -34,6 +34,15 @@ import XCTest
         retainScreenshot("03-settings")
     }
 
+    func testNetworkConnectionsRemainDirectlyReachable() throws {
+        let connections = app.descendants(matching: .any)["network-connections"]
+        XCTAssertTrue(connections.waitForExistence(timeout: 15))
+        connections.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["network-connections-screen"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Network Status"].exists)
+        retainScreenshot("04-network-connections")
+    }
+
     private func retainScreenshot(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
