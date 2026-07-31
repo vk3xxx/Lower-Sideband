@@ -753,6 +753,40 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(await cloud.saveCount() == 1)
 }
 
+@MainActor @Test func iCloudPipelineCarriesSanitizedApplicationServiceContinuity() async throws {
+    let cloud = CountingCloudSync()
+    let store = SidebandStore(
+        persistenceURL: FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString).appending(path: "store.json"),
+        cloudSync: cloud
+    )
+    let destination = Data(SHA256.hash(data: Data(UUID().uuidString.utf8))).prefix(16).hex
+    let address = try #require(
+        NomadPageAddress(
+            destinationHash: destination,
+            path: "/page/private.mu",
+            query: ["token": "never-upload-this"]
+        )
+    )
+    store.meshFeatures.toggleBookmark(address)
+    store.meshFeatures.recordVisit(address: address, title: "Private", source: "page body stays local")
+    await store.setICloudSyncEnabled(true)
+    await store.syncICloudNow()
+
+    let payload = try #require(await cloud.currentSnapshot())
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let snapshot = try decoder.decode(AppSnapshot.self, from: payload.data)
+    let continuity = try #require(snapshot.applicationServiceContinuity)
+    let syncedBookmark = try #require(
+        continuity.nomadBookmarks.first(where: { $0.address.destinationHash == destination && $0.isBookmarked })
+    )
+    #expect(syncedBookmark.address.query.isEmpty)
+    #expect(continuity.nomadHistory.first(where: { $0.address.destinationHash == destination })?.address.query.isEmpty == true)
+    #expect(!String(decoding: payload.data, as: UTF8.self).contains("never-upload-this"))
+    #expect(!String(decoding: payload.data, as: UTF8.self).contains("page body stays local"))
+}
+
 @MainActor @Test func cancelledRemoteWakeReturnsWithoutSpinningToDeadline() async {
     let store = SidebandStore(
         persistenceURL: FileManager.default.temporaryDirectory
@@ -5120,6 +5154,150 @@ private func fileExists(_ url: URL) -> Bool {
     #expect(restored.bookmarks == [address])
     #expect(restored.telephone.voicemailEnabled)
     #expect(restored.telephone.ringTimeoutSeconds == 35)
+}
+
+@Test func applicationServiceInteroperabilitySuitePassesEverySupportedWireFormat() {
+    let results = ApplicationServiceInteroperabilitySuite.run()
+    #expect(results.count == ReticulumApplicationServiceKind.allCases.count)
+    #expect(Set(results.map(\.kind)) == Set(ReticulumApplicationServiceKind.allCases))
+    #expect(results.allSatisfy { $0.passed })
+}
+
+@MainActor @Test func applicationServiceContinuityStripsSensitiveAndDeviceLocalState() throws {
+    let suite = "service-continuity-privacy-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let library = MeshChatFeatureStore(
+        cipher: LocalDataCipher(keyMaterial: Data(repeating: 0x73, count: 64)),
+        defaults: defaults
+    )
+    let address = try #require(
+        NomadPageAddress(
+            destinationHash: "0123456789abcdef0123456789abcdef",
+            path: "/page/form.mu",
+            query: ["password": "must-not-sync"]
+        )
+    )
+    library.recordVisit(address: address, title: "Private form", source: "secret page contents")
+    library.toggleBookmark(address)
+    let room = RelayChatRoom(
+        hubDestinationHash: "11111111111111111111111111111111",
+        name: "general",
+        nickname: "VK3XXX"
+    )
+    library.upsertRelayRoom(room)
+    library.recordRelayMessage(
+        try ReticulumRelayChatProtocol.Message(
+            type: .message,
+            messageID: Data(repeating: 0x22, count: 8),
+            source: Data(repeating: 0x33, count: 16),
+            room: "general",
+            body: .text("private transcript"),
+            nickname: "Peer"
+        ),
+        hubDestinationHash: room.hubDestinationHash,
+        outgoing: false
+    )
+    let service = ReticulumApplicationService(
+        destinationHash: "22222222222222222222222222222222",
+        kind: .shell,
+        name: "Remote shell",
+        detail: "device-local route",
+        hops: 7,
+        isValidated: true
+    )
+    library.observeService(service)
+    library.setServiceFavorite(service.id, favorite: true)
+    library.upsertShellSession(
+        RemoteShellSessionRecord(
+            destinationHash: service.destinationHash,
+            state: "Connected",
+            transcript: "private shell output"
+        )
+    )
+
+    let snapshot = library.continuitySnapshot()
+    #expect(snapshot.nomadBookmarks.first?.address.query.isEmpty == true)
+    #expect(snapshot.nomadHistory.first?.address.query.isEmpty == true)
+    #expect(snapshot.relayMemberships.first?.room == "general")
+    #expect(snapshot.serviceFavorites.first?.destinationHash == service.destinationHash)
+    let encoded = try JSONEncoder().encode(snapshot)
+    let text = String(decoding: encoded, as: UTF8.self)
+    #expect(!text.contains("must-not-sync"))
+    #expect(!text.contains("secret page contents"))
+    #expect(!text.contains("private transcript"))
+    #expect(!text.contains("private shell output"))
+    #expect(!text.contains("device-local route"))
+}
+
+@MainActor @Test func applicationServiceContinuityMergesPreferencesAndTombstonesAcrossDevices() throws {
+    let sourceSuite = "service-continuity-source-\(UUID().uuidString)"
+    let targetSuite = "service-continuity-target-\(UUID().uuidString)"
+    let sourceDefaults = try #require(UserDefaults(suiteName: sourceSuite))
+    let targetDefaults = try #require(UserDefaults(suiteName: targetSuite))
+    defer {
+        sourceDefaults.removePersistentDomain(forName: sourceSuite)
+        targetDefaults.removePersistentDomain(forName: targetSuite)
+    }
+    let cipher = LocalDataCipher(keyMaterial: Data(repeating: 0x29, count: 64))
+    let source = MeshChatFeatureStore(cipher: cipher, defaults: sourceDefaults)
+    let target = MeshChatFeatureStore(cipher: cipher, defaults: targetDefaults)
+    let address = try #require(NomadPageAddress(destinationHash: "34343434343434343434343434343434"))
+    let room = RelayChatRoom(
+        hubDestinationHash: "45454545454545454545454545454545",
+        name: "operators",
+        nickname: "Alice"
+    )
+    let service = ReticulumApplicationService(
+        destinationHash: "56565656565656565656565656565656",
+        kind: .nomad,
+        name: "Field notes",
+        hops: 2,
+        isValidated: true
+    )
+    source.toggleBookmark(address)
+    source.recordVisit(address: address, title: "Field notes", source: "not synced")
+    source.upsertRelayRoom(room)
+    source.setRelayRoomFavorite(room.id, favorite: true)
+    source.observeService(service)
+    source.setServiceFavorite(service.id, favorite: true)
+    target.mergeContinuity(source.continuitySnapshot())
+    #expect(target.bookmarks == [address])
+    #expect(target.history.first?.address == address)
+    #expect(target.relayRooms.first?.id == room.id)
+    #expect(target.relayRoomStates[room.id]?.isFavorite == true)
+    #expect(target.serviceDirectory.first(where: { $0.id == service.id })?.isFavorite == true)
+
+    Thread.sleep(forTimeInterval: 0.01)
+    source.toggleBookmark(address)
+    source.clearHistory()
+    source.removeRelayRoom(room.id)
+    source.setRelayRoomFavorite(room.id, favorite: false)
+    source.setServiceFavorite(service.id, favorite: false)
+    target.mergeContinuity(source.continuitySnapshot())
+    #expect(target.bookmarks.isEmpty)
+    #expect(target.history.isEmpty)
+    #expect(target.relayRooms.isEmpty)
+    #expect(target.relayRoomStates[room.id]?.isFavorite == false)
+    #expect(target.serviceDirectory.first(where: { $0.id == service.id })?.isFavorite == false)
+}
+
+@Test func cloudSnapshotMergeIncludesOnlyCanonicalApplicationServiceContinuity() throws {
+    let addressA = try #require(NomadPageAddress(destinationHash: "67676767676767676767676767676767"))
+    let addressB = try #require(NomadPageAddress(destinationHash: "78787878787878787878787878787878"))
+    let local = AppSnapshot(
+        applicationServiceContinuity: .init(
+            nomadBookmarks: [.init(address: addressA, isBookmarked: true, updatedAt: Date(timeIntervalSince1970: 10))]
+        )
+    )
+    let remote = AppSnapshot(
+        applicationServiceContinuity: .init(
+            nomadBookmarks: [.init(address: addressB, isBookmarked: true, updatedAt: Date(timeIntervalSince1970: 20))]
+        )
+    )
+    let merged = try #require(local.mergingCloudSnapshot(remote).applicationServiceContinuity)
+    #expect(Set(merged.nomadBookmarks.filter(\.isBookmarked).map(\.address)) == [addressA, addressB])
+    #expect(merged.nomadBookmarks.allSatisfy { $0.address.query.isEmpty })
 }
 
 private actor TestBootloaderTransport: RNodeBootloaderTransport {

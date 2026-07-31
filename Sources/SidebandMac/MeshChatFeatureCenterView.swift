@@ -30,6 +30,8 @@ struct MeshChatFeatureCenterView: View {
                     .tabItem { Label("Telephone", systemImage: "phone") }
                 RelayChatView(store: store)
                     .tabItem { Label("Rooms", systemImage: "person.3") }
+                ServiceActivityCenterView(store: store)
+                    .tabItem { Label("Activity", systemImage: "clock.arrow.circlepath") }
                 ServiceDirectoryView(store: store)
                     .tabItem { Label("Directory", systemImage: "rectangle.grid.1x2") }
                 HostedRelayView(store: store)
@@ -51,6 +53,219 @@ struct MeshChatFeatureCenterView: View {
             }
         }
         .frame(minWidth: 760, minHeight: 560)
+    }
+}
+
+private struct ServiceActivityCenterView: View {
+    @Bindable var store: SidebandStore
+    @State private var attentionOnly = false
+    @State private var interoperabilityResults: [ApplicationServiceInteroperabilityResult] = []
+    @State private var isRunningChecks = false
+
+    private enum RetryAction {
+        case shell(destination: String, title: String)
+        case command(destination: String, command: String)
+        case fetch(destination: String, path: String)
+    }
+
+    private struct Entry: Identifiable {
+        let id: String
+        let title: String
+        let detail: String
+        let state: String
+        let timestamp: Date
+        let icon: String
+        let isFailure: Bool
+        let retry: RetryAction?
+    }
+
+    private var entries: [Entry] {
+        let features = store.meshFeatures
+        var values = features.history.map {
+            Entry(
+                id: "nomad:\($0.id)",
+                title: $0.title.isEmpty ? "Nomad page" : $0.title,
+                detail: "\($0.address.destinationHash.prefix(12))…\($0.address.path)",
+                state: "Visited",
+                timestamp: $0.visitedAt,
+                icon: "doc.richtext",
+                isFailure: false,
+                retry: nil
+            )
+        }
+        values += features.relayTranscript.suffix(250).map {
+            Entry(
+                id: "relay:\($0.id)",
+                title: $0.nickname ?? "Relay room",
+                detail: $0.body.isEmpty ? $0.roomID : $0.body,
+                state: $0.isOutgoing ? "Sent to room" : "Received",
+                timestamp: $0.sentAt,
+                icon: "person.3",
+                isFailure: false,
+                retry: nil
+            )
+        }
+        values += features.shellSessions.map {
+            let failed = $0.state.localizedCaseInsensitiveContains("fail")
+            return Entry(
+                id: "shell:\($0.id)",
+                title: $0.title,
+                detail: $0.destinationHash,
+                state: $0.state,
+                timestamp: $0.updatedAt,
+                icon: "terminal",
+                isFailure: failed,
+                retry: failed ? .shell(destination: $0.destinationHash, title: $0.title) : nil
+            )
+        }
+        values += features.remoteToolRuns.map {
+            let failed = $0.state.localizedCaseInsensitiveContains("fail") || $0.state == "Rejected"
+            return Entry(
+                id: "execution:\($0.id)",
+                title: $0.command,
+                detail: $0.destinationHash,
+                state: $0.state,
+                timestamp: $0.createdAt,
+                icon: "play.rectangle",
+                isFailure: failed,
+                retry: failed ? .command(destination: $0.destinationHash, command: $0.command) : nil
+            )
+        }
+        values += features.remoteFileTransfers.map {
+            let failed = $0.state.localizedCaseInsensitiveContains("fail")
+            return Entry(
+                id: "copy:\($0.id)",
+                title: $0.remotePath,
+                detail: "\($0.direction == .sending ? "Sending" : "Receiving") · \(Int($0.progress * 100))%",
+                state: $0.state,
+                timestamp: $0.updatedAt,
+                icon: "folder.badge.gearshape",
+                isFailure: failed,
+                retry: failed && $0.direction == .receiving
+                    ? .fetch(destination: $0.destinationHash, path: $0.remotePath)
+                    : nil
+            )
+        }
+        values += features.serviceDirectory.compactMap { service in
+            guard let timestamp = service.lastCheckedAt ?? service.lastUsedAt else { return nil }
+            return Entry(
+                id: "service:\(service.id):\(timestamp.timeIntervalSinceReferenceDate)",
+                title: service.name.isEmpty ? service.kind.title : service.name,
+                detail: "\(service.destinationHash) · \(service.hops) hop\(service.hops == 1 ? "" : "s")",
+                state: service.isReachable ? "Route available" : "Route unavailable",
+                timestamp: timestamp,
+                icon: service.kind.systemImage,
+                isFailure: !service.isReachable,
+                retry: nil
+            )
+        }
+        return values
+            .filter { !attentionOnly || $0.isFailure }
+            .sorted { $0.timestamp > $1.timestamp }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Application Services").font(.title2.bold())
+                        Text("Nomad, relay rooms, remote tools and file transfers in one place.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("Needs attention", isOn: $attentionOnly)
+                        .toggleStyle(.switch)
+                }
+            }
+            Section("Protocol Compatibility") {
+                Button {
+                    runInteroperabilityChecks()
+                } label: {
+                    if isRunningChecks {
+                        Label("Checking wire formats…", systemImage: "hourglass")
+                    } else {
+                        Label("Run Reticulum Service Check", systemImage: "checkmark.shield")
+                    }
+                }
+                .disabled(isRunningChecks)
+                ForEach(interoperabilityResults) { result in
+                    HStack(alignment: .top) {
+                        Image(systemName: result.passed ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                            .foregroundStyle(result.passed ? Color.green : Color.red)
+                        VStack(alignment: .leading) {
+                            Text(result.kind.title).font(.headline)
+                            Text(result.detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(result.checkedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Section(attentionOnly ? "Needs Attention" : "Recent Activity") {
+                if entries.isEmpty {
+                    ContentUnavailableView(
+                        attentionOnly ? "Nothing needs attention" : "No service activity yet",
+                        systemImage: attentionOnly ? "checkmark.circle" : "clock",
+                        description: Text("Application-service sessions and checks will appear here.")
+                    )
+                }
+                ForEach(entries.prefix(500)) { entry in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: entry.icon)
+                            .frame(width: 24)
+                            .foregroundStyle(entry.isFailure ? Color.red : Color.accentColor)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.title).font(.headline).lineLimit(2)
+                            Text(entry.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            Text(entry.state)
+                                .font(.caption.bold())
+                                .foregroundStyle(entry.isFailure ? Color.red : Color.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 6) {
+                            Text(entry.timestamp, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                            if let retry = entry.retry {
+                                Button("Retry", systemImage: "arrow.clockwise") {
+                                    Task { await perform(retry) }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 3)
+                }
+            }
+        }
+        .navigationTitle("Service Activity")
+    }
+
+    private func runInteroperabilityChecks() {
+        isRunningChecks = true
+        Task { @MainActor in
+            for service in store.meshFeatures.serviceDirectory
+                .filter({ $0.isFavorite || $0.lastSeen > Date.now.addingTimeInterval(-86_400) })
+                .prefix(50) {
+                await store.checkApplicationService(service)
+            }
+            interoperabilityResults = ApplicationServiceInteroperabilitySuite.run()
+            isRunningChecks = false
+        }
+    }
+
+    @MainActor private func perform(_ action: RetryAction) async {
+        do {
+            switch action {
+            case let .shell(destination, title):
+                _ = try await store.openRemoteShell(destinationHash: destination, title: title)
+            case let .command(destination, command):
+                _ = try await store.executeRemoteCommand(destinationHash: destination, command: command)
+            case let .fetch(destination, path):
+                _ = try await store.fetchRemoteFile(destinationHash: destination, remotePath: path)
+            }
+        } catch {
+            store.lastError = error.localizedDescription
+        }
     }
 }
 

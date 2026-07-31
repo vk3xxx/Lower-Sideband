@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.91 (129) - 2026-07-31
+
+- Added a unified application-service activity centre for Nomad browsing,
+  relay-room traffic, remote shells, command runs, file transfers and route
+  checks, with attention filtering and safe retry actions.
+- Added an in-app deterministic interoperability suite covering Nomad, RRC,
+  RNSH, RNX and RNCP reference wire formats, round trips, integrity checks and
+  malformed-input rejection.
+- Added end-to-end encrypted cross-device continuity for query-free Nomad
+  bookmarks/history, relay memberships/favourites and service-directory
+  favourites, with removal tombstones and strict exclusion of routes, keys,
+  submitted values, transcripts, commands, output and transfer state.
+
 ## 1.3.90 (128) - 2026-07-31
 
 - Completed interactive Nomad browsing with reference-compatible text,

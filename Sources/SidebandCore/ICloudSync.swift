@@ -388,7 +388,15 @@ public extension AppSnapshot {
             discoveries: discoveries,
             drafts: mergedDrafts,
             voiceCallHistory: Array(callsByID.values.sorted { $0.startedAt > $1.startedAt }.prefix(100)),
-            deletedConversationDestinations: deletions
+            deletedConversationDestinations: deletions,
+            applicationServiceContinuity: {
+                switch (applicationServiceContinuity, remote.applicationServiceContinuity) {
+                case let (.some(local), .some(remote)): local.merging(remote)
+                case let (.some(local), .none): local
+                case let (.none, .some(remote)): remote
+                case (.none, .none): nil
+                }
+            }()
         )
     }
 

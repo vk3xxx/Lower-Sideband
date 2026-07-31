@@ -241,7 +241,7 @@ public struct Attachment: Identifiable, Codable, Hashable, Sendable {
 }
 
 public struct AppSnapshot: Codable, Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
     public var schemaVersion: Int
     public var conversations: [Conversation]
     public var messages: [Message]
@@ -250,7 +250,8 @@ public struct AppSnapshot: Codable, Sendable {
     public var voiceCallHistory: [VoiceCall]
     public var pluginAuditEvents: [SidebandPluginAuditEvent]
     public var deletedConversationDestinations: [String: Date]
-    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:], voiceCallHistory: [VoiceCall] = [], pluginAuditEvents: [SidebandPluginAuditEvent] = [], deletedConversationDestinations: [String: Date] = [:]) {
+    public var applicationServiceContinuity: ApplicationServiceContinuitySnapshot?
+    public init(schemaVersion: Int = Self.currentSchemaVersion, conversations: [Conversation] = [], messages: [Message] = [], discoveries: [DiscoveredDestination] = [], drafts: [UUID: String] = [:], voiceCallHistory: [VoiceCall] = [], pluginAuditEvents: [SidebandPluginAuditEvent] = [], deletedConversationDestinations: [String: Date] = [:], applicationServiceContinuity: ApplicationServiceContinuitySnapshot? = nil) {
         self.schemaVersion = schemaVersion
         self.conversations = conversations
         self.messages = messages
@@ -259,9 +260,10 @@ public struct AppSnapshot: Codable, Sendable {
         self.voiceCallHistory = voiceCallHistory
         self.pluginAuditEvents = pluginAuditEvents
         self.deletedConversationDestinations = deletedConversationDestinations
+        self.applicationServiceContinuity = applicationServiceContinuity
     }
 
-    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts, voiceCallHistory, pluginAuditEvents, deletedConversationDestinations }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, conversations, messages, discoveries, drafts, voiceCallHistory, pluginAuditEvents, deletedConversationDestinations, applicationServiceContinuity }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
@@ -272,6 +274,7 @@ public struct AppSnapshot: Codable, Sendable {
         voiceCallHistory = try values.decodeIfPresent([VoiceCall].self, forKey: .voiceCallHistory) ?? []
         pluginAuditEvents = try values.decodeIfPresent([SidebandPluginAuditEvent].self, forKey: .pluginAuditEvents) ?? []
         deletedConversationDestinations = try values.decodeIfPresent([String: Date].self, forKey: .deletedConversationDestinations) ?? [:]
+        applicationServiceContinuity = try values.decodeIfPresent(ApplicationServiceContinuitySnapshot.self, forKey: .applicationServiceContinuity)
     }
 }
 

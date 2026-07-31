@@ -92,6 +92,147 @@ public struct NomadPageVisit: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+// MARK: - Encrypted cross-device application-service continuity
+
+public struct NomadBookmarkContinuityPreference: Codable, Hashable, Sendable, Identifiable {
+    public var id: String { "\(address.destinationHash):\(address.path)" }
+    public let address: NomadPageAddress
+    public let isBookmarked: Bool
+    public let updatedAt: Date
+
+    public init(address: NomadPageAddress, isBookmarked: Bool, updatedAt: Date = .now) {
+        self.address = NomadPageAddress(destinationHash: address.destinationHash, path: address.path, query: [:])!
+        self.isBookmarked = isBookmarked
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct RelayRoomContinuityPreference: Codable, Hashable, Sendable, Identifiable {
+    public var id: String { "\(hubDestinationHash):\(room)" }
+    public let hubDestinationHash: String
+    public let room: String
+    public let nickname: String
+    public let isJoined: Bool
+    public let updatedAt: Date
+
+    public init(hubDestinationHash: String, room: String, nickname: String, isJoined: Bool, updatedAt: Date = .now) {
+        self.hubDestinationHash = hubDestinationHash.lowercased()
+        self.room = String(room.prefix(ReticulumRelayChatProtocol.maximumRoomBytes))
+        self.nickname = String(nickname.prefix(ReticulumRelayChatProtocol.maximumNicknameBytes))
+        self.isJoined = isJoined
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct RelayRoomFavoritePreference: Codable, Hashable, Sendable, Identifiable {
+    public let roomID: String
+    public let isFavorite: Bool
+    public let updatedAt: Date
+    public var id: String { roomID }
+
+    public init(roomID: String, isFavorite: Bool, updatedAt: Date = .now) {
+        self.roomID = String(roomID.prefix(256))
+        self.isFavorite = isFavorite
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct ServiceDirectoryFavoritePreference: Codable, Hashable, Sendable, Identifiable {
+    public var id: String { "\(kind.rawValue):\(destinationHash)" }
+    public let destinationHash: String
+    public let kind: ReticulumApplicationServiceKind
+    public let name: String
+    public let isFavorite: Bool
+    public let updatedAt: Date
+
+    public init(
+        destinationHash: String,
+        kind: ReticulumApplicationServiceKind,
+        name: String,
+        isFavorite: Bool,
+        updatedAt: Date = .now
+    ) {
+        self.destinationHash = destinationHash.lowercased()
+        self.kind = kind
+        self.name = String(name.prefix(160))
+        self.isFavorite = isFavorite
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct ApplicationServiceContinuitySnapshot: Codable, Hashable, Sendable {
+    public static let currentSchemaVersion = 1
+    public var schemaVersion: Int
+    public var nomadBookmarks: [NomadBookmarkContinuityPreference]
+    public var nomadHistory: [NomadPageVisit]
+    public var nomadHistoryClearedAt: Date?
+    public var relayMemberships: [RelayRoomContinuityPreference]
+    public var relayFavorites: [RelayRoomFavoritePreference]
+    public var serviceFavorites: [ServiceDirectoryFavoritePreference]
+
+    public init(
+        schemaVersion: Int = Self.currentSchemaVersion,
+        nomadBookmarks: [NomadBookmarkContinuityPreference] = [],
+        nomadHistory: [NomadPageVisit] = [],
+        nomadHistoryClearedAt: Date? = nil,
+        relayMemberships: [RelayRoomContinuityPreference] = [],
+        relayFavorites: [RelayRoomFavoritePreference] = [],
+        serviceFavorites: [ServiceDirectoryFavoritePreference] = []
+    ) {
+        self.schemaVersion = schemaVersion
+        self.nomadBookmarks = Array(nomadBookmarks.prefix(250))
+        self.nomadHistory = Array(nomadHistory.prefix(250))
+        self.nomadHistoryClearedAt = nomadHistoryClearedAt
+        self.relayMemberships = Array(relayMemberships.prefix(512))
+        self.relayFavorites = Array(relayFavorites.prefix(512))
+        self.serviceFavorites = Array(serviceFavorites.prefix(2_000))
+    }
+}
+
+public extension ApplicationServiceContinuitySnapshot {
+    func merging(_ other: ApplicationServiceContinuitySnapshot) -> ApplicationServiceContinuitySnapshot {
+        func latest<Value: Identifiable>(
+            _ values: [Value],
+            timestamp: (Value) -> Date
+        ) -> [Value] where Value.ID == String {
+            var byID: [String: Value] = [:]
+            for value in values where timestamp(value) >= timestamp(byID[value.id] ?? value) {
+                byID[value.id] = value
+            }
+            return Array(byID.values)
+        }
+        let bookmarks = latest(nomadBookmarks + other.nomadBookmarks, timestamp: \.updatedAt)
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let memberships = latest(relayMemberships + other.relayMemberships, timestamp: \.updatedAt)
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let relayPreference = latest(relayFavorites + other.relayFavorites, timestamp: \.updatedAt)
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let services = latest(serviceFavorites + other.serviceFavorites, timestamp: \.updatedAt)
+            .sorted { $0.updatedAt > $1.updatedAt }
+        var historyByLocation: [String: NomadPageVisit] = [:]
+        let clearedAt = [nomadHistoryClearedAt, other.nomadHistoryClearedAt].compactMap { $0 }.max()
+        for visit in nomadHistory + other.nomadHistory where visit.visitedAt > (clearedAt ?? .distantPast) {
+            let safeAddress = NomadPageAddress(
+                destinationHash: visit.address.destinationHash,
+                path: visit.address.path,
+                query: [:]
+            )!
+            let safe = NomadPageVisit(id: visit.id, address: safeAddress, title: visit.title, visitedAt: visit.visitedAt)
+            let key = "\(safeAddress.destinationHash):\(safeAddress.path)"
+            if safe.visitedAt > (historyByLocation[key]?.visitedAt ?? .distantPast) { historyByLocation[key] = safe }
+        }
+        return ApplicationServiceContinuitySnapshot(
+            schemaVersion: max(schemaVersion, other.schemaVersion),
+            nomadBookmarks: Array(bookmarks.prefix(250)),
+            nomadHistory: Array(historyByLocation.values.sorted { $0.visitedAt > $1.visitedAt }.prefix(250)),
+            nomadHistoryClearedAt: clearedAt,
+            relayMemberships: Array(memberships.prefix(512)),
+            relayFavorites: Array(relayPreference.prefix(512)),
+            serviceFavorites: Array(services.prefix(2_000))
+        )
+    }
+}
+
 public enum MicronBlock: Identifiable, Equatable, Sendable {
     case heading(level: Int, text: String)
     case paragraph(String)
@@ -716,16 +857,34 @@ public final class MeshChatFeatureStore {
         var nomadServer: NomadServerConfiguration?
         var hostedNomadPages: [NomadHostedPage]?
         var hostedNomadFiles: [NomadHostedFile]?
+        var nomadHistoryClearedAt: Date?
+        var continuityClocks: [String: Date]?
+        var nomadBookmarkTombstones: [String: NomadBookmarkContinuityPreference]?
+        var relayMembershipTombstones: [String: RelayRoomContinuityPreference]?
+        var relayFavoriteTombstones: [String: RelayRoomFavoritePreference]?
+        var serviceFavoriteTombstones: [String: ServiceDirectoryFavoritePreference]?
     }
 
     private let cipher: LocalDataCipher
     private let defaults: UserDefaults
+    private let onContinuityChange: (@MainActor () -> Void)?
     private let storageKey = "meshChatApplicationFeatures.v1"
     private let cipherContext = "meshchat-application-features-v1"
+    private var continuityClocks: [String: Date] = [:]
+    private var nomadHistoryClearedAt: Date?
+    private var nomadBookmarkTombstones: [String: NomadBookmarkContinuityPreference] = [:]
+    private var relayMembershipTombstones: [String: RelayRoomContinuityPreference] = [:]
+    private var relayFavoriteTombstones: [String: RelayRoomFavoritePreference] = [:]
+    private var serviceFavoriteTombstones: [String: ServiceDirectoryFavoritePreference] = [:]
 
-    init(cipher: LocalDataCipher, defaults: UserDefaults = .standard) {
+    init(
+        cipher: LocalDataCipher,
+        defaults: UserDefaults = .standard,
+        onContinuityChange: (@MainActor () -> Void)? = nil
+    ) {
         self.cipher = cipher
         self.defaults = defaults
+        self.onContinuityChange = onContinuityChange
         load()
     }
 
@@ -760,16 +919,35 @@ public final class MeshChatFeatureStore {
         history.insert(NomadPageVisit(address: address, title: page.title), at: 0)
         history = Array(history.prefix(250))
         persist()
+        continuityChanged()
     }
 
     public func toggleBookmark(_ address: NomadPageAddress) {
-        if let index = bookmarks.firstIndex(of: address) { bookmarks.remove(at: index) }
-        else { bookmarks.insert(address, at: 0) }
+        let safeAddress = Self.continuityAddress(address)
+        let key = "bookmark:\(safeAddress.destinationHash):\(safeAddress.path)"
+        let isRemoving: Bool
+        if let index = bookmarks.firstIndex(where: { Self.continuityAddress($0) == safeAddress }) {
+            bookmarks.remove(at: index)
+            isRemoving = true
+        } else {
+            bookmarks.insert(safeAddress, at: 0)
+            isRemoving = false
+        }
+        let preference = NomadBookmarkContinuityPreference(address: safeAddress, isBookmarked: !isRemoving)
+        continuityClocks[key] = preference.updatedAt
+        if isRemoving { nomadBookmarkTombstones[preference.id] = preference }
+        else { nomadBookmarkTombstones.removeValue(forKey: preference.id) }
         bookmarks = Array(bookmarks.prefix(250))
         persist()
+        continuityChanged()
     }
 
-    public func clearHistory() { history.removeAll(); persist() }
+    public func clearHistory() {
+        history.removeAll()
+        nomadHistoryClearedAt = .now
+        persist()
+        continuityChanged()
+    }
 
     public func updateTelephone(_ preferences: SidebandTelephonePreferences) {
         telephone = SidebandTelephonePreferences(
@@ -784,10 +962,27 @@ public final class MeshChatFeatureStore {
     public func upsertRelayRoom(_ room: RelayChatRoom) {
         if let index = relayRooms.firstIndex(where: { $0.id == room.id }) { relayRooms[index] = room }
         else { relayRooms.insert(room, at: 0) }
-        relayRooms = Array(relayRooms.prefix(128)); persist()
+        relayRooms = Array(relayRooms.prefix(128))
+        continuityClocks["room:\(room.id)"] = .now
+        relayMembershipTombstones.removeValue(forKey: room.id)
+        persist()
+        continuityChanged()
     }
 
-    public func removeRelayRoom(_ id: String) { relayRooms.removeAll { $0.id == id }; persist() }
+    public func removeRelayRoom(_ id: String) {
+        guard let room = relayRooms.first(where: { $0.id == id }) else { return }
+        let preference = RelayRoomContinuityPreference(
+            hubDestinationHash: room.hubDestinationHash,
+            room: room.name,
+            nickname: room.nickname,
+            isJoined: false
+        )
+        relayRooms.removeAll { $0.id == id }
+        relayMembershipTombstones[id] = preference
+        continuityClocks["room:\(id)"] = preference.updatedAt
+        persist()
+        continuityChanged()
+    }
 
     public func recordRelayMessage(_ message: ReticulumRelayChatProtocol.Message, hubDestinationHash: String, outgoing: Bool) {
         let entry = RelayChatTranscriptEntry(message: message, hubDestinationHash: hubDestinationHash, isOutgoing: outgoing)
@@ -809,7 +1004,12 @@ public final class MeshChatFeatureStore {
         var state = relayRoomStates[roomID] ?? RelayRoomCommunityState(roomID: roomID)
         state.isFavorite = favorite
         relayRoomStates[roomID] = state
+        let preference = RelayRoomFavoritePreference(roomID: roomID, isFavorite: favorite)
+        continuityClocks["relay-favorite:\(roomID)"] = preference.updatedAt
+        if favorite { relayFavoriteTombstones.removeValue(forKey: roomID) }
+        else { relayFavoriteTombstones[roomID] = preference }
         persist()
+        continuityChanged()
     }
 
     public func markRelayRoomRead(_ roomID: String) {
@@ -851,6 +1051,150 @@ public final class MeshChatFeatureStore {
     public func setServiceFavorite(_ id: String, favorite: Bool) {
         guard let index = serviceDirectory.firstIndex(where: { $0.id == id }) else { return }
         serviceDirectory[index].isFavorite = favorite
+        let service = serviceDirectory[index]
+        let preference = ServiceDirectoryFavoritePreference(
+            destinationHash: service.destinationHash,
+            kind: service.kind,
+            name: service.name,
+            isFavorite: favorite
+        )
+        continuityClocks["service-favorite:\(id)"] = preference.updatedAt
+        if favorite { serviceFavoriteTombstones.removeValue(forKey: id) }
+        else { serviceFavoriteTombstones[id] = preference }
+        persist()
+        continuityChanged()
+    }
+
+    public func continuitySnapshot() -> ApplicationServiceContinuitySnapshot {
+        let safeBookmarks = bookmarks.map { address in
+            let safe = Self.continuityAddress(address)
+            return NomadBookmarkContinuityPreference(
+                address: safe,
+                isBookmarked: true,
+                updatedAt: continuityClocks["bookmark:\(safe.destinationHash):\(safe.path)"] ?? .distantPast
+            )
+        } + nomadBookmarkTombstones.values
+        let safeHistory = history.map {
+            NomadPageVisit(id: $0.id, address: Self.continuityAddress($0.address), title: $0.title, visitedAt: $0.visitedAt)
+        }
+        let memberships = relayRooms.map { room in
+            RelayRoomContinuityPreference(
+                hubDestinationHash: room.hubDestinationHash,
+                room: room.name,
+                nickname: room.nickname,
+                isJoined: true,
+                updatedAt: continuityClocks["room:\(room.id)"] ?? room.joinedAt
+            )
+        } + relayMembershipTombstones.values
+        let favorites = relayRoomStates.compactMap { roomID, state -> RelayRoomFavoritePreference? in
+            guard state.isFavorite else { return nil }
+            return RelayRoomFavoritePreference(
+                roomID: roomID,
+                isFavorite: true,
+                updatedAt: continuityClocks["relay-favorite:\(roomID)"] ?? state.lastReadAt ?? .distantPast
+            )
+        } + relayFavoriteTombstones.values
+        let servicePreferences = serviceDirectory.compactMap { service -> ServiceDirectoryFavoritePreference? in
+            guard service.isFavorite else { return nil }
+            return ServiceDirectoryFavoritePreference(
+                destinationHash: service.destinationHash,
+                kind: service.kind,
+                name: service.name,
+                isFavorite: true,
+                updatedAt: continuityClocks["service-favorite:\(service.id)"] ?? service.lastUsedAt ?? service.lastSeen
+            )
+        } + serviceFavoriteTombstones.values
+        return ApplicationServiceContinuitySnapshot(
+            nomadBookmarks: safeBookmarks,
+            nomadHistory: safeHistory,
+            nomadHistoryClearedAt: nomadHistoryClearedAt,
+            relayMemberships: memberships.sorted { $0.updatedAt > $1.updatedAt },
+            relayFavorites: favorites.sorted { $0.updatedAt > $1.updatedAt },
+            serviceFavorites: servicePreferences.sorted { $0.updatedAt > $1.updatedAt }
+        )
+    }
+
+    public func mergeContinuity(_ incoming: ApplicationServiceContinuitySnapshot) {
+        guard incoming.schemaVersion <= ApplicationServiceContinuitySnapshot.currentSchemaVersion else { return }
+        for preference in incoming.nomadBookmarks {
+            let address = Self.continuityAddress(preference.address)
+            let key = "bookmark:\(address.destinationHash):\(address.path)"
+            guard preference.updatedAt > (continuityClocks[key] ?? .distantPast) else { continue }
+            continuityClocks[key] = preference.updatedAt
+            if preference.isBookmarked {
+                if !bookmarks.contains(where: { Self.continuityAddress($0) == address }) { bookmarks.append(address) }
+                nomadBookmarkTombstones.removeValue(forKey: preference.id)
+            } else {
+                bookmarks.removeAll { Self.continuityAddress($0) == address }
+                nomadBookmarkTombstones[preference.id] = preference
+            }
+        }
+        bookmarks = Array(bookmarks.prefix(250))
+        let clearedAt = [nomadHistoryClearedAt, incoming.nomadHistoryClearedAt].compactMap { $0 }.max()
+        nomadHistoryClearedAt = clearedAt
+        var visitsByLocation: [String: NomadPageVisit] = [:]
+        for visit in history + incoming.nomadHistory where visit.visitedAt > (clearedAt ?? .distantPast) {
+            let address = Self.continuityAddress(visit.address)
+            let key = "\(address.destinationHash):\(address.path)"
+            let safe = NomadPageVisit(id: visit.id, address: address, title: visit.title, visitedAt: visit.visitedAt)
+            if safe.visitedAt > (visitsByLocation[key]?.visitedAt ?? .distantPast) { visitsByLocation[key] = safe }
+        }
+        history = Array(visitsByLocation.values.sorted { $0.visitedAt > $1.visitedAt }.prefix(250))
+
+        for preference in incoming.relayMemberships {
+            guard DestinationHash.isValid(preference.hubDestinationHash), !preference.room.isEmpty else { continue }
+            let key = "room:\(preference.id)"
+            guard preference.updatedAt > (continuityClocks[key] ?? .distantPast) else { continue }
+            continuityClocks[key] = preference.updatedAt
+            if preference.isJoined {
+                upsertRelayRoomWithoutContinuitySignal(
+                    RelayChatRoom(
+                        hubDestinationHash: preference.hubDestinationHash,
+                        name: preference.room,
+                        nickname: preference.nickname,
+                        joinedAt: preference.updatedAt
+                    )
+                )
+                relayMembershipTombstones.removeValue(forKey: preference.id)
+            } else {
+                relayRooms.removeAll { $0.id == preference.id }
+                relayMembershipTombstones[preference.id] = preference
+            }
+        }
+        for preference in incoming.relayFavorites {
+            let key = "relay-favorite:\(preference.roomID)"
+            guard preference.updatedAt > (continuityClocks[key] ?? .distantPast) else { continue }
+            continuityClocks[key] = preference.updatedAt
+            var state = relayRoomStates[preference.roomID] ?? RelayRoomCommunityState(roomID: preference.roomID)
+            state.isFavorite = preference.isFavorite
+            relayRoomStates[preference.roomID] = state
+            if preference.isFavorite { relayFavoriteTombstones.removeValue(forKey: preference.roomID) }
+            else { relayFavoriteTombstones[preference.roomID] = preference }
+        }
+        for preference in incoming.serviceFavorites {
+            guard DestinationHash.isValid(preference.destinationHash) else { continue }
+            let key = "service-favorite:\(preference.id)"
+            guard preference.updatedAt > (continuityClocks[key] ?? .distantPast) else { continue }
+            continuityClocks[key] = preference.updatedAt
+            if let index = serviceDirectory.firstIndex(where: { $0.id == preference.id }) {
+                serviceDirectory[index].isFavorite = preference.isFavorite
+            } else if preference.isFavorite {
+                serviceDirectory.append(
+                    ReticulumApplicationService(
+                        destinationHash: preference.destinationHash,
+                        kind: preference.kind,
+                        name: preference.name,
+                        hops: 0,
+                        lastSeen: preference.updatedAt,
+                        isValidated: false,
+                        isFavorite: true,
+                        isReachable: false
+                    )
+                )
+            }
+            if preference.isFavorite { serviceFavoriteTombstones.removeValue(forKey: preference.id) }
+            else { serviceFavoriteTombstones[preference.id] = preference }
+        }
         persist()
     }
 
@@ -979,6 +1323,12 @@ public final class MeshChatFeatureStore {
         nomadServer = payload.nomadServer ?? NomadServerConfiguration()
         hostedNomadPages = Array((payload.hostedNomadPages ?? []).prefix(500))
         hostedNomadFiles = Array((payload.hostedNomadFiles ?? []).prefix(250))
+        nomadHistoryClearedAt = payload.nomadHistoryClearedAt
+        continuityClocks = payload.continuityClocks ?? [:]
+        nomadBookmarkTombstones = payload.nomadBookmarkTombstones ?? [:]
+        relayMembershipTombstones = payload.relayMembershipTombstones ?? [:]
+        relayFavoriteTombstones = payload.relayFavoriteTombstones ?? [:]
+        serviceFavoriteTombstones = payload.serviceFavoriteTombstones ?? [:]
     }
 
     private func persist() {
@@ -990,11 +1340,31 @@ public final class MeshChatFeatureStore {
             relayHub: relayHub, remoteCopy: remoteCopy,
             remoteFileTransfers: remoteFileTransfers, remoteFileShares: remoteFileShares,
             nomadServer: nomadServer, hostedNomadPages: hostedNomadPages,
-            hostedNomadFiles: hostedNomadFiles
+            hostedNomadFiles: hostedNomadFiles,
+            nomadHistoryClearedAt: nomadHistoryClearedAt,
+            continuityClocks: continuityClocks,
+            nomadBookmarkTombstones: nomadBookmarkTombstones,
+            relayMembershipTombstones: relayMembershipTombstones,
+            relayFavoriteTombstones: relayFavoriteTombstones,
+            serviceFavoriteTombstones: serviceFavoriteTombstones
         )
         guard let data = try? encoder.encode(payload),
               let encrypted = try? cipher.seal(data, context: cipherContext) else { return }
         defaults.set(encrypted, forKey: storageKey)
+    }
+
+    private func continuityChanged() {
+        onContinuityChange?()
+    }
+
+    private func upsertRelayRoomWithoutContinuitySignal(_ room: RelayChatRoom) {
+        if let index = relayRooms.firstIndex(where: { $0.id == room.id }) { relayRooms[index] = room }
+        else { relayRooms.insert(room, at: 0) }
+        relayRooms = Array(relayRooms.prefix(128))
+    }
+
+    private static func continuityAddress(_ address: NomadPageAddress) -> NomadPageAddress {
+        NomadPageAddress(destinationHash: address.destinationHash, path: address.path, query: [:])!
     }
 
     private var encoder: JSONEncoder {

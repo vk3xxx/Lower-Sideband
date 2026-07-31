@@ -179,7 +179,10 @@ public final class SidebandStore {
     public let rnodeManager = RNodeManager()
     public let pluginRegistry: SidebandPluginRegistry
     public let attachmentStore: AttachmentStore
-    @ObservationIgnored public private(set) lazy var meshFeatures = MeshChatFeatureStore(cipher: localDataCipher)
+    @ObservationIgnored public private(set) lazy var meshFeatures = MeshChatFeatureStore(
+        cipher: localDataCipher,
+        onContinuityChange: { [weak self] in self?.scheduleICloudSync() }
+    )
     public private(set) var identityProfiles: [SidebandIdentityProfile] = []
     public private(set) var activeIdentityProfileID: UUID?
     public private(set) var attachmentStorageReport: AttachmentStorageReport?
@@ -2989,7 +2992,15 @@ public final class SidebandStore {
         }
         iCloudSyncStatus = .syncing
         do {
-            let local = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, deletedConversationDestinations: deletedConversationDestinations)
+            let local = AppSnapshot(
+                conversations: conversations,
+                messages: messages,
+                discoveries: discoveries,
+                drafts: drafts,
+                voiceCallHistory: voiceCallHistory,
+                deletedConversationDestinations: deletedConversationDestinations,
+                applicationServiceContinuity: meshFeatures.continuitySnapshot()
+            )
             let localData = try JSONEncoder.sideband.encode(local)
             var merged: AppSnapshot
             let remotePayload = try await cloudSync.fetchSnapshot()
@@ -3586,7 +3597,16 @@ public final class SidebandStore {
     }
 
     public func exportSnapshotData() throws -> Data {
-        let snapshot = AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents, deletedConversationDestinations: deletedConversationDestinations)
+        let snapshot = AppSnapshot(
+            conversations: conversations,
+            messages: messages,
+            discoveries: discoveries,
+            drafts: drafts,
+            voiceCallHistory: voiceCallHistory,
+            pluginAuditEvents: pluginAuditEvents,
+            deletedConversationDestinations: deletedConversationDestinations,
+            applicationServiceContinuity: meshFeatures.continuitySnapshot()
+        )
         let data = try JSONEncoder.sideband.encode(snapshot)
         let validated = try JSONDecoder.sideband.decode(AppSnapshot.self, from: data)
         guard validated.schemaVersion <= AppSnapshot.currentSchemaVersion else { throw SnapshotError.unsupportedVersion }
@@ -3852,7 +3872,8 @@ public final class SidebandStore {
             conversations: conversations, messages: messages, discoveries: discoveries,
             drafts: drafts, voiceCallHistory: voiceCallHistory,
             pluginAuditEvents: pluginAuditEvents,
-            deletedConversationDestinations: deletedConversationDestinations
+            deletedConversationDestinations: deletedConversationDestinations,
+            applicationServiceContinuity: meshFeatures.continuitySnapshot()
         )
         let merged = local.mergingCloudSnapshot(report.snapshot)
         applyCloudSnapshot(merged)
@@ -3899,6 +3920,7 @@ public final class SidebandStore {
               snapshot.drafts.count <= 10_000,
               snapshot.voiceCallHistory.count <= 100,
               snapshot.deletedConversationDestinations.count <= 10_000,
+              isValidApplicationServiceContinuity(snapshot.applicationServiceContinuity),
               conversationIDs.count == snapshot.conversations.count,
               Set(destinations).count == destinations.count,
               destinations.allSatisfy(DestinationHash.isValid),
@@ -3937,6 +3959,40 @@ public final class SidebandStore {
                   return ReticulumIdentity.truncatedHash(nameHash + identity.hash).hex == conversation.destinationHash
               }) else { throw SnapshotError.invalidData }
         return snapshot
+    }
+
+    private func isValidApplicationServiceContinuity(_ snapshot: ApplicationServiceContinuitySnapshot?) -> Bool {
+        guard let snapshot else { return true }
+        guard snapshot.schemaVersion <= ApplicationServiceContinuitySnapshot.currentSchemaVersion,
+              snapshot.nomadBookmarks.count <= 250,
+              snapshot.nomadHistory.count <= 250,
+              snapshot.relayMemberships.count <= 512,
+              snapshot.relayFavorites.count <= 512,
+              snapshot.serviceFavorites.count <= 2_000 else { return false }
+        let dates = snapshot.nomadHistory.map(\.visitedAt)
+            + snapshot.nomadBookmarks.map(\.updatedAt)
+            + snapshot.relayMemberships.map(\.updatedAt)
+            + snapshot.relayFavorites.map(\.updatedAt)
+            + snapshot.serviceFavorites.map(\.updatedAt)
+            + [snapshot.nomadHistoryClearedAt].compactMap { $0 }
+        return dates.allSatisfy(supportedMessageDates.contains)
+            && snapshot.nomadBookmarks.allSatisfy {
+                $0.address.query.isEmpty && DestinationHash.isValid($0.address.destinationHash)
+            }
+            && snapshot.nomadHistory.allSatisfy {
+                $0.address.query.isEmpty && DestinationHash.isValid($0.address.destinationHash)
+                    && $0.title.count <= 160
+            }
+            && snapshot.relayMemberships.allSatisfy {
+                DestinationHash.isValid($0.hubDestinationHash)
+                    && !$0.room.isEmpty
+                    && $0.room.utf8.count <= ReticulumRelayChatProtocol.maximumRoomBytes
+                    && $0.nickname.utf8.count <= ReticulumRelayChatProtocol.maximumNicknameBytes
+            }
+            && snapshot.relayFavorites.allSatisfy { !$0.roomID.isEmpty && $0.roomID.count <= 256 }
+            && snapshot.serviceFavorites.allSatisfy {
+                DestinationHash.isValid($0.destinationHash) && $0.name.count <= 160
+            }
     }
 
     private var supportedMessageDates: ClosedRange<Date> {
@@ -3984,6 +4040,7 @@ public final class SidebandStore {
         deletedConversationDestinations = snapshot.deletedConversationDestinations
         voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
         pluginAuditEvents = Array(snapshot.pluginAuditEvents.prefix(200))
+        if let continuity = snapshot.applicationServiceContinuity { meshFeatures.mergeContinuity(continuity) }
         drafts = snapshot.drafts
         selectedConversationID = conversations.first?.id
         visibleConversationID = nil
@@ -7722,6 +7779,7 @@ public final class SidebandStore {
         pluginAuditEvents = Array(snapshot.pluginAuditEvents.prefix(200))
         let conversationIDs = Set(conversations.map(\.id))
         drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }
+        if let continuity = snapshot.applicationServiceContinuity { meshFeatures.mergeContinuity(continuity) }
         selectedConversationID = conversations.first?.id
     }
 
@@ -7734,6 +7792,7 @@ public final class SidebandStore {
         voiceCallHistory = Array(snapshot.voiceCallHistory.prefix(100))
         let conversationIDs = Set(conversations.map(\.id))
         drafts = snapshot.drafts.filter { conversationIDs.contains($0.key) }
+        if let continuity = snapshot.applicationServiceContinuity { meshFeatures.mergeContinuity(continuity) }
         selectedConversationID = selectedDestination.flatMap { destination in
             conversations.first(where: { $0.destinationHash == destination })?.id
         } ?? conversations.first?.id
@@ -7755,7 +7814,18 @@ public final class SidebandStore {
         deferredSaveTask = nil
         do {
             try FileManager.default.createDirectory(at: persistenceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let plaintext = try JSONEncoder.sideband.encode(AppSnapshot(conversations: conversations, messages: messages, discoveries: discoveries, drafts: drafts, voiceCallHistory: voiceCallHistory, pluginAuditEvents: pluginAuditEvents, deletedConversationDestinations: deletedConversationDestinations))
+            let plaintext = try JSONEncoder.sideband.encode(
+                AppSnapshot(
+                    conversations: conversations,
+                    messages: messages,
+                    discoveries: discoveries,
+                    drafts: drafts,
+                    voiceCallHistory: voiceCallHistory,
+                    pluginAuditEvents: pluginAuditEvents,
+                    deletedConversationDestinations: deletedConversationDestinations,
+                    applicationServiceContinuity: meshFeatures.continuitySnapshot()
+                )
+            )
             let digest = Data(SHA256.hash(data: plaintext))
             if digest == lastSavedSnapshotDigest,
                FileManager.default.fileExists(atPath: persistenceURL.path),
