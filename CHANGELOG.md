@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.98 (136) - 2026-07-31
+
+- Upgraded public-Internet soak evidence with cryptographic route fingerprints,
+  interface, endpoint, next-hop and hop-count observations.
+- Made forced reconnection recovery a mandatory certification condition and
+  records expected, attempted and successful reconnect totals.
+- Added deterministic passing fixtures for the fail-closed Internet certificate
+  so route independence and recovery rules are continuously testable.
+
 ## 1.3.97 (135) - 2026-07-31
 
 - Strengthened Apple physical-device acceptance into a fail-closed signed

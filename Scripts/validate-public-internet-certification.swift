@@ -25,12 +25,29 @@ struct DeliveryReport: Decodable {
     let attachmentIntegrityFailures: [String]
     let knownPath: Bool
     let deliveryTimeouts: Int
+    let expectedForcedReconnects: Int
+    let forcedReconnects: Int
+    let successfulReconnects: Int
+    let routeObservations: [RouteObservation]
+}
+
+struct RouteObservation: Codable {
+    let fingerprint: String
+    let interfaceID: String?
+    let interfaceName: String
+    let endpoint: String?
+    let nextHopHash: String?
+    let hops: UInt8
+    let firstSeen: Date
+    let lastSeen: Date
 }
 
 struct Evidence: Encodable {
     let report: String
     let sha256: String
     let route: String
+    let routeFingerprints: [String]
+    let forcedReconnects: Int
     let localDestination: String
     let remoteDestination: String
     let messagesEachDirection: Int
@@ -40,13 +57,13 @@ struct Evidence: Encodable {
 }
 
 struct Certificate: Encodable {
-    let schemaVersion = 1
+    let schemaVersion = 2
     let generatedAt: Date
     let result: String
     let minimumMessagesEachDirection: Int
     let minimumIndependentRoutes: Int
     let totalMessagesEachDirection: Int
-    let routes: [String]
+    let routeFingerprints: [String]
     let evidence: [Evidence]
 }
 
@@ -98,6 +115,17 @@ do {
         }
         guard report.knownPath else { throw GateFailure.invalid("\(path): destination path was not retained") }
         guard report.deliveryTimeouts <= maximumTimeouts else { throw GateFailure.invalid("\(path): delivery timeout budget exceeded") }
+        guard report.expectedForcedReconnects > 0,
+              report.forcedReconnects == report.expectedForcedReconnects,
+              report.successfulReconnects == report.expectedForcedReconnects else {
+            throw GateFailure.invalid("\(path): forced reconnect recovery gate failed")
+        }
+        guard !report.routeObservations.isEmpty,
+              report.routeObservations.allSatisfy({
+                  $0.fingerprint.count == 64 && $0.hops > 0 && $0.lastSeen >= $0.firstSeen
+              }) else {
+            throw GateFailure.invalid("\(path): route identity evidence is missing or invalid")
+        }
         guard let completedAt = report.completedAt, completedAt >= report.startedAt else {
             throw GateFailure.invalid("\(path): completion timestamp is missing or invalid")
         }
@@ -105,6 +133,8 @@ do {
             report: url.standardizedFileURL.path,
             sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
             route: report.automaticConnection,
+            routeFingerprints: Array(Set(report.routeObservations.map(\.fingerprint))).sorted(),
+            forcedReconnects: report.forcedReconnects,
             localDestination: report.localDestination,
             remoteDestination: report.destination,
             messagesEachDirection: report.expectedEachDirection,
@@ -113,9 +143,9 @@ do {
             completedAt: completedAt
         ))
     }
-    let routes = Array(Set(evidence.map(\.route))).sorted()
-    guard routes.count >= minimumRoutes else {
-        throw GateFailure.invalid("Only \(routes.count) independent route description(s); \(minimumRoutes) required")
+    let routeFingerprints = Array(Set(evidence.flatMap(\.routeFingerprints))).sorted()
+    guard routeFingerprints.count >= minimumRoutes else {
+        throw GateFailure.invalid("Only \(routeFingerprints.count) cryptographically identified route(s); \(minimumRoutes) required")
     }
     let certificate = Certificate(
         generatedAt: .now,
@@ -123,7 +153,7 @@ do {
         minimumMessagesEachDirection: minimumMessages,
         minimumIndependentRoutes: minimumRoutes,
         totalMessagesEachDirection: evidence.reduce(0) { $0 + $1.messagesEachDirection },
-        routes: routes,
+        routeFingerprints: routeFingerprints,
         evidence: evidence
     )
     let outputURL = environment["SIDEBAND_CERTIFICATE_PATH"].map(URL.init(fileURLWithPath:))

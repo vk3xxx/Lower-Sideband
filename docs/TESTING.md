@@ -165,7 +165,7 @@ No finite test establishes “100% reliable” networking. Report the exact topo
 ### Public-Internet production certificate
 
 Public-Internet acceptance is fail-closed. Capture completed Internet-only soak
-reports over at least two independently described routes, with at least 2,500
+reports over at least two cryptographically identified routes, with at least 2,500
 messages each way per route, deterministic 1 MiB files/images, reconnects,
 delivery proofs, zero missing or duplicate messages, correct order, and no
 delivery timeouts. Then issue a machine-readable certificate:
@@ -176,12 +176,21 @@ Scripts/certify-public-internet.sh \
   .build/linux-mac-soak-route-b.json
 ```
 
-The validator hashes every source report and refuses incomplete, local,
-single-route, under-count, corrupt-attachment, timeout, duplicate, ordering, or
-proof-deficient evidence. Thresholds can only be deliberately changed through
+Each report records the interface, endpoint, next hop, hop count, first/last
+observation and a SHA-256 route fingerprint. It also records the number of
+forced reconnects expected, attempted and recovered. The validator hashes every
+source report and refuses incomplete, local, single-route, missing-route,
+failed-reconnect, under-count, corrupt-attachment, timeout, duplicate, ordering,
+or proof-deficient evidence. Thresholds can only be deliberately changed through
 `SIDEBAND_CERT_MIN_MESSAGES`, `SIDEBAND_CERT_MIN_ROUTES`, and
 `SIDEBAND_CERT_MAX_TIMEOUTS`. This certification tooling is read-only and never
 changes DNS or network configuration.
+
+The certificate rules themselves have a deterministic regression check:
+
+```sh
+Scripts/test-public-internet-certification.sh
+```
 
 ## Manual GitHub Actions
 

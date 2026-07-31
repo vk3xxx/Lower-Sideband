@@ -27,8 +27,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.ReticulumKit
         PRODUCT_MODULE_NAME: ReticulumKit
-        MARKETING_VERSION: 1.3.97
-        CURRENT_PROJECT_VERSION: 135
+        MARKETING_VERSION: 1.3.98
+        CURRENT_PROJECT_VERSION: 136
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   ReticulumKitMac:
@@ -44,8 +44,8 @@ targets:
         PRODUCT_NAME: ReticulumKit
         PRODUCT_MODULE_NAME: ReticulumKit
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.ReticulumKit.mac
-        MARKETING_VERSION: 1.3.97
-        CURRENT_PROJECT_VERSION: 135
+        MARKETING_VERSION: 1.3.98
+        CURRENT_PROJECT_VERSION: 136
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandCore:
@@ -64,8 +64,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core
-        MARKETING_VERSION: 1.3.97
-        CURRENT_PROJECT_VERSION: 135
+        MARKETING_VERSION: 1.3.98
+        CURRENT_PROJECT_VERSION: 136
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandIOS:
@@ -86,8 +86,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Sideband
-        MARKETING_VERSION: 1.3.97
-        CURRENT_PROJECT_VERSION: 135
+        MARKETING_VERSION: 1.3.98
+        CURRENT_PROJECT_VERSION: 136
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-iOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -114,8 +114,8 @@ targets:
         PRODUCT_NAME: SidebandCore
         PRODUCT_MODULE_NAME: SidebandCore
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband.Core.mac
-        MARKETING_VERSION: 1.3.97
-        CURRENT_PROJECT_VERSION: 135
+        MARKETING_VERSION: 1.3.98
+        CURRENT_PROJECT_VERSION: 136
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   SidebandMac:
@@ -136,8 +136,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.supes.MacSideband
         PRODUCT_NAME: Lower Sideband
-        MARKETING_VERSION: 1.3.97
-        CURRENT_PROJECT_VERSION: 135
+        MARKETING_VERSION: 1.3.98
+        CURRENT_PROJECT_VERSION: 136
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Sideband-macOS-Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

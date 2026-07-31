@@ -545,6 +545,9 @@ enum DeliverySoakRunner {
     private static var hasStartedNetwork = false
     private static var hasStarted = false
     private static var deliveryTimeoutBaseline = 0
+    private static var forcedReconnects = 0
+    private static var successfulReconnects = 0
+    private static var routeObservations: [String: DeliverySoakRouteObservation] = [:]
 
     static func configureNetworkIfRequested(_ store: SidebandStore) {
         guard let mode = environment["SIDEBAND_SOAK_NETWORK_MODE"] else { return }
@@ -555,6 +558,9 @@ enum DeliverySoakRunner {
             else { missingNetworkPreferences.insert(key) }
         }
         deliveryTimeoutBaseline = store.deliveryTimeoutCount
+        forcedReconnects = 0
+        successfulReconnects = 0
+        routeObservations.removeAll()
         // Acceptance runs exercise this app as an endpoint. Never inherit the
         // operator-only transport-router switch, since bridging several public
         // gateways changes the topology under test and can feed unrelated
@@ -721,12 +727,15 @@ enum DeliverySoakRunner {
                 await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "enqueueing-\(sequence)-of-\(count)")
             }
             if reconnectInterval > 0, sequence < count, sequence.isMultiple(of: reconnectInterval) {
+                forcedReconnects += 1
                 await store.disconnectNetwork()
                 _ = await connect(store, mode: environment["SIDEBAND_SOAK_NETWORK_MODE"] ?? "local")
                 guard await waitForPeer(store, destination: destination, timeout: peerTimeout) else {
                     await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "reconnect-peer-timeout")
                     return
                 }
+                successfulReconnects += 1
+                recordRoute(store: store, destination: destination)
             }
             randomState = randomState &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
             let delayRange = UInt64(jitterMaximum - jitterMinimum + 1)
@@ -765,6 +774,7 @@ enum DeliverySoakRunner {
     }
 
     private static func makeReport(store: SidebandStore, destination: String, outboundPrefix: String, inboundPrefix: String, count: Int, startedAt: Date, phase: String) async -> DeliverySoakReport {
+        recordRoute(store: store, destination: destination)
         let conversationID = store.conversations.first(where: { $0.destinationHash == destination.lowercased() })?.id
         let relevant = store.messages.filter { $0.conversationID == conversationID }
         let outbound = relevant.filter { $0.direction == .outgoing && $0.body.hasPrefix(outboundPrefix + "-") }
@@ -836,7 +846,39 @@ enum DeliverySoakRunner {
             attachmentIntegrityFailures: attachmentIntegrityFailures,
             knownPath: store.hasPath(to: destination),
             deliveryTimeouts: max(0, store.deliveryTimeoutCount - deliveryTimeoutBaseline),
+            expectedForcedReconnects: expectedForcedReconnectCount(messageCount: count),
+            forcedReconnects: forcedReconnects,
+            successfulReconnects: successfulReconnects,
+            routeObservations: routeObservations.values.sorted { $0.fingerprint < $1.fingerprint },
             lastError: store.lastError
+        )
+    }
+
+    private static func expectedForcedReconnectCount(messageCount: Int) -> Int {
+        let interval = max(0, Int(environment["SIDEBAND_SOAK_RECONNECT_INTERVAL"] ?? "0") ?? 0)
+        guard interval > 0, messageCount > 1 else { return 0 }
+        return (messageCount - 1) / interval
+    }
+
+    private static func recordRoute(store: SidebandStore, destination: String, now: Date = .now) {
+        guard let route = store.connectedRoute(to: destination) else { return }
+        let interface = route.interfaceID.flatMap { id in store.networkInterfaces.first(where: { $0.id == id }) }
+        let endpoint = route.endpoint ?? [interface?.host, interface?.port.map(String.init)]
+            .compactMap(\.self).joined(separator: ":")
+        let material = [route.interfaceID, endpoint.isEmpty ? nil : endpoint, route.nextHopHash]
+            .compactMap(\.self).joined(separator: "|")
+        guard !material.isEmpty else { return }
+        let fingerprint = SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
+        let firstSeen = routeObservations[fingerprint]?.firstSeen ?? now
+        routeObservations[fingerprint] = DeliverySoakRouteObservation(
+            fingerprint: fingerprint,
+            interfaceID: route.interfaceID,
+            interfaceName: route.interfaceName,
+            endpoint: endpoint.isEmpty ? nil : endpoint,
+            nextHopHash: route.nextHopHash,
+            hops: route.hops,
+            firstSeen: firstSeen,
+            lastSeen: now
         )
     }
 
@@ -948,5 +990,20 @@ private struct DeliverySoakReport: Codable {
     let attachmentIntegrityFailures: [String]
     let knownPath: Bool
     let deliveryTimeouts: Int
+    let expectedForcedReconnects: Int
+    let forcedReconnects: Int
+    let successfulReconnects: Int
+    let routeObservations: [DeliverySoakRouteObservation]
     let lastError: String?
+}
+
+private struct DeliverySoakRouteObservation: Codable {
+    let fingerprint: String
+    let interfaceID: String?
+    let interfaceName: String
+    let endpoint: String?
+    let nextHopHash: String?
+    let hops: UInt8
+    let firstSeen: Date
+    let lastSeen: Date
 }
