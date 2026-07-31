@@ -10,6 +10,16 @@ public enum LegacySidebandSQLiteImporter {
     private static let maximumAnnounces = 50_000
     private static let maximumTelemetryRecords = 50_000
 
+    /// Historical Sideband builds and third-party migration tools have used
+    /// both abbreviated and descriptive table names. Resolve them once and
+    /// keep every subsequent query tied to a table that actually exists.
+    private struct Schema {
+        let conversations: String
+        let messages: String
+        let announces: String?
+        let telemetry: String?
+    }
+
     public struct ConversationCandidate: Identifiable, Sendable, Equatable {
         public var id: String { destinationHash }
         public let destinationHash: String
@@ -77,13 +87,13 @@ public enum LegacySidebandSQLiteImporter {
         let sourceBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         return try withDatabase(at: url) { database in
             let tables = tableNames(in: database)
-            guard tables.contains("conv"), tables.contains("lxm") else { throw ImportError.unsupportedSchema }
-            let conversationColumns = tableColumns("conv", in: database)
+            let schema = try resolveSchema(from: tables)
+            let conversationColumns = tableColumns(schema.conversations, in: database)
             let destinationExpression = expression(in: conversationColumns, aliases: ["dest_context", "destination_hash", "destination", "dest"])
             let nameExpression = expression(in: conversationColumns, aliases: ["name", "display_name"])
             var candidates: [ConversationCandidate] = []
             if destinationExpression != "NULL" {
-                try rows("SELECT \(destinationExpression),\(nameExpression) FROM conv LIMIT \(maximumConversations)", in: database) { statement in
+                try rows("SELECT \(destinationExpression),\(nameExpression) FROM \(schema.conversations) LIMIT \(maximumConversations)", in: database) { statement in
                     guard let destination = destinationHash(statement, 0) else { return }
                     let hash = destination.hex
                     let name = textOrBlobString(statement, 1)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -95,10 +105,10 @@ public enum LegacySidebandSQLiteImporter {
             }
             return Preview(
                 sourceBytes: sourceBytes,
-                conversations: countRows("conv", in: database),
-                messages: countRows("lxm", in: database),
-                announces: tables.contains("announce") ? countRows("announce", in: database) : 0,
-                telemetryRecords: tables.contains("telemetry") ? countRows("telemetry", in: database) : 0,
+                conversations: countRows(schema.conversations, in: database),
+                messages: countRows(schema.messages, in: database),
+                announces: schema.announces.map { countRows($0, in: database) } ?? 0,
+                telemetryRecords: schema.telemetry.map { countRows($0, in: database) } ?? 0,
                 availableTables: tables.sorted(),
                 conversationCandidates: candidates.sorted {
                     $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
@@ -145,8 +155,8 @@ public enum LegacySidebandSQLiteImporter {
     }
 
     private static func load(from database: OpaquePointer) throws -> Report {
-        guard hasTable("conv", in: database), hasTable("lxm", in: database) else { throw ImportError.unsupportedSchema }
-        let conversationColumns = tableColumns("conv", in: database)
+        let schema = try resolveSchema(from: tableNames(in: database))
+        let conversationColumns = tableColumns(schema.conversations, in: database)
         let destinationExpression = expression(in: conversationColumns, aliases: ["dest_context", "destination_hash", "destination", "dest"])
         guard destinationExpression != "NULL" else { throw ImportError.unsupportedSchema }
         let lastTXExpression = expression(in: conversationColumns, aliases: ["last_tx", "last_sent", "last_activity"], fallback: "0")
@@ -158,7 +168,7 @@ public enum LegacySidebandSQLiteImporter {
 
         var conversations: [Conversation] = []
         var conversationByDestination: [Data: Conversation] = [:]
-        let conversationSQL = "SELECT \(destinationExpression),\(lastTXExpression),\(lastRXExpression),\(unreadExpression),\(trustExpression),\(nameExpression),\(dataExpression) FROM conv LIMIT \(maximumConversations)"
+        let conversationSQL = "SELECT \(destinationExpression),\(lastTXExpression),\(lastRXExpression),\(unreadExpression),\(trustExpression),\(nameExpression),\(dataExpression) FROM \(schema.conversations) LIMIT \(maximumConversations)"
         try rows(conversationSQL, in: database) { statement in
             guard let destination = destinationHash(statement, 0) else { throw ImportError.corruptRow }
             let hash = destination.hex
@@ -194,7 +204,7 @@ public enum LegacySidebandSQLiteImporter {
         var skipped = 0
         var importedRichMessages = 0
         var warnings: [String] = []
-        let messageColumns = tableColumns("lxm", in: database)
+        let messageColumns = tableColumns(schema.messages, in: database)
         let messageHashExpression = expression(in: messageColumns, aliases: ["lxm_hash", "message_hash", "hash"])
         let messageDestinationExpression = expression(in: messageColumns, aliases: ["dest", "destination", "destination_hash"])
         let messageSourceExpression = expression(in: messageColumns, aliases: ["source", "source_hash"])
@@ -204,7 +214,7 @@ public enum LegacySidebandSQLiteImporter {
         let rxExpression = expression(in: messageColumns, aliases: ["rx_ts", "received_at", "timestamp"], fallback: "0")
         let stateExpression = expression(in: messageColumns, aliases: ["state", "delivery_state"], fallback: "0")
         let packedExpression = expression(in: messageColumns, aliases: ["data", "packed", "content", "body"])
-        let messageSQL = "SELECT \(messageHashExpression),\(messageDestinationExpression),\(messageSourceExpression),\(titleExpression),\(txExpression),\(rxExpression),\(stateExpression),\(packedExpression) FROM lxm LIMIT \(maximumMessages)"
+        let messageSQL = "SELECT \(messageHashExpression),\(messageDestinationExpression),\(messageSourceExpression),\(titleExpression),\(txExpression),\(rxExpression),\(stateExpression),\(packedExpression) FROM \(schema.messages) LIMIT \(maximumMessages)"
         try rows(messageSQL, in: database) { statement in
             guard let destination = destinationHash(statement, 1), let source = destinationHash(statement, 2) else { skipped += 1; return }
             let peer = conversationByDestination[destination] ?? conversationByDestination[source]
@@ -262,9 +272,14 @@ public enum LegacySidebandSQLiteImporter {
         }
 
         var discoveries: [DiscoveredDestination] = []
-        if hasTable("announce", in: database) {
-            try rows("SELECT received,source,data,dest_type FROM announce ORDER BY received DESC LIMIT \(maximumAnnounces)", in: database) { statement in
-                guard let source = blob(statement, 1), source.count == 16 else { return }
+        if let announceTable = schema.announces {
+            let columns = tableColumns(announceTable, in: database)
+            let received = expression(in: columns, aliases: ["received", "received_at", "timestamp", "ts"], fallback: "0")
+            let source = expression(in: columns, aliases: ["source", "destination_hash", "destination", "dest"])
+            let data = expression(in: columns, aliases: ["data", "app_data", "metadata"])
+            let type = expression(in: columns, aliases: ["dest_type", "destination_type", "aspect"], fallback: "'lxmf.delivery'")
+            try rows("SELECT \(received),\(source),\(data),\(type) FROM \(announceTable) ORDER BY \(received) DESC LIMIT \(maximumAnnounces)", in: database) { statement in
+                guard let source = destinationHash(statement, 1) else { return }
                 let destinationType = textOrBlobString(statement, 3) ?? "lxmf.delivery"
                 guard destinationType == "lxmf.delivery" else { return }
                 discoveries.append(DiscoveredDestination(
@@ -279,8 +294,13 @@ public enum LegacySidebandSQLiteImporter {
 
         var importedTelemetry = 0
         var skippedTelemetry = 0
-        if hasTable("telemetry", in: database) {
-            try rows("SELECT dest_context,ts,data FROM telemetry ORDER BY ts LIMIT \(maximumTelemetryRecords)", in: database) { statement in
+        if let telemetryTable = schema.telemetry {
+            let columns = tableColumns(telemetryTable, in: database)
+            let destination = expression(in: columns, aliases: ["dest_context", "destination_hash", "destination", "dest"])
+            let timestamp = expression(in: columns, aliases: ["ts", "timestamp", "captured_at", "received"])
+            let data = expression(in: columns, aliases: ["data", "packed", "telemetry"])
+            guard destination != "NULL", timestamp != "NULL", data != "NULL" else { throw ImportError.unsupportedSchema }
+            try rows("SELECT \(destination),\(timestamp),\(data) FROM \(telemetryTable) ORDER BY \(timestamp) LIMIT \(maximumTelemetryRecords)", in: database) { statement in
                 guard let destination = blob(statement, 0),
                       let conversation = conversationByDestination[destination],
                       let packed = blob(statement, 2),
@@ -309,10 +329,10 @@ public enum LegacySidebandSQLiteImporter {
         if skipped > 0 { warnings.append("Skipped \(skipped) message rows without a matching conversation.") }
         if skippedTelemetry > 0 { warnings.append("Skipped \(skippedTelemetry) malformed or unmatched telemetry records.") }
         if !discoveries.isEmpty { warnings.append("Imported announces are unverified until seen and validated again on Reticulum.") }
-        if countRows("conv", in: database) > maximumConversations { warnings.append("Conversation import was limited to \(maximumConversations) records.") }
-        if countRows("lxm", in: database) > maximumMessages { warnings.append("Message import was limited to \(maximumMessages) records.") }
-        if hasTable("announce", in: database), countRows("announce", in: database) > maximumAnnounces { warnings.append("Announce import was limited to \(maximumAnnounces) records.") }
-        if hasTable("telemetry", in: database), countRows("telemetry", in: database) > maximumTelemetryRecords { warnings.append("Telemetry import was limited to \(maximumTelemetryRecords) records.") }
+        if countRows(schema.conversations, in: database) > maximumConversations { warnings.append("Conversation import was limited to \(maximumConversations) records.") }
+        if countRows(schema.messages, in: database) > maximumMessages { warnings.append("Message import was limited to \(maximumMessages) records.") }
+        if let table = schema.announces, countRows(table, in: database) > maximumAnnounces { warnings.append("Announce import was limited to \(maximumAnnounces) records.") }
+        if let table = schema.telemetry, countRows(table, in: database) > maximumTelemetryRecords { warnings.append("Telemetry import was limited to \(maximumTelemetryRecords) records.") }
         conversations.sort { $0.updatedAt > $1.updatedAt }
         messages.sort { $0.timestamp < $1.timestamp }
         return Report(
@@ -349,6 +369,23 @@ public enum LegacySidebandSQLiteImporter {
             if let name = textOrBlobString(statement, 0) { names.append(name) }
         }
         return names
+    }
+
+    private static func resolveSchema(from tables: [String]) throws -> Schema {
+        let lookup = Dictionary(uniqueKeysWithValues: tables.map { ($0.lowercased(), $0) })
+        func first(_ aliases: [String]) -> String? {
+            aliases.lazy.compactMap { lookup[$0] }.first
+        }
+        guard let conversations = first(["conv", "conversations", "conversation"]),
+              let messages = first(["lxm", "messages", "message", "lxmf_messages"]) else {
+            throw ImportError.unsupportedSchema
+        }
+        return Schema(
+            conversations: conversations,
+            messages: messages,
+            announces: first(["announce", "announces", "announcements"]),
+            telemetry: first(["telemetry", "telemetries", "telemetry_records"])
+        )
     }
 
     private static func tableColumns(_ table: String, in database: OpaquePointer) -> Set<String> {

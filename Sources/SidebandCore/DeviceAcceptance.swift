@@ -179,19 +179,35 @@ public final class SidebandAcceptancePortfolio {
               let decoded = try? Self.decoder.decode([SidebandSignedAcceptanceReport].self, from: plaintext) else {
             return
         }
-        reports = Array(decoded.filter { $0.isValid }.prefix(100))
+        reports = Array(decoded.filter { $0.isValid }.prefix(1_000))
     }
 
     @discardableResult
     public func importReport(_ data: Data) throws -> SidebandSignedAcceptanceReport {
         let report = try SidebandSignedAcceptanceReport.decoded(from: data)
-        guard report.schemaVersion == 1 else { throw SidebandAcceptancePortfolioError.incompatibleSchema }
-        guard report.isValid else { throw SidebandAcceptancePortfolioError.invalidSignature }
-        reports.removeAll { $0.id == report.id }
-        reports.insert(report, at: 0)
-        reports = Array(reports.prefix(100))
+        return try importVerified(report)
+    }
+
+    /// Imports a portable campaign containing reports from several Apple
+    /// devices. Every entry is independently verified before any state is
+    /// changed, so a corrupt report cannot partially update the dashboard.
+    @discardableResult
+    public func importReports(_ data: Data) throws -> [SidebandSignedAcceptanceReport] {
+        if let single = try? SidebandSignedAcceptanceReport.decoded(from: data) {
+            return [try importVerified(single)]
+        }
+        let decoded = try Self.decoder.decode([SidebandSignedAcceptanceReport].self, from: data)
+        guard !decoded.isEmpty, decoded.allSatisfy({ $0.schemaVersion == 1 && $0.isValid }) else {
+            throw SidebandAcceptancePortfolioError.invalidSignature
+        }
+        for report in decoded.reversed() { _ = try importVerified(report, persistAfterImport: false) }
         persist()
-        return report
+        return decoded
+    }
+
+    public func exportReports(build: String? = nil) throws -> Data {
+        let selected = build.map { value in reports.filter { $0.report.appBuild == value } } ?? reports
+        return try Self.encoder.encode(selected)
     }
 
     public func removeAll() {
@@ -205,10 +221,41 @@ public final class SidebandAcceptancePortfolio {
         }
     }
 
+    public var completeBuilds: [String] {
+        let primary: Set<SidebandAcceptancePlatform> = [.mac, .iPhone, .iPad]
+        let grouped = Dictionary(grouping: reports.filter(\.report.isReadyForReleaseReview), by: \.report.appBuild)
+        return grouped.compactMap { build, reports in
+            primary.isSubset(of: Set(reports.map(\.report.platform))) ? build : nil
+        }.sorted(by: Self.compareBuilds)
+    }
+
+    public var latestCompleteBuild: String? { completeBuilds.last }
+
     public var allPrimaryPlatformsReady: Bool {
-        [SidebandAcceptancePlatform.mac, .iPhone, .iPad].allSatisfy {
-            latestByPlatform[$0]?.report.isReadyForReleaseReview == true
+        latestCompleteBuild != nil
+    }
+
+    public func latestByPlatform(forBuild build: String) -> [SidebandAcceptancePlatform: SidebandSignedAcceptanceReport] {
+        Dictionary(grouping: reports.filter { $0.report.appBuild == build }, by: \.report.platform).compactMapValues {
+            $0.max { $0.report.generatedAt < $1.report.generatedAt }
         }
+    }
+
+    private func importVerified(
+        _ report: SidebandSignedAcceptanceReport,
+        persistAfterImport: Bool = true
+    ) throws -> SidebandSignedAcceptanceReport {
+        guard report.schemaVersion == 1 else { throw SidebandAcceptancePortfolioError.incompatibleSchema }
+        guard report.isValid else { throw SidebandAcceptancePortfolioError.invalidSignature }
+        reports.removeAll { $0.id == report.id }
+        reports.insert(report, at: 0)
+        reports = Array(reports.prefix(1_000))
+        if persistAfterImport { persist() }
+        return report
+    }
+
+    private static func compareBuilds(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.compare(rhs, options: .numeric) == .orderedAscending
     }
 
     private func persist() {

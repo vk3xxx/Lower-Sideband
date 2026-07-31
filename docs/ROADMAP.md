@@ -19,7 +19,8 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
 - Keep storage-retention and quota safeguards covered as new message and
   attachment states are introduced.
 - Strengthen public endpoint health data and operator documentation without embedding private infrastructure assumptions.
-- Expand automated migration fixtures as new upstream historical schemas are found.
+- Keep descriptive/plural-table migration fixtures current as additional
+  upstream historical column variants are found.
 
 ## Infrastructure-dependent
 
@@ -30,8 +31,8 @@ Lower Sideband now covers the main native messaging, network, telemetry, mapping
 ## Compatibility extensions
 
 - Expand the tested read-only Python migration matrix if upstream introduces
-  table shapes beyond the supported `conv`, `lxm`, `telemetry`, and `announce`
-  schemas.
+  table shapes beyond the supported abbreviated and descriptive conversation,
+  LXMF-message, telemetry and announce schemas.
 - Broaden support for specialised Reticulum interfaces not available through TCP, AutoInterface, RNode, or generic KISS.
 - Add physical-board bootloader acceptance evidence for each supported RNode family.
 

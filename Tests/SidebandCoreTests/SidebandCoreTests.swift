@@ -4535,6 +4535,46 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     #expect(report.importedRichMessages == 1)
 }
 
+@Test func legacyPythonSQLiteImporterSupportsDescriptivePluralTableLayouts() throws {
+    let url = FileManager.default.temporaryDirectory.appending(path: "sideband-legacy-plural-\(UUID().uuidString).db")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let peer = "00112233445566778899aabbccddeeff"
+    let local = "ffeeddccbbaa99887766554433221100"
+    var database: OpaquePointer?
+    #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
+    guard let database else { return }
+    let sql = """
+    CREATE TABLE conversations (destination TEXT PRIMARY KEY, last_sent INTEGER, last_received INTEGER, unread_count INTEGER, trusted INTEGER, display_name TEXT, options BLOB);
+    CREATE TABLE messages (hash TEXT PRIMARY KEY, destination_hash TEXT, source_hash TEXT, subject TEXT, sent_at INTEGER, received_at INTEGER, delivery_state INTEGER, content BLOB);
+    CREATE TABLE announcements (received_at INTEGER, destination_hash TEXT, app_data BLOB, aspect TEXT);
+    CREATE TABLE telemetry_records (destination_hash TEXT, captured_at INTEGER, packed BLOB);
+    INSERT INTO conversations VALUES ('\(peer)',1,2,0,1,'Plural Layout Peer',NULL);
+    INSERT INTO messages VALUES ('\(String(repeating: "cd", count: 32))','\(local)','\(peer)','',1,2,4,x'706c7572616c207461626c65206d657373616765');
+    INSERT INTO announcements VALUES (3,'102132435465768798a9bacbdcedfe0f',x'4e6f6465','lxmf.delivery');
+    """
+    #expect(sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close(database)
+
+    let preview = try LegacySidebandSQLiteImporter.preview(from: url)
+    #expect(preview.conversations == 1)
+    #expect(preview.messages == 1)
+    #expect(preview.announces == 1)
+    #expect(preview.telemetryRecords == 0)
+    let report = try LegacySidebandSQLiteImporter.load(from: url)
+    #expect(report.snapshot.conversations.first?.displayName == "Plural Layout Peer")
+    #expect(report.snapshot.messages.first?.body == "plural table message")
+    #expect(report.snapshot.discoveries.first?.destinationHash == "102132435465768798a9bacbdcedfe0f")
+}
+
+@Test func backgroundRefreshPolicyPreservesRealDeadlinesAndCoalescesLaterRequests() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let dueSoon = Date(timeInterval: 20, since: now)
+    #expect(BackgroundRefreshSchedulePolicy.candidateDate(requested: dueSoon, now: now) == dueSoon)
+    #expect(BackgroundRefreshSchedulePolicy.candidateDate(requested: now, now: now) == Date(timeInterval: 5, since: now))
+    #expect(BackgroundRefreshSchedulePolicy.shouldReplace(current: Date(timeInterval: 60, since: now), with: dueSoon))
+    #expect(!BackgroundRefreshSchedulePolicy.shouldReplace(current: dueSoon, with: Date(timeInterval: 60, since: now)))
+}
+
 @MainActor @Test func legacyPythonSQLiteImportCanBeRolledBackDuringTheSession() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     let databaseURL = directory.appending(path: "sideband.db")
@@ -5370,7 +5410,7 @@ private func fileExists(_ url: URL) -> Bool {
         ($0.rawValue, SidebandAcceptanceResult(outcome: .passed, testedAt: .now, notes: "", build: "132", operatingSystem: "Test OS"))
     })
 
-    func signed(_ platform: SidebandAcceptancePlatform) throws -> SidebandSignedAcceptanceReport {
+    func signed(_ platform: SidebandAcceptancePlatform, build: String = "1.3.94 (132)") throws -> SidebandSignedAcceptanceReport {
         try SidebandSignedAcceptanceReport.signed(
             report: SidebandAcceptanceReport(
                 schemaVersion: 1,
@@ -5380,7 +5420,7 @@ private func fileExists(_ url: URL) -> Bool {
                 device: platform.title,
                 platform: platform,
                 operatingSystem: "Test OS",
-                appBuild: "1.3.94 (132)",
+                appBuild: build,
                 isPhysicalDevice: true,
                 isReadyForReleaseReview: true,
                 results: results
@@ -5395,6 +5435,18 @@ private func fileExists(_ url: URL) -> Bool {
     }
     #expect(portfolio.allPrimaryPlatformsReady)
     #expect(portfolio.latestByPlatform.count == 3)
+    #expect(portfolio.latestCompleteBuild == "1.3.94 (132)")
+
+    let archive = try portfolio.exportReports(build: "1.3.94 (132)")
+    let importedDefaults = try #require(UserDefaults(suiteName: "\(suite)-imported"))
+    defer { importedDefaults.removePersistentDomain(forName: "\(suite)-imported") }
+    let imported = SidebandAcceptancePortfolio(defaults: importedDefaults, cipher: cipher)
+    #expect(try imported.importReports(archive).count == 3)
+    #expect(imported.allPrimaryPlatformsReady)
+
+    _ = try portfolio.importReport(signed(.iPhone, build: "1.3.95 (133)").encoded())
+    #expect(portfolio.latestByPlatform[.iPhone]?.report.appBuild == "1.3.95 (133)")
+    #expect(portfolio.latestCompleteBuild == "1.3.94 (132)")
 
     let valid = try signed(.mac)
     let tampered = SidebandSignedAcceptanceReport(

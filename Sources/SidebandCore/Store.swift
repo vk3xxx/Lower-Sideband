@@ -225,9 +225,15 @@ public final class SidebandStore {
         ).encoded()
     }
 
+    public func exportAcceptancePortfolioData(now: Date = .now) throws -> Data {
+        let local = try exportSignedAcceptanceReportData(now: now)
+        _ = try acceptancePortfolio.importReport(local)
+        return try acceptancePortfolio.exportReports()
+    }
+
     @discardableResult
-    public func importSignedAcceptanceReportData(_ data: Data) throws -> SidebandSignedAcceptanceReport {
-        try acceptancePortfolio.importReport(data)
+    public func importSignedAcceptanceReportData(_ data: Data) throws -> [SidebandSignedAcceptanceReport] {
+        try acceptancePortfolio.importReports(data)
     }
     public var continuityDevices: [SidebandContinuityDevice] {
         ContinuityDeviceBuilder.build(currentID: syncDeviceID, knownDevices: knownSyncDevices, messages: messages)
@@ -3073,7 +3079,9 @@ public final class SidebandStore {
                 succeeded: succeeded,
                 duration: Date.now.timeIntervalSince(startedAt)
             )
-            backgroundRefresh.schedule()
+            // Preserve the earliest deferred-send deadline when re-arming the
+            // OS wake request after every success, timeout or cancellation.
+            backgroundRefresh.schedule(earliest: nextScheduledMessageDate)
         }
         if autoConnectEnabled, networkState != .ready { await startAutomaticConnection() }
         let networkDeadline = ContinuousClock.now + .seconds(networkTimeout)

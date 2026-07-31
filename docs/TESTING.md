@@ -58,7 +58,9 @@ Scripts/run-ui-reliability-suite.sh all
 ```
 
 Override simulator destinations with `SIDEBAND_UI_IPHONE_DESTINATION` and
-`SIDEBAND_UI_IPAD_DESTINATION`. Results default to
+`SIDEBAND_UI_IPAD_DESTINATION`; these variables also accept a connected-device
+destination such as `platform=iOS,id=<device-identifier>`, so the identical
+journey can run on physical hardware. Results default to
 `.build/ui-reliability/`.
 
 Settings → Diagnostics also provides a non-destructive recovery drill. It
@@ -67,8 +69,15 @@ and authenticated tamper rejection. Snapshot imports first create an encrypted
 rollback checkpoint that can be restored from the same screen.
 
 Each device can export a signed acceptance report. Import the Mac, iPhone and
-iPad reports on one device to review the consolidated Apple platform matrix;
-modified or forged reports are rejected.
+iPad reports on one device to review the consolidated Apple platform matrix,
+then export the complete campaign as one portable file. Every contained report
+is verified before any import is committed, modified or forged reports are
+rejected, and the matrix only completes when all three physical platforms pass
+the same application build.
+
+Deferred-send scheduling preserves the actual earliest message deadline and
+coalesces later requests behind it. iOS still chooses when a background task
+runs, but the app no longer adds a fifteen-minute delay to a nearer deadline.
 
 ## Bundle validation
 

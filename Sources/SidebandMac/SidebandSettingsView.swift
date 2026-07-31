@@ -1223,14 +1223,25 @@ struct SidebandSettingsView: View {
                     Label("Import Device Reports", systemImage: "square.and.arrow.down")
                 }
                 .accessibilityIdentifier("import-device-acceptance-report")
+                Button {
+                    exportAcceptancePortfolio()
+                } label: {
+                    Label("Export Combined Device Campaign", systemImage: "square.and.arrow.up.on.square")
+                }
                 SettingsStateRow(
                     title: "Apple platform matrix",
                     value: store.acceptancePortfolio.allPrimaryPlatformsReady ? "Complete" : "Incomplete",
                     icon: store.acceptancePortfolio.allPrimaryPlatformsReady ? "checkmark.shield.fill" : "laptopcomputer.and.iphone",
                     tint: store.acceptancePortfolio.allPrimaryPlatformsReady ? .green : .orange
                 )
+                if let build = acceptanceCampaignBuild {
+                    LabeledContent("Campaign build", value: build)
+                        .font(.caption.monospaced())
+                }
                 ForEach([SidebandAcceptancePlatform.mac, .iPhone, .iPad], id: \.rawValue) { platform in
-                    if let signed = store.acceptancePortfolio.latestByPlatform[platform] {
+                    if let signed = acceptanceCampaignBuild.flatMap({
+                        store.acceptancePortfolio.latestByPlatform(forBuild: $0)[platform]
+                    }) {
                         LabeledContent(platform.title) {
                             Label(
                                 signed.report.isReadyForReleaseReview ? "Passed" : "Incomplete",
@@ -1306,6 +1317,23 @@ struct SidebandSettingsView: View {
             showingSupportBundleExporter = true
         } catch {
             store.lastError = "Acceptance report export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func exportAcceptancePortfolio() {
+        do {
+            supportBundleDocument = SupportBundleDocument(data: try store.exportAcceptancePortfolioData())
+            exportFilename = "Lower-Sideband-Device-Campaign-\(Date.now.formatted(.iso8601.year().month().day()))"
+            showingSupportBundleExporter = true
+        } catch {
+            store.lastError = "Device campaign export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private var acceptanceCampaignBuild: String? {
+        if let complete = store.acceptancePortfolio.latestCompleteBuild { return complete }
+        return store.acceptancePortfolio.reports.map(\.report.appBuild).max {
+            $0.compare($1, options: .numeric) == .orderedAscending
         }
     }
 

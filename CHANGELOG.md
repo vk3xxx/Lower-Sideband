@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.95 (133) - 2026-07-31
+
+- Expanded read-only Python Sideband migration to descriptive and plural
+  historical table layouts, with column-alias handling for conversations,
+  LXMF messages, announces and telemetry while preserving rollback safety.
+- Removed the app-imposed fifteen-minute background scheduling floor for
+  deferred sends, coalesced later wake requests behind earlier deadlines and
+  preserved the next scheduled-message deadline after every wake attempt.
+- Added portable multi-device acceptance campaigns with all-or-nothing
+  signature validation, combined export/import and per-build Mac, iPhone and
+  iPad completion so evidence from different builds cannot be mixed.
+
 ## 1.3.94 (132) - 2026-07-31
 
 - Added encrypted, cryptographically signed Apple-device acceptance reports

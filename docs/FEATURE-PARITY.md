@@ -21,9 +21,9 @@ The detailed upstream comparison and exact pinned versions are in
 | Reticulum application services | Complete native workspace | Persistent RRC community state and moderation, a validated directory for Nomad, RRC, RNSH, RNX and RNCP, unified activity/retry handling, and built-in wire-format interoperability diagnostics |
 | Telemetry and maps | Complete | Canonical and unknown sensors, typed physical-link/power/processor/storage/tank/fuel coverage, local alert rules, collector streams, trails, JSON/GeoJSON/CSV/GPX export, geospatial calculations and validated offline tiles |
 | Reticulum network map | Complete | Live interfaces, observed next-hop transports, direct/multi-hop routes, propagation nodes, route search/filtering and destination actions |
-| Sync and migration | Complete with platform limits | End-to-end encrypted CloudKit snapshots, assets and tombstones plus privacy-bounded Nomad/RRC/service-preference continuity; read-only Python Sideband preview/import across canonical and historical schemas, including rich LXMF fields, conversation preferences, telemetry and announces with session rollback |
+| Sync and migration | Complete with platform limits | End-to-end encrypted CloudKit snapshots, assets and tombstones plus privacy-bounded Nomad/RRC/service-preference continuity; read-only Python Sideband preview/import across canonical, descriptive, plural and historical schemas, including rich LXMF fields, conversation preferences, telemetry and announces with session rollback |
 | Plugins | Native parity | App-Store-safe native/declarative command, service, telemetry and structured status-card APIs; permission-scoped route, contact, message-metadata and telemetry-summary context replaces downloaded executable Python |
-| Background reception | Platform-limited | Content-free CloudKit wakes and bounded refresh; arbitrary immediate Reticulum ingress still depends on iOS scheduling or an operator wake service |
+| Background reception | Platform-limited | Content-free CloudKit wakes, deadline-preserving deferred-send scheduling, coalesced bounded refresh and automatic outbox/propagation recovery; arbitrary immediate Reticulum ingress still depends on iOS scheduling or an operator wake service |
 
 ## Reticulum transports
 
