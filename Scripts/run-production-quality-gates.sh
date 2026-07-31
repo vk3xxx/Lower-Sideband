@@ -11,6 +11,7 @@ cd "$ROOT"
 
 Scripts/check-repository.sh
 Scripts/validate-apple-quality.swift
+Scripts/audit-upstream-releases.py --local-only --output .build/upstream-pin-audit.json >/dev/null
 swift test --no-parallel
 
 if [[ "$MODE" == all ]]; then

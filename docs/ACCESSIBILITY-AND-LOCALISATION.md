@@ -42,3 +42,9 @@ essential VoiceOver/automation identifiers disappear, or when required
 privacy and background declarations are missing. Run
 `Scripts/run-production-quality-gates.sh all` for the complete deterministic
 test and unsigned Release-build gate.
+
+The gate also requires stable automation identifiers for every physical-device
+acceptance scenario, Reduce Motion and Differentiate Without Color handling,
+and a valid upstream compatibility manifest. Physical-device VoiceOver,
+keyboard, Dynamic Type, contrast, language and region review is recorded in
+the versioned Apple-device acceptance report.

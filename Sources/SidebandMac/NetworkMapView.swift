@@ -11,6 +11,7 @@ struct NetworkMapView: View {
     @Bindable var store: SidebandStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @State private var snapshot = NetworkMapSnapshot.empty
     @State private var searchQuery = ""
     @State private var maximumHops = 4
@@ -201,7 +202,11 @@ struct NetworkMapView: View {
                     style: StrokeStyle(
                         lineWidth: selected ? 2.6 : 1.25,
                         lineCap: .round,
-                        dash: edge.kind == .multiHop ? [4, 4] : []
+                        dash: {
+                            if edge.kind == .multiHop { return differentiateWithoutColor ? [7, 4] : [4, 4] }
+                            if differentiateWithoutColor, edge.kind == .interface { return [1, 3] }
+                            return []
+                        }()
                     )
                 )
             }
@@ -242,6 +247,10 @@ struct NetworkMapView: View {
         }
         #endif
         .accessibilityLabel("Interactive Reticulum topology")
+        .accessibilityValue(
+            "\(filteredSnapshot.nodes.count) nodes and \(filteredSnapshot.edges.count) links"
+                + (selectedNode.map { ", selected \($0.label), \($0.status.displayName)" } ?? "")
+        )
         .accessibilityHint("Drag to pan, pinch or scroll to zoom, and select a node for route details")
     }
 

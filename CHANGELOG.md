@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.93 (131) - 2026-07-31
+
+- Upgraded Apple-device acceptance into traceable, versioned runs covering
+  messaging, attachments, voice, telemetry, background recovery, permissions,
+  network handover, accessibility, localisation and endurance, with build/OS
+  evidence and a fail-closed release-readiness result.
+- Strengthened Apple experience quality gates for critical localisation,
+  stable accessibility automation identifiers, Reduce Motion and
+  Differentiate Without Color support.
+- Added one machine-readable upstream compatibility manifest, local pin
+  verification and a scheduled/manual release watcher for Reticulum, LXMF and
+  Sideband. The watcher never runs for ordinary commits and never changes pins.
+
 ## 1.3.92 (130) - 2026-07-31
 
 - Added safe `sideband://service` onboarding links, QR codes and sharing for

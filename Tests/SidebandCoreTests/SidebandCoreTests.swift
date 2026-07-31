@@ -1692,22 +1692,34 @@ private actor CountingCloudSync: CloudSnapshotSyncing {
     let suite = try #require(UserDefaults(suiteName: suiteName))
     defer { suite.removePersistentDomain(forName: suiteName) }
     let acceptance = SidebandDeviceAcceptance(defaults: suite)
+    let initialRunID = acceptance.runID
     acceptance.record(.passed, for: .messaging, notes: String(repeating: "a", count: 2_000))
     acceptance.record(.failed, for: .attachments, notes: "Digest mismatch")
     #expect(acceptance.completedCount == 2)
     #expect(acceptance.result(for: .messaging).notes.count == 1_000)
+    #expect(acceptance.result(for: .messaging).build != nil)
+    #expect(!acceptance.isReadyForReleaseReview)
 
     let restored = SidebandDeviceAcceptance(defaults: suite)
+    #expect(restored.runID == initialRunID)
     #expect(restored.result(for: .messaging).outcome == .passed)
     #expect(restored.result(for: .attachments).outcome == .failed)
     let data = try restored.exportData(now: Date(timeIntervalSince1970: 321))
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     let report = try decoder.decode(SidebandAcceptanceReport.self, from: data)
+    #expect(report.schemaVersion == 2)
+    #expect(report.runID == initialRunID)
     #expect(report.generatedAt == Date(timeIntervalSince1970: 321))
     #expect(report.passedCount == 1)
     #expect(report.failedCount == 1)
     #expect(report.results.count == SidebandAcceptanceScenario.allCases.count)
+    #expect(!report.isReadyForReleaseReview)
+
+    restored.startNewRun(now: Date(timeIntervalSince1970: 400))
+    #expect(restored.runID != initialRunID)
+    #expect(restored.startedAt == Date(timeIntervalSince1970: 400))
+    #expect(restored.completedCount == 0)
 }
 
 @MainActor @Test func inboundDeliveryProofReturnsOnLinkIngressInterface() {

@@ -1151,6 +1151,18 @@ struct SidebandSettingsView: View {
                     icon: store.deviceAcceptance.isPhysicalDevice ? "checkmark.seal.fill" : "simulator",
                     tint: store.deviceAcceptance.isPhysicalDevice ? .green : .orange
                 )
+                SettingsStateRow(
+                    title: "Release evidence",
+                    value: store.deviceAcceptance.isReadyForReleaseReview ? "Complete" : "Incomplete",
+                    icon: store.deviceAcceptance.isReadyForReleaseReview ? "checkmark.shield.fill" : "checklist.unchecked",
+                    tint: store.deviceAcceptance.isReadyForReleaseReview ? .green : .orange
+                )
+                LabeledContent("Run", value: store.deviceAcceptance.runID.uuidString)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                LabeledContent("Started") {
+                    Text(store.deviceAcceptance.startedAt, format: .dateTime)
+                }
                 ProgressView(
                     value: Double(store.deviceAcceptance.completedCount),
                     total: Double(SidebandAcceptanceScenario.allCases.count)
@@ -1168,10 +1180,11 @@ struct SidebandSettingsView: View {
                     Label("Export Acceptance Report", systemImage: "doc.badge.arrow.up")
                 }
                 .accessibilityIdentifier("export-device-acceptance-report")
-                Button("Reset Acceptance Results", role: .destructive) {
-                    store.deviceAcceptance.reset()
+                Button("Start New Acceptance Run", systemImage: "arrow.clockwise") {
+                    store.deviceAcceptance.startNewRun()
                 }
                 .disabled(store.deviceAcceptance.completedCount == 0)
+                .accessibilityHint("Clears this device’s recorded results and creates a new traceable acceptance run.")
             } header: {
                 Text("Apple device acceptance")
             } footer: {
@@ -1256,6 +1269,7 @@ struct SidebandSettingsView: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("acceptance-\(scenario.rawValue)")
         .accessibilityLabel("\(scenario.title), \(acceptanceOutcomeDescription(result.outcome))")
         .accessibilityHint(scenario.instructions)
     }

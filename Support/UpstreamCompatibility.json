@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "references": [
+    {
+      "name": "Reticulum",
+      "path": "Reticulum-Upstream",
+      "repository": "https://github.com/markqvist/Reticulum.git",
+      "version": "1.4.2",
+      "commit": "b48b96e61676504e0a4e527b33b9a0b4495c6872"
+    },
+    {
+      "name": "LXMF",
+      "path": "LXMF-Upstream",
+      "repository": "https://github.com/markqvist/LXMF.git",
+      "version": "1.1.0",
+      "commit": "795fdaa2b0777c13033787d933d1afc94a2377cb"
+    },
+    {
+      "name": "Sideband",
+      "path": "Sideband-Upstream",
+      "repository": "https://github.com/markqvist/Sideband.git",
+      "version": "2.0.1",
+      "commit": "2000d81a44bff57e3b3cb7d45915ba29bbde4e18"
+    }
+  ],
+  "requiredEvidence": {
+    "messagesEachDirection": 25,
+    "attachmentBytes": 1048576,
+    "attachmentInterval": 5,
+    "reconnectInterval": 7,
+    "fixtureSuites": [
+      "Reticulum application protocol conformance",
+      "Nomad Network request interoperability",
+      "ReticulumKit transport runtimes"
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+name: Upstream compatibility watch
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Audit pinned and current upstream releases
+        run: Scripts/audit-upstream-releases.py --output .build/upstream-release-audit.json
+      - name: Publish compatibility report
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-compatibility-report
+          path: .build/upstream-release-audit.json
+          if-no-files-found: error

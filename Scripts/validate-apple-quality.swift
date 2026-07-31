@@ -27,9 +27,15 @@ do {
         "Import Python Sideband Database", "Undo Last Python Import",
         "Remote message wakes", "Background delivery", "Register This Device",
         "Migration & Restore", "Export Redacted Support Report",
-        "Apple device acceptance", "Export Acceptance Report"
+        "Apple device acceptance", "Export Acceptance Report",
+        "Release evidence", "Start New Acceptance Run",
+        "Accessibility and input", "Language and layout",
+        "Memory, power and endurance"
     ] where strings[key] == nil {
         findings.append("Missing localisable critical string: \(key)")
+    }
+    if strings.keys.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+        findings.append("String catalog contains an empty or whitespace-only key.")
     }
 } catch {
     findings.append("String catalog validation failed: \(error)")
@@ -60,6 +66,40 @@ where !content.contains("accessibilityIdentifier(\"\(identifier)\")") {
 }
 if !map.contains("@Environment(\\.accessibilityReduceMotion)") {
     findings.append("Network map does not respect Reduce Motion.")
+}
+if !map.contains("@Environment(\\.accessibilityDifferentiateWithoutColor)") {
+    findings.append("Network map does not support Differentiate Without Color.")
+}
+let acceptanceSource = try text("Sources/SidebandCore/DeviceAcceptance.swift")
+for scenario in [
+    "messaging", "attachments", "voice", "telemetry", "backgroundRecovery",
+    "capturePermissions", "networkHandover", "accessibility", "localization", "endurance"
+] where !acceptanceSource.contains("case \(scenario)") {
+    findings.append("Acceptance workflow is missing the \(scenario) scenario.")
+}
+if !settings.contains("accessibilityIdentifier(\"acceptance-\\(scenario.rawValue)\")") {
+    findings.append("Acceptance workflow does not expose stable per-scenario accessibility identifiers.")
+}
+
+do {
+    let manifestObject = try JSONSerialization.jsonObject(with: data("Support/UpstreamCompatibility.json"))
+    guard let manifest = manifestObject as? [String: Any],
+          manifest["schema"] as? Int == 1,
+          let references = manifest["references"] as? [[String: Any]],
+          Set(references.compactMap { $0["name"] as? String }) == Set(["Reticulum", "LXMF", "Sideband"]),
+          references.allSatisfy({
+              ($0["version"] as? String)?.isEmpty == false
+                  && ($0["commit"] as? String)?.count == 40
+          }) else {
+        throw AuditFailure.failed(["Upstream compatibility manifest is incomplete or invalid."])
+    }
+} catch {
+    findings.append("Upstream compatibility manifest validation failed: \(error)")
+}
+
+let workflow = try text(".github/workflows/upstream-compatibility.yml")
+if workflow.contains("push:") || workflow.contains("pull_request:") {
+    findings.append("Upstream compatibility workflow must remain scheduled/manual and must not build every commit.")
 }
 
 let info = try PropertyListSerialization.propertyList(

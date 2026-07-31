@@ -3,10 +3,32 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE="${1:-fixtures}"
-MESSAGE_COUNT="${SIDEBAND_UPSTREAM_MESSAGE_COUNT:-25}"
-ATTACHMENT_INTERVAL="${SIDEBAND_UPSTREAM_ATTACHMENT_INTERVAL:-5}"
-ATTACHMENT_BYTES="${SIDEBAND_UPSTREAM_ATTACHMENT_BYTES:-1048576}"
-RECONNECT_INTERVAL="${SIDEBAND_UPSTREAM_RECONNECT_INTERVAL:-7}"
+manifest_exports="$(
+    python3 - "$ROOT/Support/UpstreamCompatibility.json" <<'PY'
+import json
+import shlex
+import sys
+
+manifest = json.load(open(sys.argv[1]))
+references = {item["name"]: item for item in manifest["references"]}
+evidence = manifest["requiredEvidence"]
+values = {
+    "PIN_RETICULUM": references["Reticulum"]["version"],
+    "PIN_LXMF": references["LXMF"]["version"],
+    "PIN_SIDEBAND": references["Sideband"]["version"],
+    "DEFAULT_MESSAGE_COUNT": evidence["messagesEachDirection"],
+    "DEFAULT_ATTACHMENT_INTERVAL": evidence["attachmentInterval"],
+    "DEFAULT_ATTACHMENT_BYTES": evidence["attachmentBytes"],
+    "DEFAULT_RECONNECT_INTERVAL": evidence["reconnectInterval"],
+}
+print(" ".join(f"{key}={shlex.quote(str(value))}" for key, value in values.items()))
+PY
+)"
+eval "$manifest_exports"
+MESSAGE_COUNT="${SIDEBAND_UPSTREAM_MESSAGE_COUNT:-$DEFAULT_MESSAGE_COUNT}"
+ATTACHMENT_INTERVAL="${SIDEBAND_UPSTREAM_ATTACHMENT_INTERVAL:-$DEFAULT_ATTACHMENT_INTERVAL}"
+ATTACHMENT_BYTES="${SIDEBAND_UPSTREAM_ATTACHMENT_BYTES:-$DEFAULT_ATTACHMENT_BYTES}"
+RECONNECT_INTERVAL="${SIDEBAND_UPSTREAM_RECONNECT_INTERVAL:-$DEFAULT_RECONNECT_INTERVAL}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 REPORT_DIR="$ROOT/.build/upstream-matrix/$STAMP"
 REPORT="$REPORT_DIR/result.json"
@@ -20,11 +42,12 @@ case "$PROFILE" in
 esac
 
 mkdir -p "$REPORT_DIR"
+Scripts/audit-upstream-releases.py --local-only --output "$REPORT_DIR/pins.json" >/dev/null
 
 typeset -A EXPECTED_TAGS=(
-    Reticulum-Upstream 1.4.2
-    LXMF-Upstream 1.1.0
-    Sideband-Upstream 2.0.1
+    Reticulum-Upstream "$PIN_RETICULUM"
+    LXMF-Upstream "$PIN_LXMF"
+    Sideband-Upstream "$PIN_SIDEBAND"
 )
 
 for repository expected in ${(kv)EXPECTED_TAGS}; do
@@ -45,7 +68,7 @@ import RNS
 print(json.dumps({"reticulum": RNS.__version__, "lxmf": LXMF.__version__}, sort_keys=True))
 PY
 )"
-[[ "$versions" == '{"lxmf": "1.1.0", "reticulum": "1.4.2"}' ]] || {
+[[ "$versions" == "{\"lxmf\": \"$PIN_LXMF\", \"reticulum\": \"$PIN_RETICULUM\"}" ]] || {
     print -u2 "Imported Python references do not match the pinned matrix: $versions"
     exit 1
 }
@@ -78,6 +101,7 @@ fi
 completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 export PROFILE MESSAGE_COUNT ATTACHMENT_INTERVAL ATTACHMENT_BYTES RECONNECT_INTERVAL
 export REPORT fixture_status live_status started_at completed_at
+export PIN_RETICULUM PIN_LXMF PIN_SIDEBAND
 python3 - <<'PY'
 import json
 import os
@@ -89,9 +113,9 @@ report = {
     "started_at": os.environ["started_at"],
     "completed_at": os.environ["completed_at"],
     "references": {
-        "reticulum": "1.4.2",
-        "lxmf": "1.1.0",
-        "sideband": "2.0.1",
+        "reticulum": os.environ["PIN_RETICULUM"],
+        "lxmf": os.environ["PIN_LXMF"],
+        "sideband": os.environ["PIN_SIDEBAND"],
     },
     "fixtures": os.environ["fixture_status"],
     "live": os.environ["live_status"],
@@ -107,5 +131,5 @@ PY
 
 print "Upstream interoperability matrix passed."
 print "Profile: $PROFILE"
-print "References: Reticulum 1.4.2 · LXMF 1.1.0 · Sideband 2.0.1"
+print "References: Reticulum $PIN_RETICULUM · LXMF $PIN_LXMF · Sideband $PIN_SIDEBAND"
 print "Report: $REPORT"

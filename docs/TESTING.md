@@ -62,6 +62,13 @@ Scripts/run-upstream-interoperability-matrix.sh live
 Scripts/run-upstream-interoperability-matrix.sh all
 ```
 
+Pinned versions, exact commits and minimum live evidence are defined once in
+`Support/UpstreamCompatibility.json`. Run
+`Scripts/audit-upstream-releases.py --local-only` to verify the checked-out
+references. A separate scheduled/manual GitHub workflow checks upstream tags
+and publishes a report; it does not run builds for normal commits and never
+updates a pin automatically.
+
 The fixture profile verifies the imported Python versions, regenerates the
 Sideband telemetry fixture and runs the complete native test suite. The live
 profile runs distinct Swift and stock Python identities over a local Reticulum
