@@ -47,6 +47,15 @@ import AppKit
         retainScreenshot("04-mac-network-connections")
     }
 
+    func testColdLaunchRecoveryKeepsCoreControlsReachable() throws {
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.descendants(matching: .any)["network-connections"].waitForExistence(timeout: 8))
+        retainScreenshot("05-mac-lifecycle-recovery")
+    }
+
     private func retainScreenshot(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name

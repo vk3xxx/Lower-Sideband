@@ -358,9 +358,24 @@ public final class SidebandStore {
         let segmentIndex: Int; let totalSegments: Int; let remainingSegments: [ReticulumPreparedResourceSegment]
         var timeoutToken = UUID()
         var sentIndices: Set<Int> = []
+        var lastRequestFingerprint: Data?
+        var lastRequestAt: Date?
     }
     private var outgoingResources: [String: OutgoingResource] = [:]
-    private struct IncomingResource { let session: ReticulumLinkSession; let advertisement: ReticulumResourceAdvertisement; var receiver: ReticulumResourceReceiver; var timeoutToken = UUID() }
+    private struct IncomingResource {
+        let session: ReticulumLinkSession
+        let advertisement: ReticulumResourceAdvertisement
+        var receiver: ReticulumResourceReceiver
+        var timeoutToken = UUID()
+        var requestToken = UUID()
+        var requestedPartHashes: Set<Data> = []
+        // Stock Reticulum starts Resource transfers with a four-part window,
+        // grows it after complete rounds and reduces it after a timeout. A
+        // single advertisement can carry many more hashes, but requesting the
+        // whole map at once overwhelms constrained links and creates needless
+        // duplicate retries.
+        var requestWindow = 4
+    }
     private var incomingResources: [String: IncomingResource] = [:]
     private var receivedResourceHashes: Set<String> = []
     private var receivedResourceProofs: [String: Data] = [:]
@@ -549,6 +564,26 @@ public final class SidebandStore {
         autoConnectEnabled = UserDefaults.standard.object(forKey: "reticulumAutoConnect") as? Bool ?? true
         connectionMode = UserDefaults.standard.string(forKey: "reticulumConnectionMode").flatMap(NetworkConnectionMode.init(rawValue:)) ?? .automatic
         internetOnlyEnabled = UserDefaults.standard.bool(forKey: "reticulumInternetOnly")
+        #if DEBUG
+        // Deterministic delivery acceptance must be isolated before any
+        // reachability, discovery or scene-lifecycle callback is installed.
+        // Applying these overrides later in the SwiftUI hierarchy allowed a
+        // remembered automatic connection to create and replace pools while
+        // the explicit soak endpoint was starting.
+        if let acceptanceMode = ProcessInfo.processInfo.environment["SIDEBAND_SOAK_NETWORK_MODE"] {
+            autoConnectEnabled = acceptanceMode == "automatic" || acceptanceMode == "internet"
+                || ProcessInfo.processInfo.environment["SIDEBAND_SOAK_AUTOCONNECT"] == "1"
+            internetOnlyEnabled = acceptanceMode == "public" || acceptanceMode == "internet"
+            if acceptanceMode == "public" {
+                networkHost = ""
+                networkIPv6Host = ""
+                networkInternetHost = ProcessInfo.processInfo.environment["SIDEBAND_SOAK_INTERNET_HOST"]
+                    ?? "sydney.reticulum.au"
+                networkInternetPort = ProcessInfo.processInfo.environment["SIDEBAND_SOAK_INTERNET_PORT"]
+                    .flatMap(Int.init) ?? 4_242
+            }
+        }
+        #endif
         managedInfrastructureEnabled = UserDefaults.standard.bool(forKey: "managedInfrastructureEnabled")
         managedInfrastructureURL = UserDefaults.standard.string(forKey: "managedInfrastructureURL") ?? ""
         managedInfrastructurePublicKey = UserDefaults.standard.string(forKey: "managedInfrastructurePublicKey") ?? ""
@@ -2982,9 +3017,24 @@ public final class SidebandStore {
             return
         }
         guard tcpNetworkState != .connecting, tcpNetworkState != .ready else { return }
+        #if DEBUG
+        let acceptanceIsPublic = ProcessInfo.processInfo.environment["SIDEBAND_SOAK_NETWORK_MODE"] == "public"
+        let acceptanceHost = acceptanceIsPublic
+            ? ProcessInfo.processInfo.environment["SIDEBAND_SOAK_INTERNET_HOST"]
+            : nil
+        let acceptancePort = acceptanceIsPublic
+            ? ProcessInfo.processInfo.environment["SIDEBAND_SOAK_INTERNET_PORT"].flatMap(UInt16.init)
+            : nil
+        #else
+        let acceptanceIsPublic = false
+        let acceptanceHost: String? = nil
+        let acceptancePort: UInt16? = nil
+        #endif
         let useIPv6 = !forceIPv4 && preferIPv6 && reachability.supportsIPv6 && !networkIPv6Host.isEmpty
-        let selectedHost = explicitHost ?? (useIPv6 ? networkIPv6Host : networkHost)
-        let selectedPort = explicitPort ?? UInt16(exactly: networkPort)
+        // A DEBUG acceptance process must be unable to leak onto a remembered
+        // LAN gateway, even if a lifecycle callback races the harness start.
+        let selectedHost = acceptanceHost ?? explicitHost ?? (useIPv6 ? networkIPv6Host : networkHost)
+        let selectedPort = acceptancePort ?? explicitPort ?? UInt16(exactly: networkPort)
         guard !selectedHost.isEmpty, let port = selectedPort, port > 0 else {
             lastError = "Enter a valid TCP host and port."
             return
@@ -2999,7 +3049,8 @@ public final class SidebandStore {
         reconnectTask = nil
         intentionallyDisconnected = false
         activeGatewayID = nil
-        activeInternetGatewayID = internetGatewayID
+        let effectiveInternetGatewayID = acceptanceIsPublic ? nil : internetGatewayID
+        activeInternetGatewayID = effectiveInternetGatewayID
         autoConnectedDiscoveredInterfaceIDs.removeAll()
         selectedGatewayName = nil
         UserDefaults.standard.set(networkHost, forKey: "reticulumHost")
@@ -3010,7 +3061,7 @@ public final class SidebandStore {
         UserDefaults.standard.set(preferIPv6, forKey: "reticulumPreferIPv6")
         UserDefaults.standard.set(autoConnectEnabled, forKey: "reticulumAutoConnect")
         let endpoints: [ReticulumTCPInterfacePool.Endpoint]
-        if let internetGatewayID {
+        if let internetGatewayID = effectiveInternetGatewayID {
             let publicGateways = PublicReticulumGateways.ordered(
                 customHost: networkInternetHost,
                 customPort: networkInternetPort,
@@ -3102,6 +3153,16 @@ public final class SidebandStore {
         reconnectTask = nil
         automaticConnectionDescription = "Disconnected"
         stopPeriodicPropagationSync()
+        // Reticulum links are end-to-end state, not just local bookkeeping.
+        // Tell every peer that the link is closing while its transport is
+        // still writable. Without this, a peer sending a Resource keeps the
+        // transfer attached to a session we have already discarded and can
+        // wait for the full resource inactivity timeout before retrying.
+        // A clean LINKCLOSE lets the peer requeue immediately and negotiate a
+        // fresh link after this client reconnects.
+        for session in activeLinks.values {
+            try? await transmitLinkPacket(try session.closePacket(), session: session)
+        }
         resetLinkState()
         await networkInterfacePool?.stop()
         await rnodeManager.stopAll()
@@ -4232,7 +4293,16 @@ public final class SidebandStore {
         syncUnreadBadge()
         legacyImportRollbackData = rollback
         let encryptedRollback = try localDataCipher.seal(rollback, context: "legacy-import-rollback-v1")
+        #if os(iOS)
         try encryptedRollback.write(to: legacyImportRollbackURL, options: [.atomic, .completeFileProtection])
+        #else
+        // NSFileProtection is an iOS data-protection class. Requesting it on
+        // recent macOS SDKs can make Foundation's atomic temporary-file
+        // creation fail with EPERM. The rollback is already authenticated and
+        // encrypted by LocalDataCipher, so an atomic macOS write preserves the
+        // same confidentiality without applying an unsupported file class.
+        try encryptedRollback.write(to: legacyImportRollbackURL, options: .atomic)
+        #endif
         canRollbackLegacyImport = true
         lastLegacyImportAt = .now
         lastLegacyImportSummary = "\(report.snapshot.conversations.count) conversations · \(report.snapshot.messages.count) messages · \(report.importedTelemetry) telemetry · \(report.importedAnnounces) announces"
@@ -4486,8 +4556,16 @@ public final class SidebandStore {
             pendingPathHashes.insert(normalized)
             switch networkState {
             case .stopped, .failed:
-                if autoConnectEnabled { await startAutomaticConnection() }
-                else { await connectNetwork() }
+                // An existing interface pool owns its own bounded reconnect
+                // cycle. Replacing that pool from every deferred path request
+                // creates overlapping TCP sockets, stale callbacks and an
+                // announce storm whenever a gateway briefly resets a client.
+                // Only create a connection here when there is no pool to
+                // recover. A deliberate disconnect clears the pool.
+                if networkInterfacePool == nil {
+                    if autoConnectEnabled { await startAutomaticConnection() }
+                    else { await connectNetwork() }
+                }
             case .connecting, .ready: break
             }
             return
@@ -5616,7 +5694,7 @@ public final class SidebandStore {
     private func receiveLinkPacket(_ packet: ReticulumPacket, interfaceID: String?) {
         let linkID = packet.destinationHash.hex
         guard let session = activeLinks[linkID] else {
-            deliveryDebugTrace("RX link packet for unknown session \(linkID), context \(packet.context), bytes \(packet.data.count)")
+            deliveryPacketTrace("RX link packet for unknown session \(linkID), context \(packet.context), bytes \(packet.data.count)")
             return
         }
         // Reticulum paths can move between public gateways during a live link.
@@ -5870,7 +5948,7 @@ public final class SidebandStore {
         }
         let linkID = incoming.session.linkID.hex
         let ingress = interfaceID ?? "all ready interfaces"
-        deliveryDebugTrace(
+        deliveryPacketTrace(
             "RX link request \(linkID) accepted on \(ingress); returning proof "
                 + "bytes=\(incoming.proofPacket.count) rawBase64=\(incoming.proofPacket.base64EncodedString())"
         )
@@ -5977,7 +6055,7 @@ public final class SidebandStore {
             do {
                 let hash = packet.packetHash
                 let proof = try session.proofPacket(for: packet)
-                deliveryDebugTrace(
+                deliveryPacketTrace(
                     "RX direct proof prepared link=\(session.linkID.hex) " +
                     "interface=\(proofInterface ?? "automatic route") " +
                     "packetHash=\(hash.hex) rawBase64=\(proof.base64EncodedString())"
@@ -6119,6 +6197,45 @@ public final class SidebandStore {
 
     private func removeLink(_ linkID: String) {
         let remote = linkRemoteDestinations.removeValue(forKey: linkID)
+        // Match upstream RNS.Link.link_closed(): all resources belonging to a
+        // closed link conclude immediately. Durable chat attachments are then
+        // returned to the outbox instead of remaining permanently bound to a
+        // session that can no longer receive requests or proofs.
+        let interruptedResources = outgoingResources.filter { $0.value.linkID == linkID }
+        var retryConversations: Set<UUID> = []
+        let interruptedReceipts = pendingReceipts.filter { $0.value.linkID == linkID }
+        for (packetHash, receipt) in interruptedReceipts {
+            pendingReceipts.removeValue(forKey: packetHash)
+            receiptTimeoutTasks.removeValue(forKey: packetHash)?.cancel()
+            receiptRetryTasks.removeValue(forKey: packetHash)?.cancel()
+            pendingReceiptRetryKinds.removeValue(forKey: packetHash)
+            guard let messageIndex = messages.firstIndex(where: { $0.id == receipt.messageID }) else { continue }
+            messages[messageIndex].state = .queued
+            messages[messageIndex].outboxOwnerID = syncDeviceID
+            messages[messageIndex].outboxOwnerUpdatedAt = .now
+            messages[messageIndex].lastDeliveryFailure = "Secure link closed; retrying automatically."
+            retryConversations.insert(messages[messageIndex].conversationID)
+        }
+        for (hash, resource) in interruptedResources {
+            outgoingResources.removeValue(forKey: hash)
+            guard case let .message(messageID, attachmentID) = resource.purpose,
+                  let messageIndex = messages.firstIndex(where: { $0.id == messageID }) else { continue }
+            messages[messageIndex].state = .queued
+            messages[messageIndex].outboxOwnerID = syncDeviceID
+            messages[messageIndex].outboxOwnerUpdatedAt = .now
+            messages[messageIndex].lastDeliveryFailure = "Secure link closed; retrying automatically."
+            if let attachmentID,
+               let attachmentIndex = messages[messageIndex].attachments.firstIndex(where: { $0.id == attachmentID }) {
+                messages[messageIndex].attachments[attachmentIndex].state = .queued
+                messages[messageIndex].attachments[attachmentIndex].progress = 0
+            }
+            retryConversations.insert(messages[messageIndex].conversationID)
+        }
+        let interruptedIncoming = incomingResources.filter { $0.value.session.linkID.hex == linkID }
+        for (hash, resource) in interruptedIncoming {
+            incomingResources.removeValue(forKey: hash)
+            incomingResourceProgress.removeValue(forKey: resource.advertisement.originalHash.hex)
+        }
         let applicationKind = applicationLinkKinds.removeValue(forKey: linkID)
         if case .shell(let sessionID) = applicationKind {
             shellReceivers.removeValue(forKey: sessionID)
@@ -6143,6 +6260,15 @@ public final class SidebandStore {
         pendingVoicePublicKeys.removeValue(forKey: linkID)
         if activeVoiceLinkID == linkID { activeVoiceLinkID = nil }
         if let remote, !linkRemoteDestinations.values.contains(remote) { activeLinkHashes.remove(remote) }
+        if !interruptedReceipts.isEmpty || !interruptedResources.isEmpty { save() }
+        for conversationID in retryConversations {
+            guard let destinationHash = conversations.first(where: { $0.id == conversationID })?.destinationHash else { continue }
+            Task { @MainActor [weak self] in
+                guard let self, networkState == .ready else { return }
+                await requestLink(to: destinationHash)
+                await attemptDelivery(for: conversationID)
+            }
+        }
     }
 
     private func scheduleVoiceTimeout(callID: UUID, seconds: TimeInterval) {
@@ -6347,6 +6473,11 @@ public final class SidebandStore {
 
     private func deliveryDebugTrace(_ message: @autoclosure () -> String) {
         guard ProcessInfo.processInfo.environment["SIDEBAND_SOAK_NETWORK_MODE"] != nil else { return }
+        print("SIDEBAND_DELIVERY_TRACE \(message())")
+    }
+
+    private func deliveryPacketTrace(_ message: @autoclosure () -> String) {
+        guard ProcessInfo.processInfo.environment["SIDEBAND_SOAK_PACKET_TRACE"] == "1" else { return }
         print("SIDEBAND_DELIVERY_TRACE \(message())")
     }
 
@@ -6873,11 +7004,20 @@ public final class SidebandStore {
         // for a direct link across multi-hop public routes. Keeping automatic
         // messages on the authenticated link also gives every send the same
         // proof and retry semantics as attachments.
-        if outboundSession(to: conversation.destinationHash) == nil {
+        // A Reticulum link is bidirectional. During a simultaneous reconnect,
+        // both peers can finish authenticating the link initiated by the
+        // other before either outbound proof arrives. Reuse that bound link
+        // for ordinary LXMF packets instead of endlessly negotiating a second
+        // link. Resource transfers retain their stricter outbound-link rule
+        // for compatibility with stock LXMF receivers that do not install an
+        // incoming-resource handler on an initiating link.
+        let deliverySession = outboundSession(to: conversation.destinationHash)
+            ?? (nextMessage.attachments.isEmpty ? activeSession(to: conversation.destinationHash) : nil)
+        if deliverySession == nil {
             if !pendingLinkHashes.contains(conversation.destinationHash) { await requestLink(to: conversation.destinationHash) }
             return
         }
-        guard let session = outboundSession(to: conversation.destinationHash) else { return }
+        guard let session = deliverySession else { return }
         let directSlots = max(0, maximumInFlightReceipts - pendingReceipts.values.count { $0.destinationHash == conversation.destinationHash })
         for item in remainingQueued.prefix(directSlots) {
             guard item.attachments.isEmpty else { continue }
@@ -7062,7 +7202,16 @@ public final class SidebandStore {
             deliveryDebugTrace("RX unmatched resource request on link \(session.linkID.hex)")
             return
         }
+        let requestFingerprint = ReticulumIdentity.fullHash(plaintext)
+        if resource.lastRequestFingerprint == requestFingerprint,
+           let lastRequestAt = resource.lastRequestAt,
+           Date().timeIntervalSince(lastRequestAt) < 1 {
+            deliveryDebugTrace("RX suppressed duplicate resource request \(request.resourceHash.hex)")
+            return
+        }
         deliveryDebugTrace("RX resource request \(request.resourceHash.hex) for \(request.requestedPartHashes.count) parts")
+        resource.lastRequestFingerprint = requestFingerprint
+        resource.lastRequestAt = .now
         resource.timeoutToken = UUID()
         outgoingResources[request.resourceHash.hex] = resource
         scheduleResourceTimeout(hash: request.resourceHash.hex, incoming: false)
@@ -7075,7 +7224,9 @@ public final class SidebandStore {
                         session: session
                     )
                     resource.sentIndices.insert(index)
-                    deliveryDebugTrace("TX resource part \(index + 1)/\(resource.parts.count) for \(request.resourceHash.hex) on link \(session.linkID.hex)")
+                    if (index + 1).isMultiple(of: 64) || index + 1 == resource.parts.count {
+                        deliveryDebugTrace("TX resource progress \(index + 1)/\(resource.parts.count) for \(request.resourceHash.hex)")
+                    }
                 } catch {
                     deliveryDebugTrace("TX resource part failed for \(request.resourceHash.hex): \(error.localizedDescription)")
                     return
@@ -7218,20 +7369,48 @@ public final class SidebandStore {
     }
 
     private func requestIncomingResourceParts(resourceHash: String) {
-        guard let incoming = incomingResources[resourceHash],
-              let request = try? incoming.receiver.nextRequest() else { return }
+        guard var incoming = incomingResources[resourceHash],
+              let request = try? incoming.receiver.nextRequest(
+                  window: incoming.requestWindow
+              ) else { return }
+        let requestToken = UUID()
+        incoming.requestToken = requestToken
+        incoming.requestedPartHashes = Set(request.requestedPartHashes)
+        incomingResources[resourceHash] = incoming
+        deliveryDebugTrace(
+            "TX resource request \(resourceHash) received=\(incoming.receiver.receivedPartCount) " +
+            "known=\(incoming.receiver.knownHashCount)/\(incoming.receiver.manifest.partCount) " +
+            "parts=\(request.requestedPartHashes.count) moreMap=\(request.wantsMoreHashMap)"
+        )
         Task {
             try? await transmitLinkPacket(
                 try incoming.session.resourceRequestPacket(request),
                 session: incoming.session
             )
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled,
+                  var current = incomingResources[resourceHash],
+                  current.requestToken == requestToken,
+                  !current.receiver.isComplete else { return }
+            current.requestWindow = max(2, current.requestWindow - 1)
+            incomingResources[resourceHash] = current
+            deliveryDebugTrace("TX retrying incomplete resource window \(resourceHash)")
+            requestIncomingResourceParts(resourceHash: resourceHash)
         }
     }
 
     private func handleResourceHashMapUpdate(_ plaintext: Data, session: ReticulumLinkSession) {
         guard let update = try? ReticulumResourceHashMapUpdate(encoded: plaintext),
               var incoming = incomingResources[update.resourceHash.hex], incoming.session.linkID == session.linkID else { return }
+        let previousKnownHashCount = incoming.receiver.knownHashCount
         do { try incoming.receiver.applyHashMap(segment: update.segment, hashes: update.partHashes) } catch { return }
+        // Hash-map responses can legitimately be replayed by transports or a
+        // peer retry. An identical map contains no new work and must not
+        // launch a second copy of the current part window.
+        guard incoming.receiver.knownHashCount > previousKnownHashCount else {
+            deliveryDebugTrace("RX duplicate resource hash map \(update.segment) for \(update.resourceHash.hex)")
+            return
+        }
         incoming.timeoutToken = UUID()
         incomingResources[update.resourceHash.hex] = incoming
         scheduleResourceTimeout(hash: update.resourceHash.hex, incoming: true)
@@ -7245,20 +7424,35 @@ public final class SidebandStore {
             }
         }
         guard let match else {
-            deliveryDebugTrace("RX unmatched resource part on link \(session.linkID.hex), bytes \(part.count)")
+            let actualHashes = incomingResources.values
+                .filter { $0.session.linkID == session.linkID }
+                .map { Data(ReticulumIdentity.fullHash(part + $0.receiver.manifest.randomHash).prefix(4)).hex }
+                .joined(separator: ",")
+            deliveryPacketTrace("RX unmatched resource part on link \(session.linkID.hex), bytes \(part.count), actual=\(actualHashes)")
             return
         }
         let hash = match.key
         var incoming = match.value
-        guard let index = incoming.receiver.missingPartIndices.first(where: { incoming.receiver.expectedHash(at: $0) == Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4)) }) else { return }
+        let partHash = Data(ReticulumIdentity.fullHash(part + incoming.receiver.manifest.randomHash).prefix(4))
+        guard let index = incoming.receiver.missingPartIndices.first(where: { incoming.receiver.expectedHash(at: $0) == partHash }) else { return }
         do { try incoming.receiver.accept(part: part, at: index) } catch { return }
+        incoming.requestedPartHashes.remove(partHash)
+        if incoming.receiver.receivedPartCount.isMultiple(of: 64) || incoming.receiver.isComplete {
+            deliveryDebugTrace("RX resource progress \(incoming.receiver.receivedPartCount)/\(incoming.receiver.manifest.partCount) for \(hash)")
+        }
         incoming.timeoutToken = UUID()
+        if incoming.requestedPartHashes.isEmpty {
+            // Reticulum's normal congestion controller adds one part after a
+            // clean request round and initially caps slow/ordinary links at
+            // ten. This is deliberately conservative and interoperates well
+            // with radio, TCP and multi-hop gateways alike.
+            incoming.requestWindow = min(10, incoming.requestWindow + 1)
+        }
         incomingResources[hash] = incoming
         incomingResourceProgress[incoming.advertisement.originalHash.hex] = (Double(incoming.advertisement.segmentIndex - 1) + incoming.receiver.progress) / Double(incoming.advertisement.totalSegments)
         scheduleResourceTimeout(hash: hash, incoming: true)
         if incoming.receiver.isComplete { Task { await finishIncomingResource(resourceHash: hash) } }
-        else if incoming.receiver.receivedPartCount.isMultiple(of: 4)
-                    || (incoming.receiver.missingPartIndices.isEmpty && incoming.receiver.needsMoreHashMap) {
+        else if incoming.requestedPartHashes.isEmpty {
             requestIncomingResourceParts(resourceHash: hash)
         }
     }

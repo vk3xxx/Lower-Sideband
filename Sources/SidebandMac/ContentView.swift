@@ -96,6 +96,7 @@ struct ContentView: View {
     @Bindable var store: SidebandStore
     @State private var showingNewConversation = false
     @State private var showingNetwork = false
+    @State private var showingSettings = false
     @State private var showingCallHistory = false
     @State private var showingNetworkMap = false
     @State private var showingSituationMap = false
@@ -153,6 +154,7 @@ struct ContentView: View {
                             .buttonStyle(.borderless)
                             .font(.caption.weight(.semibold))
                             .textCase(nil)
+                            .accessibilityIdentifier("new-conversation")
                             .accessibilityLabel("New conversation")
                             .accessibilityHint("Start a conversation using an LXMF ID or contact link")
                             .help("Start a conversation using an LXMF ID or contact link (Command-N)")
@@ -319,6 +321,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingNewConversation) { NewConversationView(store: store) }
         .sheet(isPresented: $showingNetwork) { NetworkView(store: store) }
+        .sheet(isPresented: $showingSettings) { SidebandSettingsView(store: store, showsCloseButton: true) }
         .sheet(isPresented: $showingDeliveryActivity) { DeliveryActivityView(store: store) }
         .sheet(isPresented: $showingConversationOrganizer) { ConversationOrganizerView(store: store) }
         .sheet(isPresented: $showingMeshTools) { MeshChatFeatureCenterView(store: store) }
@@ -453,13 +456,16 @@ struct ContentView: View {
             CallKitCoordinator.shared.install(store: store)
             synchronizeCallKit(store.voiceCall)
             #endif
-            DeliverySoakRunner.configureNetworkIfRequested(store)
-            await store.startTransport()
-            let startedSoakNetwork = await DeliverySoakRunner.startNetworkIfRequested(store)
-            if !startedSoakNetwork, store.autoConnectEnabled { await store.startAutomaticConnection() }
-            if store.autoInterfaceEnabled { store.startAutoInterfaceDiscovery() }
-            if store.iCloudSyncEnabled { await store.syncICloudNow() }
-            await DeliverySoakRunner.runIfRequested(store)
+            // The app root owns DEBUG acceptance start-up so it can isolate the
+            // requested topology before stale queue cleanup. Starting the
+            // normal connector here as well races that isolation and can
+            // restore a remembered LAN gateway into an internet-only run.
+            if ProcessInfo.processInfo.environment["SIDEBAND_SOAK_DESTINATION"] == nil {
+                await store.startTransport()
+                if store.autoConnectEnabled { await store.startAutomaticConnection() }
+                if store.autoInterfaceEnabled { store.startAutoInterfaceDiscovery() }
+                if store.iCloudSyncEnabled { await store.syncICloudNow() }
+            }
         }
         .onOpenURL { url in
             if store.handleServiceURL(url) {
@@ -472,6 +478,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            guard ProcessInfo.processInfo.environment["SIDEBAND_SOAK_DESTINATION"] == nil else { return }
             switch phase {
             case .active: Task { await store.applicationDidBecomeActive() }
             case .background: store.applicationDidEnterBackground()
@@ -486,7 +493,7 @@ struct ContentView: View {
         #if os(macOS)
         openSettings()
         #else
-        showingNetwork = true
+        showingSettings = true
         #endif
     }
 

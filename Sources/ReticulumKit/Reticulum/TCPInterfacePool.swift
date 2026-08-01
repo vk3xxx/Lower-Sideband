@@ -243,6 +243,11 @@ public actor ReticulumTCPInterfacePool {
     private func received(_ packet: ReticulumPacket, on interfaceID: String) async {
         guard var entry = entries[interfaceID] else { return }
         entry.lastPacketAt = .now
+        // Receiving a valid Reticulum packet proves that this connection is
+        // genuinely useful, so a later retry may start from the short delay.
+        // Merely reaching TCP `ready` is insufficient: overloaded or
+        // rate-limiting gateways can accept and immediately reset clients.
+        entry.reconnectAttempt = 0
         entries[interfaceID] = entry
         await packetHandler(interfaceID, packet)
     }
@@ -252,7 +257,6 @@ public actor ReticulumTCPInterfacePool {
         entry.state = state
         if state == .ready {
             entry.connectedAt = .now
-            entry.reconnectAttempt = 0
             entry.reconnectToken = nil
         } else if state.needsReconnect, entry.reconnectToken == nil {
             entry.reconnectAttempt += 1

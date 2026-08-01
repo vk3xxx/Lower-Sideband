@@ -238,6 +238,7 @@ struct SidebandSettingsView: View {
                             }
                         }
                         .accessibilityHint(destination.subtitle)
+                        .accessibilityIdentifier("settings-row-\(destination.rawValue)")
                     }
                 }
             }

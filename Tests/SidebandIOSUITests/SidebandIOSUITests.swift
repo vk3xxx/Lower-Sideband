@@ -30,7 +30,7 @@ import XCTest
         let settings = app.descendants(matching: .any)["app-settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 15))
         settings.tap()
-        XCTAssertTrue(app.descendants(matching: .any)["settings-navigation"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.descendants(matching: .any)["settings-row-connection"].waitForExistence(timeout: 8))
         retainScreenshot("03-settings")
     }
 
@@ -41,6 +41,18 @@ import XCTest
         XCTAssertTrue(app.descendants(matching: .any)["network-connections-screen"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Network Status"].exists)
         retainScreenshot("04-network-connections")
+    }
+
+    func testBackgroundAndColdLaunchRecoveryKeepCoreControlsReachable() throws {
+        XCTAssertTrue(app.descendants(matching: .any)["network-connections"].waitForExistence(timeout: 15))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.descendants(matching: .any)["new-conversation"].waitForExistence(timeout: 10))
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["network-connections"].waitForExistence(timeout: 15))
+        retainScreenshot("05-lifecycle-recovery")
     }
 
     private func retainScreenshot(_ name: String) {

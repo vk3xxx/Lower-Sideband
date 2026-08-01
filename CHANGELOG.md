@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.2 (140) - 2026-08-01
+
+- Made delivery acceptance fail closed on the exact requested TCP endpoint by
+  isolating networking before stale-run cleanup or queued-message recovery.
+- Expanded the bidirectional soak harness to verify deterministic telemetry,
+  voice-message fields, inline images and byte-exact 1 MiB attachments, with
+  configurable reconnects, queue recovery and randomized timing.
+- Added iPhone, iPad and Mac lifecycle acceptance covering background return,
+  cold launch and continued access to core connection and messaging controls.
+- Improved stable accessibility coverage for New Conversation and Settings on
+  compact Apple layouts.
+- Fixed reconnect recovery for in-flight text receipts and Reticulum Resource
+  attachments by cleanly closing peer links and immediately requeueing work.
+- Matched stock Reticulum Resource flow control with adaptive request windows,
+  bounded retries and map-aligned part requests for reliable large transfers.
+- Reused authenticated bidirectional links for text delivery after simultaneous
+  peer reconnects, preventing valid queues from stalling in link negotiation.
+
 ## 1.4.1 (139) - 2026-07-31
 
 - Fixed one-hop TCP gateway routing so Reticulum packets are injected through

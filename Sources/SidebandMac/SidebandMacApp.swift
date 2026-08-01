@@ -11,14 +11,18 @@ import UIKit
 
 @main
 struct SidebandApp: App {
+    @MainActor private static var rootSoakTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
-    @State private var store = SidebandStore()
+    @State private var store: SidebandStore
 #if os(iOS)
     @UIApplicationDelegateAdaptor(SidebandAppDelegate.self) private var appDelegate
 #endif
 
     init() {
+        let initialStore = SidebandStore()
+        _store = State(initialValue: initialStore)
         NotificationInteractionBridge.shared.activate()
+        Self.startRootSoakIfRequested(initialStore)
     }
 
     @SceneBuilder
@@ -29,7 +33,7 @@ struct SidebandApp: App {
                 .frame(minWidth: 1_020, minHeight: 640)
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
-                    await startRootSoakIfRequested()
+                    Self.startRootSoakIfRequested(store)
                     await store.notifications.prepare()
                 }
         }
@@ -49,7 +53,7 @@ struct SidebandApp: App {
             protectedContent
                 .task {
                     NotificationInteractionBridge.shared.install(store: store)
-                    await startRootSoakIfRequested()
+                    Self.startRootSoakIfRequested(store)
                     await store.notifications.prepare()
                     RemoteWakeBridge.shared.install(
                         wake: { [store] in await store.performRemoteWakeSync() },
@@ -105,17 +109,37 @@ struct SidebandApp: App {
     /// Acceptance runs must not depend on the conversation view appearing.
     /// Privacy locking and scene restoration can legitimately keep that view
     /// out of the hierarchy while the network engine is otherwise available.
-    @MainActor private func startRootSoakIfRequested() async {
+    @MainActor private static func startRootSoakIfRequested(_ activeStore: SidebandStore) {
         guard ProcessInfo.processInfo.environment["SIDEBAND_SOAK_DESTINATION"] != nil else { return }
+        guard Self.rootSoakTask == nil else { return }
+        // SwiftUI may cancel a view-bound `.task` while the privacy gate or
+        // scene hierarchy is being replaced. Keep the acceptance runner in a
+        // retained unstructured task so that lifecycle rendering cannot abort
+        // transport setup and restore the user's automatic-connection
+        // preferences halfway through a run.
+        Self.rootSoakTask = Task { @MainActor in
+            await performRootSoak(activeStore)
+        }
+    }
+
+    @MainActor private static func performRootSoak(_ store: SidebandStore) async {
+        print("SIDEBAND_SOAK_BOOT phase=starting")
         let environment = ProcessInfo.processInfo.environment
         let currentPrefixes = Set([
             environment["SIDEBAND_SOAK_OUTBOUND_PREFIX"],
             environment["SIDEBAND_SOAK_INBOUND_PREFIX"]
         ].compactMap { $0 })
-        _ = await store.purgeDeliverySoakMessages(keepingPrefixes: currentPrefixes)
+        // Apply acceptance networking before cleanup. A large stale soak can
+        // take long enough to let the normal connector restore a remembered
+        // LAN interface and flush unrelated user messages into the test run.
         DeliverySoakRunner.configureNetworkIfRequested(store)
+        await store.disconnectNetwork()
+        print("SIDEBAND_SOAK_BOOT phase=network-isolated")
+        _ = await store.purgeDeliverySoakMessages(keepingPrefixes: currentPrefixes)
+        print("SIDEBAND_SOAK_BOOT phase=cleanup-complete")
         await store.startTransport()
         _ = await DeliverySoakRunner.startNetworkIfRequested(store)
+        print("SIDEBAND_SOAK_BOOT phase=network-started")
         await DeliverySoakRunner.runIfRequested(store)
     }
 }
@@ -730,6 +754,11 @@ enum DeliverySoakRunner {
             max(1, Int(environment["SIDEBAND_SOAK_ATTACHMENT_BYTES"] ?? "1048576") ?? 1_048_576)
         )
         let reconnectInterval = max(0, Int(environment["SIDEBAND_SOAK_RECONNECT_INTERVAL"] ?? "0") ?? 0)
+        let telemetryInterval = max(0, Int(environment["SIDEBAND_SOAK_TELEMETRY_INTERVAL"] ?? "0") ?? 0)
+        let voiceInterval = max(0, Int(environment["SIDEBAND_SOAK_VOICE_INTERVAL"] ?? "0") ?? 0)
+        if telemetryInterval > 0 {
+            store.setConversationTelemetrySharing(true, conversationID: conversationID)
+        }
         let queueRecoveryRequested = environment["SIDEBAND_SOAK_QUEUE_RECOVERY"] == "1"
         if queueRecoveryRequested {
             store.autoConnectEnabled = false
@@ -767,7 +796,21 @@ enum DeliverySoakRunner {
                         attachments = [attachment]
                     }
                 }
-                _ = await store.send(body, to: conversationID, attachments: attachments)
+                let telemetry = telemetryInterval > 0 &&
+                    sequence.isMultiple(of: telemetryInterval) &&
+                    attachments.isEmpty
+                    ? telemetryPayload(sequence: sequence)
+                    : nil
+                let voiceAudio = voiceInterval > 0 && sequence.isMultiple(of: voiceInterval)
+                    ? voicePayload(prefix: outboundPrefix, sequence: sequence)
+                    : nil
+                _ = await store.send(
+                    body,
+                    to: conversationID,
+                    attachments: attachments,
+                    telemetry: telemetry,
+                    voiceAudio: voiceAudio
+                )
             }
             if sequence.isMultiple(of: 25) {
                 await writeReport(store: store, destination: destination, outboundPrefix: outboundPrefix, inboundPrefix: inboundPrefix, count: count, startedAt: startedAt, reportURL: reportURL, phase: "enqueueing-\(sequence)-of-\(count)")
@@ -822,7 +865,10 @@ enum DeliverySoakRunner {
                report.duplicateInbound.isEmpty,
                report.inboundInOrder,
                report.attachmentIntegrityFailures.isEmpty,
-               report.inboundAttachmentsVerified == report.expectedAttachmentsEachDirection {
+               report.inboundAttachmentsVerified == report.expectedAttachmentsEachDirection,
+               report.mixedContentFailures.isEmpty,
+               report.inboundTelemetryVerified == report.expectedTelemetryEachDirection,
+               report.inboundVoiceMessagesVerified == report.expectedVoiceMessagesEachDirection {
                 var complete = report
                 complete.phase = "complete"
                 complete.completedAt = .now
@@ -887,6 +933,41 @@ enum DeliverySoakRunner {
             }
             inboundAttachmentsVerified += 1
         }
+        let telemetryInterval = max(0, Int(environment["SIDEBAND_SOAK_TELEMETRY_INTERVAL"] ?? "0") ?? 0)
+        let expectedTelemetrySequences = telemetryInterval > 0
+            ? (1...count).filter {
+                $0.isMultiple(of: telemetryInterval) &&
+                    !(attachmentInterval > 0 && $0.isMultiple(of: attachmentInterval))
+            }
+            : []
+        let voiceInterval = max(0, Int(environment["SIDEBAND_SOAK_VOICE_INTERVAL"] ?? "0") ?? 0)
+        let expectedVoiceSequences = voiceInterval > 0
+            ? (1...count).filter { $0.isMultiple(of: voiceInterval) }
+            : []
+        var inboundTelemetryVerified = 0
+        var inboundVoiceMessagesVerified = 0
+        var mixedContentFailures: [String] = []
+        for sequence in expectedTelemetrySequences {
+            let body = messageBody(prefix: inboundPrefix, sequence: sequence)
+            guard let message = inbound.first(where: { $0.body == body }) else { continue }
+            // Telemetry coordinates are canonicalised to Reticulum's fixed
+            // wire precision. Compare the canonical payloads instead of raw
+            // binary floating-point intermediates from the fixture builder.
+            guard message.telemetry?.packed() == telemetryPayload(sequence: sequence).packed() else {
+                mixedContentFailures.append("\(body): telemetry mismatch")
+                continue
+            }
+            inboundTelemetryVerified += 1
+        }
+        for sequence in expectedVoiceSequences {
+            let body = messageBody(prefix: inboundPrefix, sequence: sequence)
+            guard let message = inbound.first(where: { $0.body == body }) else { continue }
+            guard message.voiceAudio == voicePayload(prefix: inboundPrefix, sequence: sequence) else {
+                mixedContentFailures.append("\(body): voice payload mismatch")
+                continue
+            }
+            inboundVoiceMessagesVerified += 1
+        }
         return DeliverySoakReport(
             phase: phase,
             networkMode: environment["SIDEBAND_SOAK_NETWORK_MODE"] ?? "unchanged",
@@ -909,6 +990,11 @@ enum DeliverySoakRunner {
             expectedAttachmentsEachDirection: expectedAttachmentSequences.count,
             inboundAttachmentsVerified: inboundAttachmentsVerified,
             attachmentIntegrityFailures: attachmentIntegrityFailures,
+            expectedTelemetryEachDirection: expectedTelemetrySequences.count,
+            inboundTelemetryVerified: inboundTelemetryVerified,
+            expectedVoiceMessagesEachDirection: expectedVoiceSequences.count,
+            inboundVoiceMessagesVerified: inboundVoiceMessagesVerified,
+            mixedContentFailures: mixedContentFailures,
             knownPath: store.hasPath(to: destination),
             deliveryTimeouts: max(0, store.deliveryTimeoutCount - deliveryTimeoutBaseline),
             expectedForcedReconnects: expectedForcedReconnectCount(messageCount: count),
@@ -982,6 +1068,40 @@ enum DeliverySoakRunner {
         return data
     }
 
+    private static func telemetryPayload(sequence: Int) -> SidebandTelemetry {
+        let timestamp = Date(timeIntervalSince1970: 1_800_000_000 + TimeInterval(sequence))
+        return SidebandTelemetry(
+            capturedAt: timestamp,
+            location: .init(
+                latitude: -37.8 + Double(sequence % 100) / 10_000,
+                longitude: 144.9 + Double(sequence % 100) / 10_000,
+                altitude: Double(sequence % 500),
+                speed: Double(sequence % 40),
+                bearing: Double(sequence % 360),
+                accuracy: 5,
+                updatedAt: timestamp
+            ),
+            battery: .init(
+                chargePercent: Double(sequence % 101),
+                isCharging: sequence.isMultiple(of: 2),
+                temperature: 20 + Double(sequence % 15)
+            )
+        )
+    }
+
+    private static func voicePayload(prefix: String, sequence: Int) -> LXMFVoiceMessageAudio? {
+        let seed = Data(SHA256.hash(data: Data("voice:\(prefix):\(sequence)".utf8)))
+        let firstPacket = seed.subdata(in: 0..<12)
+        let secondPacket = seed.subdata(in: (seed.count - 12)..<seed.count)
+        let stream = OggOpusStream.mux(
+            packets: [firstPacket, secondPacket],
+            frameSamplesAt48k: 2_880,
+            inputSampleRate: 12_000,
+            serial: UInt32(truncatingIfNeeded: sequence)
+        )
+        return try? LXMFVoiceMessageAudio(mode: .opusOgg, encodedAudio: stream)
+    }
+
     private static func waitForPeer(_ store: SidebandStore, destination: String, timeout: Int) async -> Bool {
         let deadline = ContinuousClock.now + .seconds(timeout)
         var nextRequest = ContinuousClock.now
@@ -1017,6 +1137,8 @@ enum DeliverySoakRunner {
             "queued=\(report.outboundQueued) sent=\(report.outboundSent) failed=\(report.outboundFailed) " +
             "in=\(report.inboundReceived)/\(report.expectedEachDirection) " +
             "attachments=\(report.inboundAttachmentsVerified)/\(report.expectedAttachmentsEachDirection) " +
+            "telemetry=\(report.inboundTelemetryVerified)/\(report.expectedTelemetryEachDirection) " +
+            "voice=\(report.inboundVoiceMessagesVerified)/\(report.expectedVoiceMessagesEachDirection) " +
             "timeouts=\(report.deliveryTimeouts)"
         )
         if report.phase == "complete" ||
@@ -1053,6 +1175,11 @@ private struct DeliverySoakReport: Codable {
     let expectedAttachmentsEachDirection: Int
     let inboundAttachmentsVerified: Int
     let attachmentIntegrityFailures: [String]
+    let expectedTelemetryEachDirection: Int
+    let inboundTelemetryVerified: Int
+    let expectedVoiceMessagesEachDirection: Int
+    let inboundVoiceMessagesVerified: Int
+    let mixedContentFailures: [String]
     let knownPath: Bool
     let deliveryTimeouts: Int
     let expectedForcedReconnects: Int
