@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.3 (141) - 2026-08-02
+
+- Published the hardened delivery and reconnect recovery implementation as a
+  synchronized iPhone, iPad and native Mac TestFlight build.
+- Kept both Apple platforms on one version and build number so testers receive
+  identical ReticulumKit networking and mixed-message reliability behavior.
+
 ## 1.4.2 (140) - 2026-08-01
 
 - Made delivery acceptance fail closed on the exact requested TCP endpoint by
