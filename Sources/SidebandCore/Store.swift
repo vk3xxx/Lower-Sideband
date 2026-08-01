@@ -2857,6 +2857,15 @@ public final class SidebandStore {
         transportState = await transport.state
         await transportInstance.setEnabled(transportInstanceEnabled)
         transportInstanceSnapshot = await transportInstance.snapshot()
+        #if DEBUG
+        // Public acceptance runs must be topology-pure. Persisted interface
+        // profiles are intentionally useful in the real app, but restoring a
+        // saved LAN TCP profile here would let an "internet-only" run silently
+        // traverse the operator's local gateway before the soak runner can
+        // establish its explicit public interface.
+        let acceptanceMode = ProcessInfo.processInfo.environment["SIDEBAND_SOAK_NETWORK_MODE"]
+        if acceptanceMode == "public" || acceptanceMode == "internet" { return }
+        #endif
         await restartConfiguredInterfaces()
     }
 

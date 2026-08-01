@@ -636,7 +636,12 @@ enum DeliverySoakRunner {
         case "public":
             let host = environment["SIDEBAND_SOAK_INTERNET_HOST"] ?? "sydney.reticulum.au"
             let port = UInt16(environment["SIDEBAND_SOAK_INTERNET_PORT"] ?? "4242") ?? 4_242
-            await store.connectNetwork(explicitHost: host, explicitPort: port, internetGatewayID: "\(host.lowercased()):\(port)")
+            // A public acceptance run must exercise exactly the endpoint named
+            // by the harness. Passing an internet gateway ID intentionally
+            // activates the app's resilient multi-gateway pool, which can also
+            // include a remembered private/LAN gateway and invalidate the
+            // topology being measured.
+            await store.connectNetwork(explicitHost: host, explicitPort: port)
         case "automatic", "internet":
             await store.startAutomaticConnection()
         default:
