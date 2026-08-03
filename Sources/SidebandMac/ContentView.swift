@@ -108,6 +108,7 @@ struct ContentView: View {
     @State private var conversationFilter: ConversationFilter = .all
     @State private var conversationSort: ConversationSort = .activity
     @State private var discoverySort: DiscoverySort = .recent
+    @State private var showingAllDiscoveries = false
     @State private var renamingConversation: Conversation?
     @State private var renameDraft = ""
     @State private var notingConversation: Conversation?
@@ -160,13 +161,14 @@ struct ContentView: View {
                             .help("Start a conversation using an LXMF ID or contact link (Command-N)")
                         }
                     }
-                    if !filteredDiscoveries.isEmpty {
-                        Section("Discovered") {
-                            ForEach(filteredDiscoveries) { discovery in
-                                discoveryRow(discovery)
-                            }
-                        }
-                    }
+                    DiscoverySidebarSection(
+                        store: store,
+                        search: conversationSearch,
+                        conversationFilter: conversationFilter,
+                        sort: discoverySort,
+                        showAll: $showingAllDiscoveries,
+                        onStartConversation: startConversation
+                    )
                 }
                 .searchable(text: $conversationSearch, prompt: "Search conversations")
                 .navigationTitle("Lower Sideband")
@@ -243,6 +245,7 @@ struct ContentView: View {
                             Button("Older than 7 days") { pruneDiscoveries(days: 7) }
                             Button("Older than 30 days") { pruneDiscoveries(days: 30) }
                         }
+                        Toggle("Show all discoveries", isOn: $showingAllDiscoveries)
                     } label: {
                         Label("Sort discoveries", systemImage: "arrow.up.arrow.down")
                     }
@@ -946,27 +949,6 @@ private struct LegacyMigrationCenterView: View {
         return parts.joined(separator: ". ")
     }
 
-    @ViewBuilder private func discoveryRow(_ discovery: DiscoveredDestination) -> some View {
-        Button { startConversation(with: discovery) } label: {
-            DiscoveredDestinationRow(discovery: discovery)
-        }
-        .buttonStyle(.plain)
-        .help("\(discovery.announcedDisplayName ?? discovery.destinationHash) — \(discovery.hops) hop\(discovery.hops == 1 ? "" : "s"), \(discovery.isValidated ? "cryptographically validated" : "not yet validated"), last seen \(discovery.lastSeen.formatted(date: .omitted, time: .standard)). Select to start or open a conversation.")
-        .contextMenu {
-            Button { copyToSystemClipboard(discovery.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
-            if let contactLink = SidebandContactLink(destinationHash: discovery.destinationHash, displayName: discovery.announcedDisplayName, publicKey: discovery.isValidated ? discovery.publicKey : nil) {
-                Button { copyToSystemClipboard(contactLink.url.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
-                ShareLink(item: contactLink.url) { Label("Share Contact Link", systemImage: "square.and.arrow.up") }
-            }
-            Button { startConversation(with: discovery) } label: { Label("Start Conversation", systemImage: "message") }
-            if !store.conversations.contains(where: { $0.destinationHash == discovery.destinationHash }) {
-                Button(role: .destructive) { _ = store.forgetDiscovery(discovery.destinationHash) } label: {
-                    Label("Forget Discovery", systemImage: "trash")
-                }
-            }
-        }
-    }
-
     private func pruneDiscoveries(days: Double) {
         let removed = store.pruneDiscoveries(olderThan: days * 24 * 60 * 60)
         if removed == 0 { store.lastError = "No unreferenced discoveries were old enough to remove." }
@@ -1138,31 +1120,6 @@ private struct LegacyMigrationCenterView: View {
         }
     }
 
-    private var filteredDiscoveries: [DiscoveredDestination] {
-        let query = conversationSearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        if conversationFilter == .unread { return [] }
-        let messageDestinations = store.discoveries.filter { !$0.isLXSTVoiceDestination }
-        let matching = query.isEmpty ? messageDestinations : messageDestinations.filter {
-            $0.destinationHash.localizedCaseInsensitiveContains(query)
-                || ($0.announcedDisplayName?.localizedCaseInsensitiveContains(query) ?? false)
-        }
-        return matching.sorted { left, right in
-            switch discoverySort {
-            case .recent:
-                if left.lastSeen != right.lastSeen { return left.lastSeen > right.lastSeen }
-            case .hops:
-                if left.hops != right.hops { return left.hops < right.hops }
-                if left.lastSeen != right.lastSeen { return left.lastSeen > right.lastSeen }
-            case .name:
-                let leftName = left.announcedDisplayName ?? left.destinationHash
-                let rightName = right.announcedDisplayName ?? right.destinationHash
-                let order = leftName.localizedCaseInsensitiveCompare(rightName)
-                if order != .orderedSame { return order == .orderedAscending }
-            }
-            return left.destinationHash < right.destinationHash
-        }
-    }
-
     private func messagePreview(_ message: Message) -> String {
         if !message.body.isEmpty { return message.body }
         if message.voiceAudio != nil { return "Voice message" }
@@ -1221,8 +1178,125 @@ private struct LegacyMigrationCenterView: View {
     }
 }
 
-private struct DiscoveredDestinationRow: View {
+/// Owns the high-churn discovery observation so packet activity does not
+/// invalidate the entire navigation split view or the active conversation.
+private struct DiscoverySidebarSection: View {
+    @Bindable var store: SidebandStore
+    let search: String
+    let conversationFilter: ConversationFilter
+    let sort: DiscoverySort
+    @Binding var showAll: Bool
+    let onStartConversation: (DiscoveredDestination) -> Void
+
+    @State private var visibleDiscoveries: [DiscoveredDestination] = []
+    @State private var matchCount = 0
+    @State private var clock = Date.now
+
+    var body: some View {
+        Group {
+            if !visibleDiscoveries.isEmpty {
+                Section("Discovered") {
+                    ForEach(visibleDiscoveries) { discovery in
+                        DiscoverySidebarButton(
+                            discovery: discovery,
+                            now: clock,
+                            conversationExists: store.conversations.contains { $0.destinationHash == discovery.destinationHash },
+                            onStartConversation: onStartConversation,
+                            onForget: { _ = store.forgetDiscovery($0) }
+                        )
+                    }
+                    if visibleDiscoveries.count < matchCount {
+                        Button("Show all \(matchCount) discoveries") { showAll = true }
+                            .buttonStyle(.borderless)
+                            .font(.caption.weight(.semibold))
+                            .help("The sidebar shows the most relevant destinations by default to keep Lower Sideband responsive")
+                    }
+                }
+                .task(id: "discovery-relative-time") {
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(60))
+                        guard !Task.isCancelled else { return }
+                        clock = .now
+                    }
+                }
+            }
+        }
+        .task { refresh() }
+        .onChange(of: store.discoveries) { _, _ in refresh() }
+        .onChange(of: search) { _, _ in refresh() }
+        .onChange(of: sort) { _, _ in refresh() }
+        .onChange(of: conversationFilter) { _, _ in refresh() }
+        .onChange(of: showAll) { _, _ in refresh() }
+    }
+
+    private func refresh() {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard conversationFilter != .unread else {
+            matchCount = 0
+            visibleDiscoveries = []
+            return
+        }
+        let destinations = store.discoveries.filter { !$0.isLXSTVoiceDestination }
+        let matching = query.isEmpty ? destinations : destinations.filter {
+            $0.destinationHash.localizedCaseInsensitiveContains(query)
+                || ($0.announcedDisplayName?.localizedCaseInsensitiveContains(query) ?? false)
+        }
+        let sorted = matching.sorted { left, right in
+            switch sort {
+            case .recent:
+                if left.lastSeen != right.lastSeen { return left.lastSeen > right.lastSeen }
+            case .hops:
+                if left.hops != right.hops { return left.hops < right.hops }
+                if left.lastSeen != right.lastSeen { return left.lastSeen > right.lastSeen }
+            case .name:
+                let order = (left.announcedDisplayName ?? left.destinationHash)
+                    .localizedCaseInsensitiveCompare(right.announcedDisplayName ?? right.destinationHash)
+                if order != .orderedSame { return order == .orderedAscending }
+            }
+            return left.destinationHash < right.destinationHash
+        }
+        matchCount = sorted.count
+        let limit = showAll ? sorted.count : (
+            query.isEmpty
+                ? SidebandPerformancePolicy.defaultSidebarDiscoveryLimit
+                : SidebandPerformancePolicy.searchedSidebarDiscoveryLimit
+        )
+        visibleDiscoveries = Array(sorted.prefix(limit))
+    }
+}
+
+private struct DiscoverySidebarButton: View {
     let discovery: DiscoveredDestination
+    let now: Date
+    let conversationExists: Bool
+    let onStartConversation: (DiscoveredDestination) -> Void
+    let onForget: (String) -> Void
+
+    var body: some View {
+        Button { onStartConversation(discovery) } label: {
+            DiscoveredDestinationRow(discovery: discovery, now: now).equatable()
+        }
+        .buttonStyle(.plain)
+        .help("\(discovery.announcedDisplayName ?? discovery.destinationHash) — \(discovery.hops) hop\(discovery.hops == 1 ? "" : "s"), \(discovery.isValidated ? "cryptographically validated" : "not yet validated"), last seen \(discovery.lastSeen.formatted(date: .omitted, time: .standard)). Select to start or open a conversation.")
+        .contextMenu {
+            Button { copyToSystemClipboard(discovery.destinationHash) } label: { Label("Copy Destination", systemImage: "number") }
+            if let contactLinkURL = discovery.contactLinkURL {
+                Button { copyToSystemClipboard(contactLinkURL.absoluteString) } label: { Label("Copy Contact Link", systemImage: "link") }
+                ShareLink(item: contactLinkURL) { Label("Share Contact Link", systemImage: "square.and.arrow.up") }
+            }
+            Button { onStartConversation(discovery) } label: { Label("Start Conversation", systemImage: "message") }
+            if !conversationExists {
+                Button(role: .destructive) { onForget(discovery.destinationHash) } label: {
+                    Label("Forget Discovery", systemImage: "trash")
+                }
+            }
+        }
+    }
+}
+
+private struct DiscoveredDestinationRow: View, Equatable {
+    let discovery: DiscoveredDestination
+    let now: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -1232,11 +1306,20 @@ private struct DiscoveredDestinationRow: View {
             Text("\(discovery.hops) hops · \(discovery.isValidated ? "validated" : "unverified") · \(discovery.packetCount) packets")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            HStack(spacing: 3) { Text("Last seen"); Text(discovery.lastSeen, style: .relative) }
+            HStack(spacing: 3) {
+                Text("Last seen")
+                Text(Self.relativeDateFormatter.localizedString(for: discovery.lastSeen, relativeTo: now))
+            }
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
     }
+
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
 }
 
 private struct SnapshotBackupDocument: FileDocument {
@@ -4137,8 +4220,14 @@ private struct InlineImageAttachmentView: View {
             else if attachment.state == .transferring { Button("Cancel", action: onCancel).font(.caption) }
         }
         .task(id: attachment.id) {
+            if let cached = InlineImageThumbnailCache.shared.image(for: attachment.id) {
+                image = cached
+                return
+            }
             guard let data = try? await store.read(attachment) else { return }
-            image = thumbnail(from: data, maximumPixelSize: 640)
+            guard let thumbnail = thumbnail(from: data, maximumPixelSize: 640) else { return }
+            InlineImageThumbnailCache.shared.insert(thumbnail, for: attachment.id)
+            image = thumbnail
         }
         .sheet(isPresented: $showingPreview) {
             VStack(spacing: 12) {
@@ -4171,6 +4260,26 @@ private struct InlineImageAttachmentView: View {
 #else
         return UIImage(cgImage: cgImage)
 #endif
+    }
+}
+
+@MainActor
+private final class InlineImageThumbnailCache {
+    static let shared = InlineImageThumbnailCache()
+    private let cache = NSCache<NSString, PlatformImage>()
+
+    private init() {
+        cache.countLimit = SidebandPerformancePolicy.inlineImageCacheCountLimit
+        cache.totalCostLimit = SidebandPerformancePolicy.inlineImageCacheCostLimit
+    }
+
+    func image(for id: UUID) -> PlatformImage? {
+        cache.object(forKey: id.uuidString as NSString)
+    }
+
+    func insert(_ image: PlatformImage, for id: UUID) {
+        // A 640 px RGBA thumbnail occupies at most about 1.6 MiB decoded.
+        cache.setObject(image, forKey: id.uuidString as NSString, cost: 640 * 640 * 4)
     }
 }
 

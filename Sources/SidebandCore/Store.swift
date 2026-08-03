@@ -280,6 +280,11 @@ public final class SidebandStore {
     private var iCloudSyncTask: Task<Void, Never>?
     private var discoverySaveTask: Task<Void, Never>?
     private var deferredSaveTask: Task<Void, Never>?
+    @ObservationIgnored private var packetCounterPublishTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingReceivedPacketCount = 0
+    @ObservationIgnored private var discoveryPublishTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingDiscoveryObservations: [String: PendingDiscoveryObservation] = [:]
+    @ObservationIgnored private var networkMapCache: (createdAt: Date, snapshot: NetworkMapSnapshot)?
     @ObservationIgnored private var lastValidatedPersistenceData: Data?
     @ObservationIgnored private var legacyImportRollbackData: Data?
     private var legacyImportRollbackURL: URL {
@@ -446,6 +451,16 @@ public final class SidebandStore {
     private let tcpInterfaceHash: Data
     private var messagingIdentity: ReticulumIdentity
     @ObservationIgnored private lazy var transportInstance = ReticulumTransportInstance(identityHash: transportIdentity.hash)
+
+    private struct PendingDiscoveryObservation {
+        var hops: UInt8
+        var lastSeen: Date
+        var packetCount: Int
+        var isValidated: Bool
+        var publicKey: Data?
+        var appData: Data?
+        var ratchet: Data?
+    }
 
     private struct MessageStatistics {
         var incoming = 0
@@ -3070,15 +3085,10 @@ public final class SidebandStore {
                 communityGateways: communityInternetGateways,
                 health: gatewayHealth
             )
-            // Keep every configured public entrypoint live. Remote transports
-            // can retain a valid route to any gateway on which this identity
-            // announced for up to seven days. Rotating a three-gateway subset
-            // made the client unreachable through a previously advertised
-            // entrypoint even though its remaining sockets were healthy.
             endpoints = publicGateways.compactMap {
                 Self.networkPoolEndpoint(for: $0, isBootstrap: true)
             }
-            activeNetworkHost = "\(endpoints.count) public gateways"
+            activeNetworkHost = "up to \(min(SidebandPerformancePolicy.maximumActivePublicGateways, endpoints.count)) public gateways"
             activeNetworkPort = nil
         } else {
             let gateway = InternetGateway(name: selectedHost, host: selectedHost, port: port)
@@ -3094,8 +3104,17 @@ public final class SidebandStore {
         }
         let pool = makeInterfacePool(generation: generation)
         networkInterfacePool = pool
-        await pool.start(endpoints)
+        await pool.start(
+            endpoints,
+            activeLimit: effectiveInternetGatewayID == nil ? nil : SidebandPerformancePolicy.maximumActivePublicGateways
+        )
     }
+
+    /// Three independent public entrypoints provide route diversity without
+    /// multiplying every announce and UI statistic across the entire public
+    /// directory. Failed entrypoints are replaced from the ordered standby
+    /// list by `ReticulumTCPInterfacePool`.
+    public static let maximumActivePublicGateways = SidebandPerformancePolicy.maximumActivePublicGateways
 
     static func networkPoolEndpoint(
         for gateway: InternetGateway,
@@ -4623,6 +4642,10 @@ public final class SidebandStore {
     public var activeLinkCount: Int { activeLinkHashes.count }
 
     public func networkMapSnapshot(now: Date = .now) async -> NetworkMapSnapshot {
+        if let networkMapCache,
+           now.timeIntervalSince(networkMapCache.createdAt) < SidebandPerformancePolicy.networkMapCacheInterval {
+            return networkMapCache.snapshot
+        }
         var interfaces = networkInterfaces.map { snapshot in
             NetworkMapInterface(
                 id: snapshot.id,
@@ -4663,7 +4686,7 @@ public final class SidebandStore {
                 updatedAt: $0.updatedAt
             )
         }
-        return NetworkMapBuilder.build(
+        let snapshot = NetworkMapBuilder.build(
             localHash: localDeliveryHash,
             localName: localDisplayName,
             interfaces: interfaces,
@@ -4673,6 +4696,8 @@ public final class SidebandStore {
             propagationNodeHash: propagationNodeHash,
             generatedAt: now
         )
+        networkMapCache = (now, snapshot)
+        return snapshot
     }
 
     private static func networkMapStatus(_ state: ReticulumTCPInterface.State) -> NetworkMapNode.Status {
@@ -5333,7 +5358,19 @@ public final class SidebandStore {
     }
 
     private func receive(_ packet: ReticulumPacket, interfaceID: String? = nil) {
-        receivedPacketCount += 1
+        recordReceivedPacket()
+        // A message can immediately follow its sender's announce. Commit the
+        // short-lived batch only for traffic addressed to this client. Transit
+        // traffic on a busy public mesh must not defeat presentation batching.
+        let packetTargetsLocalDestination = localDestinationHashes.contains(packet.destinationHash.hex)
+            || (packet.packetType == .data
+                && packet.destinationType == .single
+                && packet.destinationHash.hex == localDeliveryHash)
+        if packet.packetType != .announce,
+           packetTargetsLocalDestination,
+           !pendingDiscoveryObservations.isEmpty {
+            flushPendingDiscoveryObservations()
+        }
         if let request = ReticulumPathRequest.decode(packet),
            localDestinationHashes.contains(request.targetHash.hex) {
             answerLocalPathRequest(request, interfaceID: interfaceID)
@@ -5392,6 +5429,9 @@ public final class SidebandStore {
             if let interface = ReticulumInterfaceDiscovery.decode(announce, hops: packet.hops) {
                 considerDiscoveredNetworkInterface(interface)
             }
+        }
+        queueDiscoveryObservation(hash: hash, packet: packet, announce: announce, isValidated: isValidated)
+        if isValidated, let announce {
             Task {
                 _ = await pathTable.ingest(announce, packet: packet, interfaceID: interfaceID)
                 await refreshPathState()
@@ -5399,34 +5439,109 @@ public final class SidebandStore {
                 if hash == propagationNodeHash, !pendingLinkHashes.contains(hash), !activeLinkHashes.contains(hash) {
                     await requestLink(to: hash)
                 }
-                if let conversation = conversations.first(where: { $0.destinationHash == hash }) { await attemptDelivery(for: conversation.id) }
+                if let conversation = conversations.first(where: { $0.destinationHash == hash }) {
+                    flushPendingDiscoveryObservations()
+                    await attemptDelivery(for: conversation.id)
+                }
             }
         }
+    }
+
+    private func recordReceivedPacket() {
+        pendingReceivedPacketCount += 1
+        guard packetCounterPublishTask == nil else { return }
+        packetCounterPublishTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(SidebandPerformancePolicy.packetCounterPublicationInterval))
+            guard !Task.isCancelled, let self else { return }
+            receivedPacketCount += pendingReceivedPacketCount
+            pendingReceivedPacketCount = 0
+            packetCounterPublishTask = nil
+        }
+    }
+
+    private func queueDiscoveryObservation(
+        hash: String,
+        packet: ReticulumPacket,
+        announce: ReticulumAnnounce?,
+        isValidated: Bool
+    ) {
         let now = Date.now
-        if let index = discoveries.firstIndex(where: { $0.destinationHash == hash }) {
-            let existing = discoveries[index]
-            let identityChanged = isValidated && (
-                !existing.isValidated
-                || existing.publicKey != announce?.publicKey
-                || existing.appData != announce?.appData
-                || existing.ratchet != announce?.ratchet
-            )
-            let routeChanged = existing.hops != packet.hops
-            guard identityChanged || routeChanged || now.timeIntervalSince(existing.lastSeen) >= 2 else { return }
-            discoveries[index].hops = packet.hops
-            discoveries[index].lastSeen = now
-            discoveries[index].packetCount += 1
-            if isValidated, let announce {
-                discoveries[index].isValidated = true
-                discoveries[index].publicKey = announce.publicKey
-                discoveries[index].appData = announce.appData
-                discoveries[index].ratchet = announce.ratchet
+        let current = pendingDiscoveryObservations[hash]
+            ?? discoveries.first(where: { $0.destinationHash == hash }).map {
+                PendingDiscoveryObservation(
+                    hops: $0.hops,
+                    lastSeen: $0.lastSeen,
+                    packetCount: 0,
+                    isValidated: $0.isValidated,
+                    publicKey: $0.publicKey,
+                    appData: $0.appData,
+                    ratchet: $0.ratchet
+                )
             }
-        } else {
-            discoveries.insert(DiscoveredDestination(destinationHash: hash, hops: packet.hops, isValidated: isValidated, publicKey: announce?.publicKey, appData: announce?.appData, ratchet: announce?.ratchet), at: 0)
+        var observation = current ?? PendingDiscoveryObservation(
+            hops: packet.hops,
+            lastSeen: now,
+            packetCount: 0,
+            isValidated: false,
+            publicKey: nil,
+            appData: nil,
+            ratchet: nil
+        )
+        observation.hops = packet.hops
+        observation.lastSeen = now
+        observation.packetCount += 1
+        if isValidated, let announce {
+            observation.isValidated = true
+            observation.publicKey = announce.publicKey
+            observation.appData = announce.appData
+            observation.ratchet = announce.ratchet
         }
-        discoveries.sort { $0.lastSeen > $1.lastSeen }
-        trimDiscoveryCache()
+        pendingDiscoveryObservations[hash] = observation
+        guard discoveryPublishTask == nil else { return }
+        discoveryPublishTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(SidebandPerformancePolicy.discoveryPublicationInterval))
+            guard !Task.isCancelled, let self else { return }
+            flushPendingDiscoveryObservations()
+        }
+    }
+
+    private func flushPendingDiscoveryObservations() {
+        discoveryPublishTask?.cancel()
+        discoveryPublishTask = nil
+        guard !pendingDiscoveryObservations.isEmpty else { return }
+        let pending = pendingDiscoveryObservations
+        pendingDiscoveryObservations.removeAll(keepingCapacity: true)
+        var updated = discoveries
+        for (hash, observation) in pending {
+            if let index = updated.firstIndex(where: { $0.destinationHash == hash }) {
+                updated[index].hops = observation.hops
+                updated[index].lastSeen = observation.lastSeen
+                updated[index].packetCount += observation.packetCount
+                if observation.isValidated,
+                   let publicKey = observation.publicKey,
+                   let appData = observation.appData {
+                    updated[index].isValidated = true
+                    updated[index].updateValidatedAnnounce(
+                        publicKey: publicKey,
+                        appData: appData,
+                        ratchet: observation.ratchet
+                    )
+                }
+            } else {
+                updated.append(DiscoveredDestination(
+                    destinationHash: hash,
+                    hops: observation.hops,
+                    lastSeen: observation.lastSeen,
+                    packetCount: max(1, observation.packetCount),
+                    isValidated: observation.isValidated,
+                    publicKey: observation.publicKey,
+                    appData: observation.appData,
+                    ratchet: observation.ratchet
+                ))
+            }
+        }
+        updated.sort { $0.lastSeen > $1.lastSeen }
+        discoveries = trimmedDiscoveries(updated)
         scheduleDiscoverySave()
     }
 
@@ -5564,12 +5679,18 @@ public final class SidebandStore {
     }
 
     private func trimDiscoveryCache(limit: Int = 500) {
-        guard discoveries.count > limit else { return }
+        discoveries = trimmedDiscoveries(discoveries, limit: limit)
+    }
+
+    private func trimmedDiscoveries(_ source: [DiscoveredDestination], limit: Int = 500) -> [DiscoveredDestination] {
+        guard source.count > limit else { return source }
+        var result = source
         let protected = Set(conversations.map(\.destinationHash)).union([localDeliveryHash, localVoiceHash, propagationNodeHash])
-        while discoveries.count > limit,
-              let index = discoveries.lastIndex(where: { !protected.contains($0.destinationHash) }) {
-            discoveries.remove(at: index)
+        while result.count > limit,
+              let index = result.lastIndex(where: { !protected.contains($0.destinationHash) }) {
+            result.remove(at: index)
         }
+        return result
     }
 
     private func scheduleDiscoverySave() {

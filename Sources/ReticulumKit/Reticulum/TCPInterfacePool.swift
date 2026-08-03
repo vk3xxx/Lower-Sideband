@@ -170,6 +170,8 @@ public actor ReticulumTCPInterfacePool {
     }
 
     private var entries: [String: Entry] = [:]
+    private var standbyEndpoints: [Endpoint] = []
+    private var activeEndpointLimit = Int.max
     private var aggregateState: ReticulumTCPInterface.State = .stopped
     private let packetHandler: @Sendable (String, ReticulumPacket) async -> Void
     private let stateHandler: @Sendable (ReticulumTCPInterface.State, [Snapshot]) async -> Void
@@ -182,13 +184,28 @@ public actor ReticulumTCPInterfacePool {
         self.stateHandler = stateHandler
     }
 
-    public func start(_ endpoints: [Endpoint]) async {
+    public func start(_ endpoints: [Endpoint], activeLimit: Int? = nil) async {
         await stop()
         guard !endpoints.isEmpty else { return }
 
-        for endpoint in endpoints { insert(endpoint) }
+        activeEndpointLimit = max(1, activeLimit ?? endpoints.count)
+        let partition = Self.partition(endpoints, activeLimit: activeEndpointLimit)
+        let active = partition.active
+        standbyEndpoints = partition.standby
+        for endpoint in active { insert(endpoint) }
         await publishState(force: true)
         for entry in entries.values { await entry.interface.start() }
+    }
+
+    /// Deterministic selection used by the pool and its acceptance tests.
+    /// Endpoint preference order is retained, while excess endpoints remain
+    /// warm candidates for failover instead of consuming sockets and CPU.
+    public nonisolated static func partition(
+        _ endpoints: [Endpoint],
+        activeLimit: Int
+    ) -> (active: [Endpoint], standby: [Endpoint]) {
+        let limit = min(endpoints.count, max(1, activeLimit))
+        return (Array(endpoints.prefix(limit)), Array(endpoints.dropFirst(limit)))
     }
 
     /// Adds an authenticated interface discovered through Reticulum without
@@ -203,6 +220,8 @@ public actor ReticulumTCPInterfacePool {
     public func stop() async {
         let interfaces = entries.values.map(\.interface)
         entries.removeAll()
+        standbyEndpoints.removeAll()
+        activeEndpointLimit = Int.max
         for interface in interfaces { await interface.stop() }
         aggregateState = .stopped
         await stateHandler(.stopped, [])
@@ -258,6 +277,17 @@ public actor ReticulumTCPInterfacePool {
         if state == .ready {
             entry.connectedAt = .now
             entry.reconnectToken = nil
+        } else if state.needsReconnect, !standbyEndpoints.isEmpty {
+            // A failed bootstrap entrypoint is replaced by the next healthy
+            // candidate instead of keeping every public socket open forever.
+            // Paths on healthy siblings remain untouched.
+            entries.removeValue(forKey: interfaceID)
+            let replacement = standbyEndpoints.removeFirst()
+            insert(replacement)
+            await publishState(force: true)
+            await entry.interface.stop()
+            await entries[replacement.id]?.interface.start()
+            return
         } else if state.needsReconnect, entry.reconnectToken == nil {
             entry.reconnectAttempt += 1
             let token = UUID()

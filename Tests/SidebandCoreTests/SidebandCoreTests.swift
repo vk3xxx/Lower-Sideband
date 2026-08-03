@@ -5,6 +5,44 @@ import Testing
 @testable import SidebandCore
 @testable import ReticulumKit
 
+@Test func performanceBudgetsRemainBoundedForBusyPublicMeshes() {
+    #expect(SidebandPerformancePolicy.packetCounterPublicationInterval >= 0.5)
+    #expect(SidebandPerformancePolicy.discoveryPublicationInterval >= 0.5)
+    #expect(SidebandPerformancePolicy.defaultSidebarDiscoveryLimit <= 150)
+    #expect(SidebandPerformancePolicy.searchedSidebarDiscoveryLimit <= 300)
+    #expect(SidebandPerformancePolicy.maximumActivePublicGateways == 3)
+    #expect(SidebandPerformancePolicy.inlineImageCacheCostLimit <= 64 * 1_024 * 1_024)
+}
+
+@Test func tcpPoolKeepsExcessPublicGatewaysAsOrderedStandby() {
+    let endpoints = (1...6).map {
+        ReticulumTCPInterfacePool.Endpoint(id: "gateway-\($0)", name: "Gateway \($0)", host: "192.0.2.\($0)", port: 4_242)
+    }
+    let partition = ReticulumTCPInterfacePool.partition(endpoints, activeLimit: 3)
+    #expect(partition.active.map(\.id) == ["gateway-1", "gateway-2", "gateway-3"])
+    #expect(partition.standby.map(\.id) == ["gateway-4", "gateway-5", "gateway-6"])
+}
+
+@Test func discoveryCacheDecodesSnapshotsWrittenBeforeDerivedMetadataWasStored() throws {
+    let original = DiscoveredDestination(
+        destinationHash: "0123456789abcdef0123456789abcdef",
+        hops: 2,
+        lastSeen: Date(timeIntervalSince1970: 1_700_000_000),
+        packetCount: 4,
+        isValidated: false
+    )
+    let encoded = try JSONEncoder().encode(original)
+    var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    object.removeValue(forKey: "announcedDisplayName")
+    object.removeValue(forKey: "isLXSTVoiceDestination")
+    object.removeValue(forKey: "contactLinkURL")
+    let legacyData = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(DiscoveredDestination.self, from: legacyData)
+    #expect(decoded.destinationHash == original.destinationHash)
+    #expect(decoded.announcedDisplayName == nil)
+    #expect(!decoded.isLXSTVoiceDestination)
+}
+
 @Test func lxmfStampsTicketsAndStampedPayloadsAreInteroperable() async throws {
     let material = Data(repeating: 0x42, count: 32)
     let block = LXMFStamp.workblock(material: material, rounds: 2)

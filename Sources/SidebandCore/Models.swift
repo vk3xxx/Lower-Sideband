@@ -1,6 +1,19 @@
 import ReticulumKit
 import Foundation
 
+/// Central performance budgets shared by the native clients and diagnostics.
+/// They bound UI churn and memory without changing Reticulum packet handling.
+public enum SidebandPerformancePolicy {
+    public static let packetCounterPublicationInterval: TimeInterval = 1
+    public static let discoveryPublicationInterval: TimeInterval = 1
+    public static let networkMapCacheInterval: TimeInterval = 2
+    public static let defaultSidebarDiscoveryLimit = 120
+    public static let searchedSidebarDiscoveryLimit = 240
+    public static let maximumActivePublicGateways = 3
+    public static let inlineImageCacheCountLimit = 48
+    public static let inlineImageCacheCostLimit = 64 * 1_024 * 1_024
+}
+
 public enum SidebandMessageLimits {
     public static let maximumTextCharacters = 4_096
     public static let maximumTextBytes = 16 * 1_024
@@ -317,11 +330,12 @@ public struct DiscoveredDestination: Identifiable, Codable, Hashable, Sendable {
     public var publicKey: Data?
     public var appData: Data?
     public var ratchet: Data?
-    public var announcedDisplayName: String? { appData.flatMap { LXMFAnnounceInfo(appData: $0)?.displayName } }
-    public var isLXSTVoiceDestination: Bool {
-        guard let publicKey, let identity = try? ReticulumIdentity(publicKey: publicKey) else { return false }
-        return LXSTVoice.destinationHash(for: identity).map { String(format: "%02x", $0) }.joined() == destinationHash
-    }
+    /// Derived announce values are stored once when an announce is ingested.
+    /// These used to rebuild an identity, decode CBOR and format a hash every
+    /// time SwiftUI evaluated a discovery row.
+    public private(set) var announcedDisplayName: String?
+    public private(set) var isLXSTVoiceDestination: Bool
+    public private(set) var contactLinkURL: URL?
 
     public init(destinationHash: String, hops: UInt8, lastSeen: Date = .now, packetCount: Int = 1, isValidated: Bool = false, publicKey: Data? = nil, appData: Data? = nil, ratchet: Data? = nil) {
         self.destinationHash = destinationHash
@@ -332,5 +346,56 @@ public struct DiscoveredDestination: Identifiable, Codable, Hashable, Sendable {
         self.publicKey = publicKey
         self.appData = appData
         self.ratchet = ratchet
+        announcedDisplayName = Self.displayName(from: appData)
+        isLXSTVoiceDestination = Self.isVoiceDestination(destinationHash: destinationHash, publicKey: publicKey)
+        contactLinkURL = Self.contactLink(destinationHash: destinationHash, displayName: announcedDisplayName, publicKey: isValidated ? publicKey : nil)
+    }
+
+    public mutating func updateValidatedAnnounce(publicKey: Data, appData: Data, ratchet: Data?) {
+        self.publicKey = publicKey
+        self.appData = appData
+        self.ratchet = ratchet
+        announcedDisplayName = Self.displayName(from: appData)
+        isLXSTVoiceDestination = Self.isVoiceDestination(destinationHash: destinationHash, publicKey: publicKey)
+        contactLinkURL = Self.contactLink(destinationHash: destinationHash, displayName: announcedDisplayName, publicKey: publicKey)
+    }
+
+    private static func displayName(from appData: Data?) -> String? {
+        appData.flatMap { LXMFAnnounceInfo(appData: $0)?.displayName }
+    }
+
+    private static func isVoiceDestination(destinationHash: String, publicKey: Data?) -> Bool {
+        guard let publicKey, let identity = try? ReticulumIdentity(publicKey: publicKey) else { return false }
+        let voiceHash = LXSTVoice.destinationHash(for: identity)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return voiceHash == destinationHash
+    }
+
+    private static func contactLink(destinationHash: String, displayName: String?, publicKey: Data?) -> URL? {
+        SidebandContactLink(destinationHash: destinationHash, displayName: displayName, publicKey: publicKey)?.url
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case destinationHash, hops, lastSeen, packetCount, isValidated, publicKey, appData, ratchet
+        case announcedDisplayName, isLXSTVoiceDestination, contactLinkURL
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        destinationHash = try values.decode(String.self, forKey: .destinationHash)
+        hops = try values.decode(UInt8.self, forKey: .hops)
+        lastSeen = try values.decode(Date.self, forKey: .lastSeen)
+        packetCount = try values.decode(Int.self, forKey: .packetCount)
+        isValidated = try values.decode(Bool.self, forKey: .isValidated)
+        publicKey = try values.decodeIfPresent(Data.self, forKey: .publicKey)
+        appData = try values.decodeIfPresent(Data.self, forKey: .appData)
+        ratchet = try values.decodeIfPresent(Data.self, forKey: .ratchet)
+        announcedDisplayName = try values.decodeIfPresent(String.self, forKey: .announcedDisplayName)
+            ?? Self.displayName(from: appData)
+        isLXSTVoiceDestination = try values.decodeIfPresent(Bool.self, forKey: .isLXSTVoiceDestination)
+            ?? Self.isVoiceDestination(destinationHash: destinationHash, publicKey: publicKey)
+        contactLinkURL = try values.decodeIfPresent(URL.self, forKey: .contactLinkURL)
+            ?? Self.contactLink(destinationHash: destinationHash, displayName: announcedDisplayName, publicKey: isValidated ? publicKey : nil)
     }
 }
