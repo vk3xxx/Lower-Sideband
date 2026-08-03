@@ -16,6 +16,16 @@ snapshots are published at bounded intervals.
 - Discovery observation lives in a dedicated sidebar view. The idle list is
   limited to 120 destinations and search results to 240 unless the user asks
   to show all.
+- Announce signature validation runs on a dedicated Reticulum actor. Exact
+  signed packets received over redundant gateways share a bounded 2,048-entry
+  validation cache, so route diversity does not repeat cryptographic work on
+  the UI executor.
+- Route presentation is updated incrementally and coalesced for 250 ms during
+  announce bursts. Paths needed by active conversations, propagation delivery,
+  or explicit path requests bypass that delay; packet routing itself is never
+  deferred.
+- Destination and next-hop identifiers use an allocation-light hexadecimal
+  encoder instead of invoking Foundation's format parser for every byte.
 - Relative timestamps update once per minute instead of running a timer in
   every row.
 - Network-map snapshots are cached briefly and remain bounded by the existing

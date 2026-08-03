@@ -51,6 +51,69 @@ public struct ReticulumAnnounce: Equatable, Sendable {
     public enum ValidationError: Error { case notAnnounce, malformed }
 }
 
+/// Serial, bounded validation cache for announces received over redundant
+/// interfaces. The same signed packet is often delivered by several public
+/// gateways; validating it once preserves route diversity without repeating
+/// Curve25519/Ed25519 work on the application's main actor.
+public actor ReticulumAnnounceValidator {
+    public struct Statistics: Equatable, Sendable {
+        public let validations: Int
+        public let cacheHits: Int
+        public let cachedEntries: Int
+    }
+
+    private enum Result: Sendable {
+        case valid(ReticulumAnnounce)
+        case invalid
+    }
+
+    private let maximumEntries: Int
+    private var cache: [Data: Result] = [:]
+    private var insertionOrder: [Data] = []
+    private var evictionIndex = 0
+    private var validationCount = 0
+    private var cacheHitCount = 0
+
+    public init(maximumEntries: Int = 2_048) {
+        self.maximumEntries = max(1, maximumEntries)
+    }
+
+    public func validatedAnnounce(for packet: ReticulumPacket) -> ReticulumAnnounce? {
+        let key = packet.hashablePart
+        if let cached = cache[key] {
+            cacheHitCount += 1
+            if case .valid(let announce) = cached { return announce }
+            return nil
+        }
+
+        validationCount += 1
+        let result: Result
+        if let announce = try? ReticulumAnnounce(packet: packet), announce.validate() {
+            result = .valid(announce)
+        } else {
+            result = .invalid
+        }
+        cache[key] = result
+        insertionOrder.append(key)
+        while cache.count > maximumEntries, evictionIndex < insertionOrder.count {
+            cache.removeValue(forKey: insertionOrder[evictionIndex])
+            evictionIndex += 1
+        }
+        // Compact in batches so sustained announce traffic never turns cache
+        // eviction into repeated O(n) array shifts.
+        if evictionIndex >= 1_024, evictionIndex * 2 >= insertionOrder.count {
+            insertionOrder.removeFirst(evictionIndex)
+            evictionIndex = 0
+        }
+        if case .valid(let announce) = result { return announce }
+        return nil
+    }
+
+    public func statistics() -> Statistics {
+        Statistics(validations: validationCount, cacheHits: cacheHitCount, cachedEntries: cache.count)
+    }
+}
+
 private extension Data {
     static func + (lhs: Data, rhs: Data) -> Data { var value = lhs; value.append(rhs); return value }
 }

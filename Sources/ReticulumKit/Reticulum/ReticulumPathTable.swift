@@ -28,6 +28,14 @@ public actor ReticulumPathTable {
     @discardableResult
     public func ingest(_ announce: ReticulumAnnounce, packet: ReticulumPacket, interfaceID: String? = nil, now: Date = .now) -> Bool {
         guard announce.validate() else { return false }
+        return ingestValidated(announce, packet: packet, interfaceID: interfaceID, now: now)
+    }
+
+    /// Ingests an announce already accepted by `ReticulumAnnounceValidator`.
+    /// This avoids repeating signature validation while retaining the safe
+    /// `ingest` entry point for callers without a validation pipeline.
+    @discardableResult
+    public func ingestValidated(_ announce: ReticulumAnnounce, packet: ReticulumPacket, interfaceID: String? = nil, now: Date = .now) -> Bool {
         let wasRequested = pendingRequests[announce.destinationHash] != nil
         let candidate = ReticulumPath(
             destinationHash: announce.destinationHash,

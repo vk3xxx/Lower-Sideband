@@ -6,6 +6,7 @@ import Foundation
 public enum SidebandPerformancePolicy {
     public static let packetCounterPublicationInterval: TimeInterval = 1
     public static let discoveryPublicationInterval: TimeInterval = 1
+    public static let pathStatePublicationInterval: TimeInterval = 0.25
     public static let networkMapCacheInterval: TimeInterval = 2
     public static let defaultSidebarDiscoveryLimit = 120
     public static let searchedSidebarDiscoveryLimit = 240
@@ -366,9 +367,7 @@ public struct DiscoveredDestination: Identifiable, Codable, Hashable, Sendable {
 
     private static func isVoiceDestination(destinationHash: String, publicKey: Data?) -> Bool {
         guard let publicKey, let identity = try? ReticulumIdentity(publicKey: publicKey) else { return false }
-        let voiceHash = LXSTVoice.destinationHash(for: identity)
-            .map { String(format: "%02x", $0) }
-            .joined()
+        let voiceHash = ReticulumHex.encode(LXSTVoice.destinationHash(for: identity))
         return voiceHash == destinationHash
     }
 

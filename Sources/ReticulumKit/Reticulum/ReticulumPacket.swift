@@ -1,5 +1,22 @@
 import Foundation
 
+/// Allocation-light lowercase hexadecimal encoding for Reticulum identifiers.
+/// Packet and path processing uses this instead of Foundation format parsing,
+/// which is disproportionately expensive during announce bursts.
+public enum ReticulumHex {
+    private static let digits = Array("0123456789abcdef".utf8)
+
+    public static func encode<D: DataProtocol>(_ data: D) -> String {
+        var encoded = [UInt8]()
+        encoded.reserveCapacity(data.count * 2)
+        for byte in data {
+            encoded.append(digits[Int(byte >> 4)])
+            encoded.append(digits[Int(byte & 0x0f)])
+        }
+        return String(decoding: encoded, as: UTF8.self)
+    }
+}
+
 public struct ReticulumPacket: Equatable, Sendable {
     public static let truncatedHashBytes = 16
     public static let minimumHeaderBytes = 19

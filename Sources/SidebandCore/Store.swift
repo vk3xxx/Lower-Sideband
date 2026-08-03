@@ -284,6 +284,8 @@ public final class SidebandStore {
     @ObservationIgnored private var pendingReceivedPacketCount = 0
     @ObservationIgnored private var discoveryPublishTask: Task<Void, Never>?
     @ObservationIgnored private var pendingDiscoveryObservations: [String: PendingDiscoveryObservation] = [:]
+    @ObservationIgnored private var pathStatePublishTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingPathStateHashes: Set<Data> = []
     @ObservationIgnored private var networkMapCache: (createdAt: Date, snapshot: NetworkMapSnapshot)?
     @ObservationIgnored private var lastValidatedPersistenceData: Data?
     @ObservationIgnored private var legacyImportRollbackData: Data?
@@ -321,6 +323,7 @@ public final class SidebandStore {
     /// state if the connection was reset while the write was in progress.
     private var deliveryConnectionEpoch = UUID()
     private let pathTable = ReticulumPathTable()
+    private let announceValidator = ReticulumAnnounceValidator()
     private var pendingLinks: [String: ReticulumLinkRequest] = [:]
     private var pendingLinkTimeoutTokens: [String: UUID] = [:]
     private var deferredLinkRetryTokens: [String: UUID] = [:]
@@ -5419,31 +5422,69 @@ public final class SidebandStore {
         }
         guard packet.packetType == .announce else { return }
         let hash = packet.destinationHash.hex
-        let announce = try? ReticulumAnnounce(packet: packet)
-        let isValidated = announce?.validate() == true
-        if isValidated, let announce {
-            if let service = applicationService(from: announce, packet: packet) {
-                meshFeatures.observeService(service)
-            }
-            considerPropagationNode(announce, packet: packet)
-            if let interface = ReticulumInterfaceDiscovery.decode(announce, hops: packet.hops) {
-                considerDiscoveredNetworkInterface(interface)
-            }
+        let observedAt = Date.now
+        // Surface packet activity promptly, but perform signature validation on
+        // the dedicated Reticulum actor. This keeps cryptography and duplicate
+        // public-gateway announces off the SwiftUI main executor.
+        queueDiscoveryObservation(
+            hash: hash,
+            packet: packet,
+            announce: nil,
+            isValidated: false,
+            observedAt: observedAt
+        )
+        let validator = announceValidator
+        Task { [weak self] in
+            guard let announce = await validator.validatedAnnounce(for: packet) else { return }
+            await self?.acceptValidatedAnnounce(
+                announce,
+                packet: packet,
+                interfaceID: interfaceID,
+                observedAt: observedAt
+            )
         }
-        queueDiscoveryObservation(hash: hash, packet: packet, announce: announce, isValidated: isValidated)
-        if isValidated, let announce {
-            Task {
-                _ = await pathTable.ingest(announce, packet: packet, interfaceID: interfaceID)
-                await refreshPathState()
-                let hash = announce.destinationHash.hex
-                if hash == propagationNodeHash, !pendingLinkHashes.contains(hash), !activeLinkHashes.contains(hash) {
-                    await requestLink(to: hash)
-                }
-                if let conversation = conversations.first(where: { $0.destinationHash == hash }) {
-                    flushPendingDiscoveryObservations()
-                    await attemptDelivery(for: conversation.id)
-                }
-            }
+    }
+
+    private func acceptValidatedAnnounce(
+        _ announce: ReticulumAnnounce,
+        packet: ReticulumPacket,
+        interfaceID: String?,
+        observedAt: Date
+    ) async {
+        if let service = applicationService(from: announce, packet: packet) {
+            meshFeatures.observeService(service)
+        }
+        considerPropagationNode(announce, packet: packet)
+        if announce.nameHash == ReticulumInterfaceDiscovery.destinationNameHash,
+           let interface = ReticulumInterfaceDiscovery.decode(
+               appData: announce.appData,
+               networkID: announce.identityHash,
+               hops: packet.hops
+           ) {
+            considerDiscoveredNetworkInterface(interface)
+        }
+        let hash = announce.destinationHash.hex
+        queueDiscoveryObservation(
+            hash: hash,
+            packet: packet,
+            announce: announce,
+            isValidated: true,
+            observedAt: observedAt,
+            packetIncrement: 0
+        )
+        let routeChanged = await pathTable.ingestValidated(announce, packet: packet, interfaceID: interfaceID)
+        if routeChanged { schedulePathStatePublication(for: announce.destinationHash) }
+
+        let conversation = conversations.first(where: { $0.destinationHash == hash })
+        let routeIsUrgent = conversation != nil || hash == propagationNodeHash || pendingPathHashes.contains(hash)
+        if routeChanged, routeIsUrgent { await publishPendingPathState() }
+
+        if hash == propagationNodeHash, !pendingLinkHashes.contains(hash), !activeLinkHashes.contains(hash) {
+            await requestLink(to: hash)
+        }
+        if let conversation {
+            flushPendingDiscoveryObservations()
+            await attemptDelivery(for: conversation.id)
         }
     }
 
@@ -5463,9 +5504,10 @@ public final class SidebandStore {
         hash: String,
         packet: ReticulumPacket,
         announce: ReticulumAnnounce?,
-        isValidated: Bool
+        isValidated: Bool,
+        observedAt: Date = .now,
+        packetIncrement: Int = 1
     ) {
-        let now = Date.now
         let current = pendingDiscoveryObservations[hash]
             ?? discoveries.first(where: { $0.destinationHash == hash }).map {
                 PendingDiscoveryObservation(
@@ -5480,7 +5522,7 @@ public final class SidebandStore {
             }
         var observation = current ?? PendingDiscoveryObservation(
             hops: packet.hops,
-            lastSeen: now,
+            lastSeen: observedAt,
             packetCount: 0,
             isValidated: false,
             publicKey: nil,
@@ -5488,8 +5530,8 @@ public final class SidebandStore {
             ratchet: nil
         )
         observation.hops = packet.hops
-        observation.lastSeen = now
-        observation.packetCount += 1
+        observation.lastSeen = observedAt
+        observation.packetCount += packetIncrement
         if isValidated, let announce {
             observation.isValidated = true
             observation.publicKey = announce.publicKey
@@ -5704,7 +5746,10 @@ public final class SidebandStore {
 
     private func considerPropagationNode(_ announce: ReticulumAnnounce, packet: ReticulumPacket) {
         let propagationNameHash = LXMFPropagation.destinationNameHash
-        guard LXMFPropagation.isPropagationAnnounce(announce) else { return }
+        // The caller only reaches this method after the shared validator has
+        // accepted the announce, so checking the namespace is sufficient and
+        // avoids repeating Ed25519 validation on the main actor.
+        guard announce.nameHash == propagationNameHash else { return }
         let hash = announce.destinationHash.hex
         let knownPropagationHashes = Set(discoveries.compactMap { discovery -> String? in
             guard let publicKey = discovery.publicKey else { return nil }
@@ -8146,7 +8191,78 @@ public final class SidebandStore {
         preference == .propagationPreferred
     }
 
+    private func schedulePathStatePublication(for destinationHash: Data) {
+        pendingPathStateHashes.insert(destinationHash)
+        guard pathStatePublishTask == nil else { return }
+        pathStatePublishTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(SidebandPerformancePolicy.pathStatePublicationInterval))
+            guard !Task.isCancelled else { return }
+            await self?.publishPendingPathState()
+        }
+    }
+
+    /// Publishes only paths changed since the previous presentation update.
+    /// The actor-owned path table is already current before this runs, so the
+    /// short coalescing window cannot delay packet routing or proof handling.
+    private func publishPendingPathState() async {
+        pathStatePublishTask?.cancel()
+        pathStatePublishTask = nil
+        guard !pendingPathStateHashes.isEmpty else { return }
+        let hashes = pendingPathStateHashes
+        pendingPathStateHashes.removeAll(keepingCapacity: true)
+        var updatedKnownPaths = knownPathHashes
+        var updatedRoutes = connectedRoutes
+        var resolvedPendingPaths: Set<String> = []
+        for destinationHash in hashes {
+            let hash = destinationHash.hex
+            if let path = await pathTable.path(to: destinationHash) {
+                updatedKnownPaths.insert(hash)
+                updatedRoutes[hash] = connectedRoute(for: path)
+                resolvedPendingPaths.insert(hash)
+            } else {
+                updatedKnownPaths.remove(hash)
+                updatedRoutes.removeValue(forKey: hash)
+            }
+        }
+        if updatedKnownPaths != knownPathHashes { knownPathHashes = updatedKnownPaths }
+        if updatedRoutes != connectedRoutes { connectedRoutes = updatedRoutes }
+        if !resolvedPendingPaths.isEmpty { pendingPathHashes.subtract(resolvedPendingPaths) }
+    }
+
+    private func connectedRoute(for path: ReticulumPath) -> ConnectedRoute {
+        let interfaceID = path.interfaceID
+        let tcpInterface = interfaceID.flatMap { id in networkInterfaces.first(where: { $0.id == id }) }
+        let rnodeInterface = interfaceID.flatMap { id in
+            rnodeManager.snapshots.first(where: { "rnode:\($0.id.uuidString)" == id })
+        }
+        let interfaceName: String
+        if let tcpInterface {
+            interfaceName = tcpInterface.name
+        } else if interfaceID == "auto" {
+            interfaceName = "AutoInterface"
+        } else if let rnodeInterface {
+            interfaceName = rnodeInterface.name
+        } else {
+            interfaceName = "Reticulum"
+        }
+        let endpoint = tcpInterface.flatMap { snapshot -> String? in
+            guard let host = snapshot.host else { return nil }
+            return snapshot.port.map { "\(host):\($0)" } ?? host
+        }
+        return ConnectedRoute(
+            interfaceName: interfaceName,
+            endpoint: endpoint,
+            interfaceID: interfaceID,
+            nextHopHash: path.nextHop?.hex,
+            hops: path.hops,
+            updatedAt: path.updatedAt
+        )
+    }
+
     private func refreshPathState() async {
+        pathStatePublishTask?.cancel()
+        pathStatePublishTask = nil
+        pendingPathStateHashes.removeAll(keepingCapacity: true)
         let paths = await pathTable.all()
         let currentPaths = Set(paths.map { $0.destinationHash.hex })
         if currentPaths != knownPathHashes { knownPathHashes = currentPaths }
@@ -8161,35 +8277,7 @@ public final class SidebandStore {
                 preferredPaths[hash] = path
             }
         }
-        let routes = preferredPaths.mapValues { path in
-            let interfaceID = path.interfaceID
-            let tcpInterface = interfaceID.flatMap { id in networkInterfaces.first(where: { $0.id == id }) }
-            let rnodeInterface = interfaceID.flatMap { id in
-                rnodeManager.snapshots.first(where: { "rnode:\($0.id.uuidString)" == id })
-            }
-            let interfaceName: String
-            if let tcpInterface {
-                interfaceName = tcpInterface.name
-            } else if interfaceID == "auto" {
-                interfaceName = "AutoInterface"
-            } else if let rnodeInterface {
-                interfaceName = rnodeInterface.name
-            } else {
-                interfaceName = "Reticulum"
-            }
-            let endpoint = tcpInterface.flatMap { snapshot -> String? in
-                guard let host = snapshot.host else { return nil }
-                return snapshot.port.map { "\(host):\($0)" } ?? host
-            }
-            return ConnectedRoute(
-                interfaceName: interfaceName,
-                endpoint: endpoint,
-                interfaceID: interfaceID,
-                nextHopHash: path.nextHop?.hex,
-                hops: path.hops,
-                updatedAt: path.updatedAt
-            )
-        }
+        let routes = preferredPaths.mapValues { connectedRoute(for: $0) }
         if routes != connectedRoutes { connectedRoutes = routes }
         let resolvedPending = pendingPathHashes.intersection(currentPaths)
         if !resolvedPending.isEmpty { pendingPathHashes.subtract(resolvedPending) }
@@ -8626,7 +8714,7 @@ public final class SidebandStore {
 }
 
 private extension Data {
-    var hex: String { map { String(format: "%02x", $0) }.joined() }
+    var hex: String { ReticulumHex.encode(self) }
     init?(hexadecimal: String) {
         guard hexadecimal.count.isMultiple(of: 2) else { return nil }
         var output = Data(capacity: hexadecimal.count / 2)

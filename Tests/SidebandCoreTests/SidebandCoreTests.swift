@@ -8,10 +8,56 @@ import Testing
 @Test func performanceBudgetsRemainBoundedForBusyPublicMeshes() {
     #expect(SidebandPerformancePolicy.packetCounterPublicationInterval >= 0.5)
     #expect(SidebandPerformancePolicy.discoveryPublicationInterval >= 0.5)
+    #expect(SidebandPerformancePolicy.pathStatePublicationInterval >= 0.1)
     #expect(SidebandPerformancePolicy.defaultSidebarDiscoveryLimit <= 150)
     #expect(SidebandPerformancePolicy.searchedSidebarDiscoveryLimit <= 300)
     #expect(SidebandPerformancePolicy.maximumActivePublicGateways == 3)
     #expect(SidebandPerformancePolicy.inlineImageCacheCostLimit <= 64 * 1_024 * 1_024)
+}
+
+@Test func reticulumHexUsesCanonicalLowercaseEncoding() {
+    let bytes = Data([0x00, 0x01, 0x0f, 0x10, 0x7f, 0x80, 0xfe, 0xff])
+    #expect(ReticulumHex.encode(bytes) == "00010f107f80feff")
+    #expect(ReticulumHex.encode(bytes.prefix(3)) == "00010f")
+}
+
+@Test func announceValidatorCachesTheSignedPacketAcrossTransportHeaders() async throws {
+    let identity = ReticulumIdentity()
+    let raw = try ReticulumAnnounceBuilder.packet(
+        identity: identity,
+        destinationName: "lxmf.delivery",
+        randomHash: Data(0..<10)
+    )
+    let directPacket = try ReticulumPacket(raw: raw)
+    let routedPacket = try ReticulumPacket(raw: directPacket.routed(via: Data(repeating: 0x5a, count: 16)))
+    let validator = ReticulumAnnounceValidator(maximumEntries: 2)
+
+    #expect(await validator.validatedAnnounce(for: directPacket) != nil)
+    #expect(await validator.validatedAnnounce(for: routedPacket) != nil)
+    let statistics = await validator.statistics()
+    #expect(statistics.validations == 1)
+    #expect(statistics.cacheHits == 1)
+    #expect(statistics.cachedEntries == 1)
+}
+
+@Test func announceValidatorBoundsValidAndInvalidResults() async throws {
+    let validator = ReticulumAnnounceValidator(maximumEntries: 2)
+    for marker in UInt8(1)...3 {
+        let identity = ReticulumIdentity()
+        var raw = try ReticulumAnnounceBuilder.packet(
+            identity: identity,
+            destinationName: "lxmf.delivery",
+            randomHash: Data(repeating: marker, count: 10)
+        )
+        if marker == 2 { raw[raw.index(before: raw.endIndex)] ^= 0xff }
+        let packet = try ReticulumPacket(raw: raw)
+        _ = await validator.validatedAnnounce(for: packet)
+        if marker == 2 { #expect(await validator.validatedAnnounce(for: packet) == nil) }
+    }
+    let statistics = await validator.statistics()
+    #expect(statistics.validations == 3)
+    #expect(statistics.cacheHits == 1)
+    #expect(statistics.cachedEntries == 2)
 }
 
 @Test func tcpPoolKeepsExcessPublicGatewaysAsOrderedStandby() {
